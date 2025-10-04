@@ -123,7 +123,7 @@ else:
             "Running containers": st.column_config.NumberColumn(format="%d"),
             "Edge agents": st.column_config.NumberColumn(format="%d"),
         },
-        use_container_width=True,
+        width="stretch",
     )
     ExportableDataFrame(
         "⬇️ Download image summary",
@@ -145,7 +145,9 @@ else:
         title="Top images by running containers",
     )
     top_image_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
-    st.plotly_chart(style_plotly_figure(top_image_chart), use_container_width=True)
+    st.plotly_chart(
+        style_plotly_figure(top_image_chart), use_container_width=True
+    )
 
     footprint_source = (
         containers_filtered.assign(image=lambda df: df["image"].fillna("Unknown image"))
@@ -161,5 +163,7 @@ else:
             title="Where images are running",
         )
         footprint.update_traces(hovertemplate="%{label}<br>Containers: %{value}")
-        st.plotly_chart(style_plotly_figure(footprint), use_container_width=True)
+        st.plotly_chart(
+            style_plotly_figure(footprint), use_container_width=True
+        )
 
