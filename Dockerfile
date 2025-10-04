@@ -6,6 +6,7 @@ COPY requirements.txt .
 RUN pip install --upgrade pip && \
     pip install --no-cache-dir --prefix=/usr/local -r requirements.txt
 
+COPY .streamlit ./.streamlit
 COPY app ./app
 
 # --- Runtime stage (distroless 3.12) ---
