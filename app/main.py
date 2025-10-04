@@ -1,6 +1,8 @@
 """Entry point for the Streamlit Portainer dashboard."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -20,7 +22,18 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
 
 load_dotenv()
 
-st.set_page_config(page_title="Portainer Dashboard", layout="wide")
+logo_path = Path(__file__).resolve().parent / "assets" / "ktlu-logo.svg"
+st.set_page_config(
+    page_title="Portainer Dashboard",
+    layout="wide",
+    page_icon=str(logo_path) if logo_path.exists() else "🔷",
+)
+
+if logo_path.exists():
+    try:
+        st.logo(str(logo_path))
+    except Exception:  # pragma: no cover - optional enhancement
+        pass
 
 initialise_session_state()
 apply_selected_environment()

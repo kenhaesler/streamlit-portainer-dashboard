@@ -4,16 +4,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-import plotly.express as px
 from plotly.graph_objects import Figure
 import streamlit as st
 
 
-# A calm but distinctive palette that works for both light and dark themes.
+# Corporate colour palette derived from the Canton of Lucerne guidelines.
 DEFAULT_COLOR_SEQUENCE: Sequence[str] = (
-    px.colors.qualitative.Set2
-    + px.colors.qualitative.Pastel1
-    + px.colors.qualitative.Safe
+    "#009FE3",  # Hellblau – primary brand accent
+    "#09202C",  # Mitternachtsblau – deep contrast tone
+    "#94BED4",  # Puderblau – supporting tone
+    "#DEF0FA",  # Hellblau light – neutral background tone
+    "#999999",  # Warm grey – secondary text
+    "#000000",  # Black – high contrast fallback
 )
 
 
@@ -100,3 +102,19 @@ class ExportableDataFrame:
             width="stretch",
         )
 
+
+def get_plotly_color_sequence() -> Sequence[str]:
+    """Expose the default colour sequence for external callers."""
+
+    return DEFAULT_COLOR_SEQUENCE
+
+
+__all__ = [
+    "DEFAULT_COLOR_SEQUENCE",
+    "ExportableDataFrame",
+    "get_plotly_color_sequence",
+    "render_empty_state",
+    "render_kpi_row",
+    "render_page_header",
+    "style_plotly_figure",
+]
