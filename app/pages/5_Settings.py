@@ -25,6 +25,16 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 
+
+def rerun_app() -> None:
+    """Trigger a Streamlit rerun across supported API versions."""
+
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:  # pragma: no cover - fallback for older Streamlit versions
+        st.experimental_rerun()
+
+
 st.title("Settings")
 
 initialise_session_state()
@@ -37,7 +47,11 @@ env_names = [env.get("name", "") for env in environments_state if env.get("name"
 
 form_selection_key = "portainer_env_form_selection"
 prev_selection_key = "portainer_env_form_prev_selection"
+pending_selection_key = "portainer_env_form_pending_selection"
 options = ["New environment", *env_names]
+
+if pending_selection := st.session_state.pop(pending_selection_key, None):
+    st.session_state[form_selection_key] = pending_selection
 
 if st.session_state.get(form_selection_key) not in options:
     default_env = get_selected_environment_name() or "New environment"
@@ -125,10 +139,10 @@ if submitted:
             updated_envs[edit_index] = updated_env
         set_saved_environments(updated_envs)
         set_active_environment(name_value)
-        st.session_state[form_selection_key] = name_value
+        st.session_state[pending_selection_key] = name_value
         st.session_state[prev_selection_key] = name_value
         clear_cached_data()
-        st.experimental_rerun()
+        rerun_app()
 
 if form_error:
     st.error(form_error)
@@ -144,7 +158,7 @@ if env_names:
     )
     if choice != active_env:
         set_active_environment(choice)
-        st.experimental_rerun()
+        rerun_app()
 else:
     st.info("No environments saved yet. Add one using the form above.")
 
@@ -163,5 +177,5 @@ for env in environments_state:
                 next_name = updated_envs[0]["name"] if updated_envs else ""
                 set_active_environment(next_name)
             clear_cached_data()
-            st.experimental_rerun()
+            rerun_app()
 
