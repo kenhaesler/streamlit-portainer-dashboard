@@ -38,6 +38,11 @@ def rerun_app() -> None:
 st.title("Settings")
 
 initialise_session_state()
+
+pending_active_env_key = "portainer_env_pending_active"
+if pending_active := st.session_state.pop(pending_active_env_key, None):
+    set_active_environment(pending_active)
+
 apply_selected_environment()
 
 st.header("Portainer environments")
@@ -175,7 +180,7 @@ for env in environments_state:
             set_saved_environments(updated_envs)
             if get_selected_environment_name() == env_name:
                 next_name = updated_envs[0]["name"] if updated_envs else ""
-                set_active_environment(next_name)
+                st.session_state[pending_active_env_key] = next_name
             clear_cached_data()
             rerun_app()
 
