@@ -508,7 +508,7 @@ if selected_page == "Overview":
                 "environment_name": "Environment",
             },
         )
-        st.plotly_chart(stack_chart, width="stretch")
+        st.plotly_chart(stack_chart, use_container_width=True)
     else:
         st.info("No stacks associated with the selected endpoints.")
 
@@ -605,7 +605,7 @@ elif selected_page == "Environment insights":
             },
             barmode="stack",
         )
-        st.plotly_chart(status_chart, width="stretch")
+        st.plotly_chart(status_chart, use_container_width=True)
     else:
         st.info("No endpoint metadata available for the selected filters.")
 
@@ -663,7 +663,7 @@ elif selected_page == "Environment insights":
             barmode="stack",
             color_discrete_sequence=px.colors.sequential.Cividis,
         )
-        st.plotly_chart(state_chart, width="stretch")
+        st.plotly_chart(state_chart, use_container_width=True)
 
         container_counts = (
             containers_filtered.groupby(["environment_name", "endpoint_name"])
@@ -686,7 +686,7 @@ elif selected_page == "Environment insights":
                 },
             )
             density_chart.update_layout(yaxis_title="Endpoint", xaxis_title="Containers")
-            st.plotly_chart(density_chart, width="stretch")
+            st.plotly_chart(density_chart, use_container_width=True)
 
         top_images = (
             containers_filtered.groupby(["environment_name", "image"], dropna=False)
@@ -710,7 +710,7 @@ elif selected_page == "Environment insights":
                 },
             )
             image_chart.update_layout(yaxis_title="Image", xaxis_title="Containers")
-            st.plotly_chart(image_chart, width="stretch")
+            st.plotly_chart(image_chart, use_container_width=True)
 
         created_series = pd.to_datetime(
             containers_filtered["created_at"], errors="coerce", utc=True
@@ -732,7 +732,7 @@ elif selected_page == "Environment insights":
                 labels={"age_days": "Age (days)", "count": "Containers"},
                 color_discrete_sequence=px.colors.sequential.Agsunset,
             )
-            st.plotly_chart(age_chart, width="stretch")
+            st.plotly_chart(age_chart, use_container_width=True)
     else:
         st.info("No container data available for the selected filters.")
 
