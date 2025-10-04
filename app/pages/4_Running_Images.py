@@ -17,7 +17,6 @@ try:  # pragma: no cover - import shim for Streamlit runtime
     from app.portainer_client import PortainerAPIError  # type: ignore[import-not-found]
     from app.ui_helpers import (  # type: ignore[import-not-found]
         ExportableDataFrame,
-        apply_global_theme,
         render_kpi_row,
         render_page_header,
         style_plotly_figure,
@@ -35,13 +34,10 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     from portainer_client import PortainerAPIError  # type: ignore[no-redef]
     from ui_helpers import (  # type: ignore[no-redef]
         ExportableDataFrame,
-        apply_global_theme,
         render_kpi_row,
         render_page_header,
         style_plotly_figure,
     )
-
-apply_global_theme()
 
 render_page_header(
     "Running images",
