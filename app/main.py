@@ -37,8 +37,6 @@ if logo_path.exists():
     except Exception:  # pragma: no cover - optional enhancement
         pass
 
-apply_lucerne_theme()
-
 initialise_session_state()
 apply_selected_environment()
 

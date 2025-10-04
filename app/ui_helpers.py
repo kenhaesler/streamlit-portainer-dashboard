@@ -4,7 +4,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Iterable, Sequence
 
-import plotly.express as px
 from plotly.graph_objects import Figure
 import streamlit as st
 
@@ -302,3 +301,19 @@ class ExportableDataFrame:
             width="stretch",
         )
 
+
+def get_plotly_color_sequence() -> Sequence[str]:
+    """Expose the default colour sequence for external callers."""
+
+    return DEFAULT_COLOR_SEQUENCE
+
+
+__all__ = [
+    "DEFAULT_COLOR_SEQUENCE",
+    "ExportableDataFrame",
+    "get_plotly_color_sequence",
+    "render_empty_state",
+    "render_kpi_row",
+    "render_page_header",
+    "style_plotly_figure",
+]
