@@ -18,9 +18,16 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 
+try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.ui_helpers import apply_global_theme  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from ui_helpers import apply_global_theme  # type: ignore[no-redef]
+
+
 load_dotenv()
 
 st.set_page_config(page_title="Portainer Dashboard", layout="wide")
+apply_global_theme()
 
 initialise_session_state()
 apply_selected_environment()
