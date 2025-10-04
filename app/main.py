@@ -38,6 +38,7 @@ if logo_path.exists():
         pass
 
 initialise_session_state()
+apply_lucerne_theme()
 apply_selected_environment()
 
 st.title("🚀 Streamlit Portainer Dashboard")
