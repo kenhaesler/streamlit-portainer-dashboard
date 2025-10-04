@@ -26,6 +26,14 @@ accent colour is overridden, so the interface remains readable in either mode.
 
 ## Usage
 
+### Run with Docker Compose
+1. Create a `.env` file (for example by copying `.env.example` if you have one) and populate it with the variables described above.
+2. Start the application:
+   ```bash
+   docker compose up -d
+   ```
+3. Visit http://localhost:8501 to access the dashboard. Any Portainer environments you add inside the app will be stored in the named `streamlit_portainer_envs` volume and remain available for future runs.
+
 ### Run with Docker
 1. Build the image (or pull it from your own registry):
    ```bash
