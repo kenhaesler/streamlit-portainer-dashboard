@@ -85,6 +85,23 @@ class PortainerClient:
                 return data
         return []
 
+    def list_containers_for_endpoint(
+        self,
+        endpoint_id: int,
+        *,
+        include_stopped: bool = False,
+    ) -> List[Dict[str, object]]:
+        """Return containers for an endpoint via the Docker API."""
+
+        params = {"all": "1" if include_stopped else "0"}
+        data = self._request(
+            f"/endpoints/{endpoint_id}/docker/containers/json",
+            params=params,
+        )
+        if not isinstance(data, list):
+            raise PortainerAPIError("Unexpected containers payload from Portainer")
+        return data
+
 
 def normalise_endpoint_stacks(
     endpoints: Iterable[Dict[str, object]],
@@ -133,6 +150,87 @@ def normalise_endpoint_stacks(
                 "stack_name",
                 "stack_status",
                 "stack_type",
+            ]
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def normalise_endpoint_containers(
+    endpoints: Iterable[Dict[str, object]],
+    containers_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+) -> pd.DataFrame:
+    """Return a normalised dataframe mapping endpoints to containers."""
+
+    records: List[Dict[str, object]] = []
+    for endpoint in endpoints:
+        endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+        endpoint_name = endpoint.get("Name") or endpoint.get("name")
+        containers = containers_by_endpoint.get(endpoint_id) or []
+        for container in containers:
+            names = container.get("Names") or []
+            if isinstance(names, list) and names:
+                container_name = str(names[0]).lstrip("/")
+            else:
+                container_name = container.get("Name") or container.get("name")
+            image = container.get("Image") or container.get("ImageID")
+            state = container.get("State")
+            status = container.get("Status")
+            created_raw = container.get("Created")
+            created_at: Optional[str]
+            created_at = None
+            if isinstance(created_raw, (int, float)):
+                created_at = pd.to_datetime(created_raw, unit="s", utc=True).isoformat()
+            elif isinstance(created_raw, str):
+                try:
+                    created_at_ts = pd.to_datetime(created_raw, utc=True)
+                except (TypeError, ValueError):
+                    created_at_ts = pd.NaT
+                created_at = (
+                    created_at_ts.isoformat() if isinstance(created_at_ts, pd.Timestamp) else created_raw
+                )
+            ports = container.get("Ports")
+            port_summary = None
+            if isinstance(ports, list) and ports:
+                summaries = []
+                for port in ports:
+                    private_port = port.get("PrivatePort")
+                    public_port = port.get("PublicPort")
+                    type_ = port.get("Type")
+                    if private_port is None:
+                        continue
+                    if public_port:
+                        summaries.append(f"{public_port}->{private_port}/{type_}" if type_ else f"{public_port}->{private_port}")
+                    else:
+                        summaries.append(f"{private_port}/{type_}" if type_ else str(private_port))
+                if summaries:
+                    port_summary = ", ".join(summaries)
+            records.append(
+                {
+                    "endpoint_id": endpoint_id,
+                    "endpoint_name": endpoint_name,
+                    "container_id": container.get("Id")
+                    or container.get("ID")
+                    or container.get("id"),
+                    "container_name": container_name,
+                    "image": image,
+                    "state": state,
+                    "status": status,
+                    "created_at": created_at,
+                    "ports": port_summary,
+                }
+            )
+    if not records:
+        return pd.DataFrame(
+            columns=[
+                "endpoint_id",
+                "endpoint_name",
+                "container_id",
+                "container_name",
+                "image",
+                "state",
+                "status",
+                "created_at",
+                "ports",
             ]
         )
     return pd.DataFrame.from_records(records)
