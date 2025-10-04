@@ -176,8 +176,20 @@ def clear_cached_data() -> None:
 @st.cache_data(show_spinner=False)
 def fetch_portainer_data(
     environments: tuple[PortainerEnvironment, ...],
+    *,
+    include_stopped: bool = False,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
-    """Fetch data for the provided environments, caching the result."""
+    """Fetch data for the provided environments, caching the result.
+
+    Parameters
+    ----------
+    environments:
+        Sequence of configured Portainer environments to query.
+    include_stopped:
+        When ``True`` the Docker API is queried with ``all=1`` so stopped
+        containers are included in the response. Defaults to ``False`` to keep
+        compatibility with dashboards that focus on running workloads.
+    """
 
     stack_frames: list[pd.DataFrame] = []
     container_frames: list[pd.DataFrame] = []
@@ -203,7 +215,9 @@ def fetch_portainer_data(
                 )
                 stacks[endpoint_id] = []
             try:
-                containers[endpoint_id] = client.list_containers_for_endpoint(endpoint_id)
+                containers[endpoint_id] = client.list_containers_for_endpoint(
+                    endpoint_id, include_stopped=include_stopped
+                )
             except PortainerAPIError as exc:
                 warnings.append(
                     f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"

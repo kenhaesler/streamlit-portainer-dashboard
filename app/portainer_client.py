@@ -175,6 +175,7 @@ def normalise_endpoint_containers(
             image = container.get("Image") or container.get("ImageID")
             state = container.get("State")
             status = container.get("Status")
+            restart_count = container.get("RestartCount")
             created_raw = container.get("Created")
             created_at: Optional[str]
             created_at = None
@@ -215,6 +216,7 @@ def normalise_endpoint_containers(
                     "image": image,
                     "state": state,
                     "status": status,
+                    "restart_count": restart_count,
                     "created_at": created_at,
                     "ports": port_summary,
                 }
@@ -229,6 +231,7 @@ def normalise_endpoint_containers(
                 "image",
                 "state",
                 "status",
+                "restart_count",
                 "created_at",
                 "ports",
             ]
