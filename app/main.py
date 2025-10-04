@@ -12,12 +12,14 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         get_saved_environments,
         initialise_session_state,
     )
+    from app.ui_helpers import apply_lucerne_theme  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
         apply_selected_environment,
         get_saved_environments,
         initialise_session_state,
     )
+    from ui_helpers import apply_lucerne_theme  # type: ignore[no-redef]
 
 
 load_dotenv()
