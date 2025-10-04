@@ -23,6 +23,50 @@ st.set_page_config(page_title="Portainer Dashboard", layout="wide")
 st.title("🚀 Streamlit Portainer Dashboard")
 
 
+def _humanize_value(value: object, mapping: dict[int, str]) -> object:
+    """Return a human-readable label for numeric codes when available."""
+
+    if pd.isna(value):
+        return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        int_value = int(value)
+        return mapping.get(int_value, value)
+    if isinstance(value, str):
+        try:
+            int_value = int(float(value))
+        except ValueError:
+            return mapping.get(value, value)
+        return mapping.get(int_value, mapping.get(value, value))
+    return mapping.get(value, value)
+
+
+def _humanize_stack_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Format stack metadata with human-readable labels when possible."""
+
+    if df.empty:
+        return df
+
+    endpoint_mapping = {1: "Up", 2: "Down"}
+    stack_status_mapping = {1: "Active", 2: "Inactive"}
+    stack_type_mapping = {
+        1: "Docker Swarm",
+        2: "Docker Compose",
+        3: "Kubernetes",
+    }
+
+    humanised = df.copy()
+    for column, mapping in (
+        ("endpoint_status", endpoint_mapping),
+        ("stack_status", stack_status_mapping),
+        ("stack_type", stack_type_mapping),
+    ):
+        if column in humanised.columns:
+            humanised[column] = humanised[column].apply(
+                lambda value, mapping=mapping: _humanize_value(value, mapping)
+            )
+    return humanised
+
+
 def _fetch_portainer_data() -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     client = load_client_from_env()
     endpoints = client.list_edge_endpoints()
@@ -74,10 +118,20 @@ if stack_data.empty and container_data.empty:
     st.stop()
 
 
+page_options = ["Overview", "Running containers", "Running images"]
+
 with st.sidebar:
     if st.button("🔄 Refresh data", use_container_width=True):
         get_cached_data.clear()
         st.experimental_rerun()
+
+    st.header("Navigation")
+    selected_page = st.radio(
+        "Page",
+        page_options,
+        index=0,
+        label_visibility="collapsed",
+    )
 
     st.header("Filters")
     endpoints = sorted(name for name in stack_data["endpoint_name"].dropna().unique())
@@ -89,7 +143,7 @@ with st.sidebar:
     stack_search = st.text_input("Search stack name")
     container_search = st.text_input("Search container or image")
 
-stack_filtered = stack_data.copy()
+stack_filtered = _humanize_stack_dataframe(stack_data)
 if selected_endpoints:
     stack_filtered = stack_filtered[stack_filtered["endpoint_name"].isin(selected_endpoints)]
 if stack_search:
@@ -109,11 +163,7 @@ if container_search:
     )
     containers_filtered = containers_filtered[search_mask]
 
-overview_tab, containers_tab, images_tab = st.tabs(
-    ["Overview", "Running containers", "Running images"]
-)
-
-with overview_tab:
+if selected_page == "Overview":
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Edge agents", int(stack_filtered["endpoint_id"].nunique()))
@@ -143,7 +193,7 @@ with overview_tab:
     else:
         st.info("No stacks associated with the selected endpoints.")
 
-with containers_tab:
+elif selected_page == "Running containers":
     st.subheader("Running containers")
     if containers_filtered.empty:
         st.info("No running containers for the selected endpoints.")
@@ -179,7 +229,7 @@ with containers_tab:
         ).reset_index(drop=True)
         st.dataframe(container_display, use_container_width=True)
 
-with images_tab:
+elif selected_page == "Running images":
     st.subheader("Running images overview")
     if containers_filtered.empty:
         st.info("No running containers available to derive image statistics.")
