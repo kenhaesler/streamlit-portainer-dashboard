@@ -206,14 +206,6 @@ if not configured_environments:
 
 try:
     stack_data, container_data, warnings = get_cached_data(configured_environments)
-    data_available = False
-    stack_data = pd.DataFrame()
-    container_data = pd.DataFrame()
-    warnings = []
-    st.error(
-        "Missing configuration: set `PORTAINER_API_URL` and `PORTAINER_API_KEY` "
-        "environment variables or add a saved environment.",
-    )
 except PortainerAPIError as exc:
     data_available = False
     stack_data = pd.DataFrame()
@@ -268,46 +260,6 @@ with st.sidebar:
             None,
         )
 
-    st.header("Filters")
-    environment_options = sorted(
-        pd.concat(
-            [
-                stack_data.get("environment_name", pd.Series(dtype="object")),
-                container_data.get("environment_name", pd.Series(dtype="object")),
-            ]
-        )
-        .dropna()
-        .unique()
-        .tolist()
-    )
-    selected_environments = st.multiselect(
-        "Environments",
-        options=environment_options,
-        default=environment_options,
-    )
-
-    if selected_environments:
-        endpoint_source = pd.concat(
-            [
-                stack_data[stack_data["environment_name"].isin(selected_environments)][
-                    "endpoint_name"
-                ],
-                container_data[
-                    container_data["environment_name"].isin(selected_environments)
-                ]["endpoint_name"],
-            ],
-            ignore_index=True,
-        )
-    else:
-        endpoint_source = pd.Series(dtype="object")
-    endpoints = sorted(endpoint_source.dropna().unique().tolist())
-    selected_endpoints = st.multiselect(
-        "Edge agents",
-        options=endpoints,
-        default=endpoints,
-    )
-    stack_search = st.text_input("Search stack name")
-    container_search = st.text_input("Search container or image")
         if st.session_state.get(prev_selection_key) != selection:
             st.session_state[prev_selection_key] = selection
             st.session_state["portainer_env_form_name"] = (
@@ -441,11 +393,38 @@ with st.sidebar:
         )
 
         st.header("Filters")
+        environment_options = sorted(
+            pd.concat(
+                [
+                    stack_data.get("environment_name", pd.Series(dtype="object")),
+                    container_data.get("environment_name", pd.Series(dtype="object")),
+                ]
+            )
+            .dropna()
+            .unique()
+            .tolist()
+        )
+        selected_environments = st.multiselect(
+            "Environments",
+            options=environment_options,
+            default=environment_options,
+        )
+        if selected_environments:
+            endpoint_source = pd.concat(
+                [
+                    stack_data[stack_data["environment_name"].isin(selected_environments)][
+                        "endpoint_name"
+                    ],
+                    container_data[
+                        container_data["environment_name"].isin(selected_environments)
+                    ]["endpoint_name"],
+                ],
+                ignore_index=True,
+            )
+        else:
+            endpoint_source = pd.Series(dtype="object")
         endpoints = sorted(
-            name
-            for name in stack_data.get(
-                "endpoint_name", pd.Series(dtype="object")
-            ).dropna().unique()
+            endpoint_source.dropna().unique().tolist()
         )
         selected_endpoints = st.multiselect(
             "Edge agents",
