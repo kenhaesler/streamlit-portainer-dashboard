@@ -137,7 +137,9 @@ else:
     container_display = container_display[existing_columns + remaining_columns]
     if "restart_count" in container_display.columns:
         container_display["restart_count"] = (
-            container_display["restart_count"].fillna(0).astype(int)
+            pd.to_numeric(container_display["restart_count"], errors="coerce")
+            .fillna(0)
+            .astype(int)
         )
 
     container_display = container_display.sort_values(
