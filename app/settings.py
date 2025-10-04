@@ -1,8 +1,10 @@
 """Application settings helpers for Portainer environments."""
 from __future__ import annotations
 
+import errno
 import json
 import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, List
@@ -94,11 +96,81 @@ def get_configured_environments() -> List[PortainerEnvironment]:
     return configured
 
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / ".streamlit" / "portainer_environments.json"
+_PERMISSION_ERRNOS = {errno.EACCES, errno.EPERM, errno.EROFS}
 
 
-def _ensure_config_dir() -> None:
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+def _config_path_candidates() -> list[Path]:
+    """Return the ordered list of potential locations for the config file."""
+
+    candidates: list[Path] = []
+    override_file = os.getenv("PORTAINER_ENVIRONMENTS_PATH")
+    if override_file:
+        candidates.append(Path(override_file).expanduser())
+
+    override_dir = os.getenv("PORTAINER_ENVIRONMENTS_DIR")
+    if override_dir:
+        candidates.append(Path(override_dir).expanduser() / "portainer_environments.json")
+
+    repo_default = (
+        Path(__file__).resolve().parent.parent / ".streamlit" / "portainer_environments.json"
+    )
+    candidates.append(repo_default)
+
+    home_default = Path.home() / ".streamlit" / "portainer_environments.json"
+    candidates.append(home_default)
+
+    tmp_default = (
+        Path(tempfile.gettempdir())
+        / "streamlit-portainer-dashboard"
+        / "portainer_environments.json"
+    )
+    candidates.append(tmp_default)
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        expanded = candidate.expanduser()
+        key = str(expanded)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(expanded)
+    return unique
+
+
+def _initial_config_path(candidates: list[Path]) -> Path:
+    for candidate in candidates:
+        try:
+            if candidate.exists():
+                return candidate
+        except OSError:
+            continue
+    return candidates[0]
+
+
+_CONFIG_CANDIDATES = _config_path_candidates()
+CONFIG_PATH = _initial_config_path(_CONFIG_CANDIDATES)
+
+
+def _update_config_path(path: Path) -> None:
+    global CONFIG_PATH
+    CONFIG_PATH = path
+
+
+def _current_config_path() -> Path:
+    try:
+        if CONFIG_PATH.exists():
+            return CONFIG_PATH
+    except OSError:
+        pass
+    for candidate in _CONFIG_CANDIDATES:
+        try:
+            if candidate.exists():
+                _update_config_path(candidate)
+                return candidate
+        except OSError:
+            continue
+    return CONFIG_PATH
 
 
 def _coerce_bool(value: Any, *, default: bool = True) -> bool:
@@ -119,10 +191,14 @@ def _coerce_bool(value: Any, *, default: bool = True) -> bool:
 def load_environments() -> list[dict[str, Any]]:
     """Load saved Portainer environments from disk."""
 
-    if not CONFIG_PATH.exists():
+    path = _current_config_path()
+    try:
+        if not path.exists():
+            return []
+    except OSError:
         return []
     try:
-        data = json.loads(CONFIG_PATH.read_text("utf-8"))
+        data = json.loads(path.read_text("utf-8"))
     except (OSError, json.JSONDecodeError):
         return []
     if not isinstance(data, list):
@@ -157,5 +233,28 @@ def save_environments(environments: Iterable[dict[str, Any]]) -> None:
                 "verify_ssl": _coerce_bool(env.get("verify_ssl"), default=True),
             }
         )
-    _ensure_config_dir()
-    CONFIG_PATH.write_text(json.dumps(serialisable, indent=2), "utf-8")
+    last_error: OSError | None = None
+    payload = json.dumps(serialisable, indent=2)
+    for candidate in _CONFIG_CANDIDATES:
+        try:
+            candidate.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as error:
+            last_error = error
+            continue
+        try:
+            candidate.write_text(payload, "utf-8")
+        except OSError as error:
+            if error.errno in _PERMISSION_ERRNOS or error.errno is None:
+                last_error = error
+                continue
+            raise
+        else:
+            _update_config_path(candidate)
+            return
+    if last_error is not None:
+        raise PermissionError(
+            "Unable to persist Portainer environments to any configured location."
+        ) from last_error
+    raise PermissionError(
+        "Unable to determine a writable location for Portainer environments."
+    )

@@ -29,3 +29,10 @@ The application is configured via environment variables:
      streamlit-portainer-dashboard
    ```
 5. Visit http://localhost:8501 to access the dashboard. Any Portainer environments you add inside the app will be stored in the mounted volume and remain available for future container runs.
+
+### Customising the storage location
+
+By default the dashboard stores the saved environments in a `.streamlit/portainer_environments.json` file inside the application directory. When that location is not writable (for example on some managed hosting platforms) the app will fall back to other writable directories automatically. You can explicitly control the storage path via environment variables:
+
+- Set `PORTAINER_ENVIRONMENTS_PATH` to the full path of the JSON file to use.
+- Alternatively, set `PORTAINER_ENVIRONMENTS_DIR` to point to a writable directory and the default file name (`portainer_environments.json`) will be created inside it.
