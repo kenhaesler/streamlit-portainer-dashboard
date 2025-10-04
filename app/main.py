@@ -1,4 +1,5 @@
 import pandas as pd
+import plotly.express as px
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -118,7 +119,12 @@ if stack_data.empty and container_data.empty:
     st.stop()
 
 
-page_options = ["Overview", "Running containers", "Running images"]
+page_options = [
+    "Overview",
+    "Environment insights",
+    "Running containers",
+    "Running images",
+]
 
 with st.sidebar:
     if st.button("🔄 Refresh data", use_container_width=True):
@@ -192,6 +198,148 @@ if selected_page == "Overview":
         st.bar_chart(chart_data)
     else:
         st.info("No stacks associated with the selected endpoints.")
+
+elif selected_page == "Environment insights":
+    st.subheader("Environment health at a glance")
+
+    endpoint_overview = (
+        stack_filtered[
+            ["endpoint_id", "endpoint_name", "endpoint_status"]
+        ]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+
+    total_endpoints = int(endpoint_overview["endpoint_id"].nunique())
+    status_series = endpoint_overview["endpoint_status"].fillna("Unknown").astype(str)
+    healthy_count = int(status_series.str.lower().eq("up").sum())
+    stack_coverage = 0
+    if total_endpoints:
+        endpoints_with_stacks = (
+            stack_filtered.dropna(subset=["stack_id"])["endpoint_id"].nunique()
+        )
+        stack_coverage = round((endpoints_with_stacks / total_endpoints) * 100)
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Edge agents", total_endpoints)
+    with col2:
+        st.metric("Healthy agents", healthy_count)
+    with col3:
+        st.metric("Stack coverage", f"{stack_coverage}%")
+
+    if not endpoint_overview.empty:
+        status_counts = (
+            status_series.value_counts().rename_axis("status").reset_index(name="count")
+        )
+        status_chart = px.pie(
+            status_counts,
+            names="status",
+            values="count",
+            title="Endpoint status distribution",
+            color_discrete_sequence=px.colors.sequential.Viridis,
+            hole=0.35,
+        )
+        st.plotly_chart(status_chart, use_container_width=True)
+    else:
+        st.info("No endpoint metadata available for the selected filters.")
+
+    st.subheader("Endpoint activity overview")
+
+    stack_counts = (
+        stack_filtered.dropna(subset=["stack_id"])
+        .groupby("endpoint_name")
+        .agg(stacks=("stack_id", "nunique"))
+    )
+    container_activity = (
+        containers_filtered.groupby("endpoint_name")
+        .agg(
+            running_containers=("container_id", "nunique"),
+            unique_images=("image", "nunique"),
+        )
+    )
+    endpoint_status_lookup = (
+        endpoint_overview.set_index("endpoint_name")["endpoint_status"].to_frame()
+    )
+    endpoint_summary = (
+        endpoint_status_lookup.join(stack_counts, how="left")
+        .join(container_activity, how="left")
+        .fillna({"stacks": 0, "running_containers": 0, "unique_images": 0})
+        .astype({"stacks": int, "running_containers": int, "unique_images": int})
+        .sort_values(["running_containers", "stacks"], ascending=False)
+    )
+    st.dataframe(endpoint_summary, use_container_width=True)
+
+    if not containers_filtered.empty:
+        st.subheader("Container landscape")
+
+        state_counts = (
+            containers_filtered["state"].fillna("unknown").astype(str).value_counts()
+        )
+        state_chart = px.bar(
+            state_counts.rename_axis("state").reset_index(name="count"),
+            x="state",
+            y="count",
+            title="Container state distribution",
+            color="state",
+            color_discrete_sequence=px.colors.sequential.Cividis,
+        )
+        st.plotly_chart(state_chart, use_container_width=True)
+
+        container_counts = (
+            containers_filtered.groupby("endpoint_name")
+            .agg(container_count=("container_id", "nunique"))
+            .sort_values("container_count", ascending=False)
+            .reset_index()
+        )
+        if not container_counts.empty:
+            density_chart = px.bar(
+                container_counts,
+                x="container_count",
+                y="endpoint_name",
+                orientation="h",
+                title="Running containers per endpoint",
+                color="container_count",
+                color_continuous_scale=px.colors.sequential.Blues,
+            )
+            density_chart.update_layout(yaxis_title="Endpoint", xaxis_title="Containers")
+            st.plotly_chart(density_chart, use_container_width=True)
+
+        top_images = (
+            containers_filtered.groupby("image", dropna=False)
+            .agg(count=("container_id", "nunique"))
+            .reset_index()
+            .sort_values("count", ascending=False)
+            .head(10)
+        )
+        if not top_images.empty:
+            image_chart = px.bar(
+                top_images,
+                x="count",
+                y="image",
+                orientation="h",
+                title="Top running images",
+                color="count",
+                color_continuous_scale=px.colors.sequential.Plasma,
+            )
+            image_chart.update_layout(yaxis_title="Image", xaxis_title="Containers")
+            st.plotly_chart(image_chart, use_container_width=True)
+
+        created_series = pd.to_datetime(
+            containers_filtered["created_at"], errors="coerce", utc=True
+        )
+        age_days = (pd.Timestamp.utcnow() - created_series).dt.total_seconds() / 86400
+        if age_days.notna().any():
+            age_chart = px.histogram(
+                age_days.dropna(),
+                nbins=20,
+                title="Container age distribution",
+                labels={"value": "Age (days)", "count": "Containers"},
+                color_discrete_sequence=px.colors.sequential.Agsunset,
+            )
+            st.plotly_chart(age_chart, use_container_width=True)
+    else:
+        st.info("No container data available for the selected filters.")
 
 elif selected_page == "Running containers":
     st.subheader("Running containers")
