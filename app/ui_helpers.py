@@ -23,10 +23,12 @@ def apply_lucerne_theme() -> None:
     """Inject the Canton of Lucerne visual styling into the Streamlit app."""
 
     theme_key = "_lucerne_theme_applied"
-    if st.session_state.get(theme_key):
-        return
-
-    st.session_state[theme_key] = True
+    # Track the number of times the theme has been injected mainly for debugging
+    # purposes, but always reapply the stylesheet. Streamlit rebuilds the page
+    # with every navigation or rerun which clears previously injected CSS, so
+    # skipping subsequent injections would cause the app to fall back to the
+    # default styling on secondary pages.
+    st.session_state[theme_key] = st.session_state.get(theme_key, 0) + 1
     st.markdown(
         """
         <style>
