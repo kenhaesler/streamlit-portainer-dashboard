@@ -28,19 +28,11 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
 
 
 
-try:  # pragma: no cover - import shim for Streamlit runtime
-    from app.ui_helpers import apply_global_theme  # type: ignore[import-not-found]
-except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
-    from ui_helpers import apply_global_theme  # type: ignore[no-redef]
-
-
 def rerun_app() -> None:
     """Trigger a Streamlit rerun across supported API versions."""
 
     trigger_rerun()
 
-
-apply_global_theme()
 
 st.title("Settings")
 
