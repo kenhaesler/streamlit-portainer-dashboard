@@ -235,7 +235,7 @@ stack_search = ""
 container_search = ""
 
 with st.sidebar:
-    if st.button("🔄 Refresh data", use_container_width=True):
+    if st.button("🔄 Refresh data", width="stretch"):
         get_cached_data.clear()
         st.rerun()
 
@@ -294,7 +294,7 @@ with st.sidebar:
                 key="portainer_env_form_verify_ssl",
             )
             submitted = st.form_submit_button(
-                "Save environment", use_container_width=True
+                "Save environment", width="stretch"
             )
 
         if submitted:
@@ -484,7 +484,7 @@ if selected_page == "Overview":
             ["environment_name", "endpoint_name", "stack_name"],
             na_position="last",
         ).reset_index(drop=True),
-        use_container_width=True,
+        width="stretch",
     )
 
     stack_counts = stack_filtered.dropna(subset=["stack_id"])
@@ -508,7 +508,7 @@ if selected_page == "Overview":
                 "environment_name": "Environment",
             },
         )
-        st.plotly_chart(stack_chart, use_container_width=True)
+        st.plotly_chart(stack_chart, width="stretch")
     else:
         st.info("No stacks associated with the selected endpoints.")
 
@@ -582,7 +582,7 @@ elif selected_page == "Environment insights":
                     "stack_coverage_percent": "Stack coverage %",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
         )
 
     if not endpoint_overview.empty:
@@ -605,7 +605,7 @@ elif selected_page == "Environment insights":
             },
             barmode="stack",
         )
-        st.plotly_chart(status_chart, use_container_width=True)
+        st.plotly_chart(status_chart, width="stretch")
     else:
         st.info("No endpoint metadata available for the selected filters.")
 
@@ -636,7 +636,7 @@ elif selected_page == "Environment insights":
         .sort_values(["running_containers", "stacks"], ascending=False)
         .reset_index()
     )
-    st.dataframe(endpoint_summary, use_container_width=True)
+    st.dataframe(endpoint_summary, width="stretch")
 
     if not containers_filtered.empty:
         st.subheader("Container landscape")
@@ -663,7 +663,7 @@ elif selected_page == "Environment insights":
             barmode="stack",
             color_discrete_sequence=px.colors.sequential.Cividis,
         )
-        st.plotly_chart(state_chart, use_container_width=True)
+        st.plotly_chart(state_chart, width="stretch")
 
         container_counts = (
             containers_filtered.groupby(["environment_name", "endpoint_name"])
@@ -686,7 +686,7 @@ elif selected_page == "Environment insights":
                 },
             )
             density_chart.update_layout(yaxis_title="Endpoint", xaxis_title="Containers")
-            st.plotly_chart(density_chart, use_container_width=True)
+            st.plotly_chart(density_chart, width="stretch")
 
         top_images = (
             containers_filtered.groupby(["environment_name", "image"], dropna=False)
@@ -710,7 +710,7 @@ elif selected_page == "Environment insights":
                 },
             )
             image_chart.update_layout(yaxis_title="Image", xaxis_title="Containers")
-            st.plotly_chart(image_chart, use_container_width=True)
+            st.plotly_chart(image_chart, width="stretch")
 
         created_series = pd.to_datetime(
             containers_filtered["created_at"], errors="coerce", utc=True
@@ -732,7 +732,7 @@ elif selected_page == "Environment insights":
                 labels={"age_days": "Age (days)", "count": "Containers"},
                 color_discrete_sequence=px.colors.sequential.Agsunset,
             )
-            st.plotly_chart(age_chart, use_container_width=True)
+            st.plotly_chart(age_chart, width="stretch")
     else:
         st.info("No container data available for the selected filters.")
 
@@ -772,7 +772,7 @@ elif selected_page == "Running containers":
             ["environment_name", "endpoint_name", "container_name"],
             na_position="last",
         ).reset_index(drop=True)
-        st.dataframe(container_display, use_container_width=True)
+        st.dataframe(container_display, width="stretch")
 
 elif selected_page == "Running images":
     st.subheader("Running images overview")
@@ -801,5 +801,5 @@ elif selected_page == "Running images":
                     "endpoints": "Edge agents",
                 }
             ),
-            use_container_width=True,
+            width="stretch",
         )
