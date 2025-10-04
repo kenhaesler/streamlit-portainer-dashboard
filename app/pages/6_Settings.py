@@ -14,6 +14,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         set_saved_environments,
         trigger_rerun,
     )
+    from app.ui_helpers import apply_lucerne_theme  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
         apply_selected_environment,
@@ -25,6 +26,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         set_saved_environments,
         trigger_rerun,
     )
+    from ui_helpers import apply_lucerne_theme  # type: ignore[no-redef]
 
 
 
@@ -33,6 +35,8 @@ def rerun_app() -> None:
 
     trigger_rerun()
 
+
+apply_lucerne_theme()
 
 st.title("Settings")
 
