@@ -90,28 +90,48 @@ if containers_filtered.empty and stack_filtered.empty:
     st.success("Everything looks healthy for the selected scope.")
     st.stop()
 
-issue_mask = containers_filtered["state"].fillna("").str.lower().ne("running")
-status_issue_mask = containers_filtered["status"].fillna("").str.contains(
-    "unhealthy|restart|dead|exit|paused|error", case=False
-)
+state_series = containers_filtered.get("state")
+status_series = containers_filtered.get("status")
+if state_series is None:
+    state_lower = pd.Series("", index=containers_filtered.index)
+    issue_mask = pd.Series(False, index=containers_filtered.index)
+else:
+    state_values = state_series.astype("string").fillna("")
+    state_lower = state_values.str.lower()
+    issue_mask = state_lower.ne("running")
+
+if status_series is None:
+    status_issue_mask = pd.Series(False, index=containers_filtered.index)
+else:
+    status_issue_mask = (
+        status_series.astype("string")
+        .fillna("")
+        .str.contains("unhealthy|restart|dead|exit|paused|error", case=False)
+    )
 problem_containers = containers_filtered[issue_mask | status_issue_mask]
 
-restart_counts = (
-    containers_filtered.get("restart_count", pd.Series(dtype="int"))
-    .fillna(0)
-    .astype(int)
-)
+restart_counts_raw = containers_filtered.get("restart_count")
+if restart_counts_raw is None:
+    restart_counts = pd.Series(0, index=containers_filtered.index, dtype=int)
+else:
+    restart_counts = (
+        pd.to_numeric(restart_counts_raw, errors="coerce")
+        .fillna(0)
+        .astype(int)
+    )
+running_state_series = state_lower
 high_restart_mask = (restart_counts >= RESTART_ALERT_THRESHOLD) & (
-    containers_filtered["state"].fillna("").str.lower() == "running"
+    running_state_series == "running"
 )
 high_restart_containers = containers_filtered[high_restart_mask]
 
 offline_source = stack_filtered.drop_duplicates(
     subset=["endpoint_id", "environment_name", "endpoint_status", "endpoint_name"]
 )
-offline_mask = offline_source["endpoint_status"].fillna("").str.lower().isin(
-    {"down", "offline"}
+offline_status = (
+    offline_source["endpoint_status"].astype("string").fillna("")
 )
+offline_mask = offline_status.str.lower().isin({"down", "offline"})
 offline_agents = offline_source.loc[
     offline_mask, ["environment_name", "endpoint_name", "endpoint_status"]
 ].rename(
@@ -167,7 +187,9 @@ problem_summary = (
     .reset_index()
 )
 if not problem_summary.empty:
-    problem_summary["state"] = problem_summary["state"].fillna("Unknown state")
+    problem_summary["state"] = (
+        problem_summary["state"].astype("string").fillna("Unknown state")
+    )
     st.subheader("Containers requiring attention", divider="red")
     issue_chart = px.bar(
         problem_summary,
@@ -187,9 +209,15 @@ if not problem_summary.empty:
 
 if not problem_containers.empty:
     attention_display = problem_containers.copy()
-    attention_display["restart_count"] = (
-        attention_display.get("restart_count", 0).fillna(0).astype(int)
-    )
+    attention_restart_series = attention_display.get("restart_count")
+    if attention_restart_series is None:
+        attention_display["restart_count"] = 0
+    else:
+        attention_display["restart_count"] = (
+            pd.to_numeric(attention_restart_series, errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
     created_series = pd.to_datetime(attention_display["created_at"], errors="coerce", utc=True)
     formatted_created = created_series.dt.tz_convert(None).dt.strftime("%Y-%m-%d %H:%M:%S")
     attention_display["created_at"] = formatted_created
@@ -229,9 +257,15 @@ else:
 if not high_restart_containers.empty:
     st.subheader("Running containers with frequent restarts", divider="orange")
     restart_display = high_restart_containers.copy()
-    restart_display["restart_count"] = (
-        restart_display.get("restart_count", 0).fillna(0).astype(int)
-    )
+    restart_restart_series = restart_display.get("restart_count")
+    if restart_restart_series is None:
+        restart_display["restart_count"] = 0
+    else:
+        restart_display["restart_count"] = (
+            pd.to_numeric(restart_restart_series, errors="coerce")
+            .fillna(0)
+            .astype(int)
+        )
     created_series = pd.to_datetime(restart_display["created_at"], errors="coerce", utc=True)
     formatted_created = created_series.dt.tz_convert(None).dt.strftime("%Y-%m-%d %H:%M:%S")
     restart_display["created_at"] = formatted_created
