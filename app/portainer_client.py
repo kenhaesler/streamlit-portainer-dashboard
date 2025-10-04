@@ -8,6 +8,7 @@ from typing import Dict, Iterable, List, Optional
 
 import pandas as pd
 import requests
+from urllib3.exceptions import InsecureRequestWarning
 
 LOGGER = logging.getLogger(__name__)
 
@@ -23,6 +24,7 @@ class PortainerClient:
     base_url: str
     api_key: str
     timeout: tuple[float, float] = (5.0, 30.0)
+    verify_ssl: bool = True
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -30,6 +32,8 @@ class PortainerClient:
             self.base_url = f"{self.base_url}/api"
         if not self.api_key:
             raise ValueError("Portainer API key is required")
+        if not self.verify_ssl:
+            requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
     @property
     def _headers(self) -> Dict[str, str]:
@@ -38,7 +42,13 @@ class PortainerClient:
     def _request(self, path: str, *, params: Optional[Dict[str, object]] = None) -> object:
         url = f"{self.base_url}{path}"
         try:
-            response = requests.get(url, headers=self._headers, params=params, timeout=self.timeout)
+            response = requests.get(
+                url,
+                headers=self._headers,
+                params=params,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
             response.raise_for_status()
         except requests.RequestException as exc:  # pragma: no cover - defensive
             raise PortainerAPIError(str(exc)) from exc
@@ -128,13 +138,22 @@ def normalise_endpoint_stacks(
     return pd.DataFrame.from_records(records)
 
 
+def _parse_bool_env(value: str, *, default: bool = True) -> bool:
+    """Return a boolean from an environment variable string."""
+
+    if value == "":
+        return default
+    return value.strip().lower() not in {"0", "false", "no", "off"}
+
+
 def load_client_from_env() -> PortainerClient:
     """Create a :class:`PortainerClient` from environment variables."""
 
     api_url = os.getenv("PORTAINER_API_URL", "").strip()
     api_key = os.getenv("PORTAINER_API_KEY", "").strip()
+    verify_ssl = _parse_bool_env(os.getenv("PORTAINER_VERIFY_SSL", ""), default=True)
     if not api_url:
         raise ValueError("PORTAINER_API_URL environment variable is required")
     if not api_key:
         raise ValueError("PORTAINER_API_KEY environment variable is required")
-    return PortainerClient(base_url=api_url, api_key=api_key)
+    return PortainerClient(base_url=api_url, api_key=api_key, verify_ssl=verify_ssl)
