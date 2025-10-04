@@ -17,6 +17,56 @@ class PortainerAPIError(RuntimeError):
     """Raised when a Portainer API request fails."""
 
 
+def _coerce_int(value: object) -> int | None:
+    """Return ``value`` as an integer when possible."""
+
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str) and value.strip():
+        try:
+            return int(float(value))
+        except ValueError:
+            return None
+    return None
+
+
+def _stack_targets_endpoint(stack: Dict[str, object], endpoint_id: int) -> bool:
+    """Return ``True`` when a stack is assigned to the provided endpoint."""
+
+    endpoint_keys = ("EndpointId", "EndpointID", "endpointId", "endpointID")
+    for key in endpoint_keys:
+        if key not in stack:
+            continue
+        coerced = _coerce_int(stack.get(key))
+        if coerced is None:
+            continue
+        if coerced == endpoint_id:
+            return True
+
+    deployment_info = stack.get("DeploymentInfo") or stack.get("deploymentInfo")
+    if isinstance(deployment_info, dict):
+        str_endpoint_id = str(endpoint_id)
+        if str_endpoint_id in {str(key) for key in deployment_info.keys()}:
+            return True
+        for info in deployment_info.values():
+            if not isinstance(info, dict):
+                continue
+            for key in endpoint_keys:
+                if key not in info:
+                    continue
+                coerced = _coerce_int(info.get(key))
+                if coerced is None:
+                    continue
+                if coerced == endpoint_id:
+                    return True
+
+    return False
+
+
 @dataclass
 class PortainerClient:
     """Lightweight Portainer API client."""
@@ -115,8 +165,13 @@ def normalise_endpoint_stacks(
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
         endpoint_status = endpoint.get("Status") or endpoint.get("status")
         stacks = stacks_by_endpoint.get(endpoint_id) or []
-        if stacks:
-            for stack in stacks:
+        targeted_stacks = [
+            stack
+            for stack in stacks
+            if _stack_targets_endpoint(stack, endpoint_id)
+        ]
+        if targeted_stacks:
+            for stack in targeted_stacks:
                 records.append(
                     {
                         "endpoint_id": endpoint_id,
