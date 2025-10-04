@@ -12,6 +12,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         initialise_session_state,
         set_active_environment,
         set_saved_environments,
+        trigger_rerun,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
@@ -22,6 +23,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         initialise_session_state,
         set_active_environment,
         set_saved_environments,
+        trigger_rerun,
     )
 
 
@@ -29,10 +31,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
 def rerun_app() -> None:
     """Trigger a Streamlit rerun across supported API versions."""
 
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:  # pragma: no cover - fallback for older Streamlit versions
-        st.experimental_rerun()
+    trigger_rerun()
 
 
 st.title("Settings")
@@ -103,7 +102,7 @@ with st.form("portainer_env_form"):
         "Verify SSL certificates",
         key="portainer_env_form_verify_ssl",
     )
-    submitted = st.form_submit_button("Save environment", use_container_width=True)
+    submitted = st.form_submit_button("Save environment", width="stretch")
 
 if submitted:
     name_value = st.session_state["portainer_env_form_name"].strip()

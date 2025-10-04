@@ -38,6 +38,7 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
 __all__ = [
     "ConfigurationError",
     "NoEnvironmentsConfiguredError",
+    "trigger_rerun",
     "FilterResult",
     "apply_selected_environment",
     "clear_cached_data",
@@ -67,6 +68,15 @@ SESSION_FILTER_ENVIRONMENTS = "portainer_filter_selected_environments"
 SESSION_FILTER_ENDPOINTS = "portainer_filter_selected_endpoints"
 SESSION_FILTER_STACK_SEARCH = "portainer_filter_stack_search"
 SESSION_FILTER_CONTAINER_SEARCH = "portainer_filter_container_search"
+
+
+def trigger_rerun() -> None:
+    """Request Streamlit to rerun the script, handling legacy APIs."""
+
+    rerun = getattr(st, "rerun", None) or getattr(st, "experimental_rerun", None)
+    if rerun is None:  # pragma: no cover - unexpected runtime configuration
+        raise AttributeError("Streamlit rerun API is unavailable")
+    rerun()
 
 
 def initialise_session_state() -> None:
@@ -285,9 +295,9 @@ def render_sidebar_filters(
     """Render common sidebar controls and return the applied filters."""
 
     with st.sidebar:
-        if st.button("🔄 Refresh data", use_container_width=True):
+        if st.button("🔄 Refresh data", width="stretch"):
             clear_cached_data()
-            st.experimental_rerun()
+            trigger_rerun()
 
         saved_envs = get_saved_environments()
         env_names = [env.get("name", "") for env in saved_envs if env.get("name")]
@@ -303,7 +313,7 @@ def render_sidebar_filters(
             )
             if selection != current_name:
                 set_active_environment(selection)
-                st.experimental_rerun()
+                trigger_rerun()
         else:
             st.info("No saved environments. Use the Settings page to add one.")
 
