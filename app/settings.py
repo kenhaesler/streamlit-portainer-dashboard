@@ -1,9 +1,18 @@
 """Application settings helpers for Portainer environments."""
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
-from typing import Iterable, List
+from pathlib import Path
+from typing import Any, Iterable, List
+
+__all__ = [
+    "PortainerEnvironment",
+    "get_configured_environments",
+    "load_environments",
+    "save_environments",
+]
 
 
 @dataclass(frozen=True)
@@ -47,7 +56,12 @@ def _build_environment(name: str, *, prefix: str | None = None) -> PortainerEnvi
             f"Configuration for environment '{name}' is incomplete: "
             "missing API URL or API key."
         )
-    return PortainerEnvironment(name=name, api_url=api_url, api_key=api_key, verify_ssl=verify_ssl)
+    return PortainerEnvironment(
+        name=name,
+        api_url=api_url,
+        api_key=api_key,
+        verify_ssl=verify_ssl,
+    )
 
 
 def get_configured_environments() -> List[PortainerEnvironment]:
@@ -79,14 +93,6 @@ def get_configured_environments() -> List[PortainerEnvironment]:
         )
     return configured
 
-
-__all__ = ["PortainerEnvironment", "get_configured_environments"]
-"""Configuration helpers for managing saved Portainer environments."""
-from __future__ import annotations
-
-import json
-from pathlib import Path
-from typing import Any, Iterable
 
 CONFIG_PATH = Path(__file__).resolve().parent.parent / ".streamlit" / "portainer_environments.json"
 
