@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -14,6 +16,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         PortainerEnvironment,
         get_configured_environments,
     )
+    from app.settings import load_environments, save_environments  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from portainer_client import (  # type: ignore[no-redef]
         PortainerAPIError,
@@ -25,11 +28,45 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         PortainerEnvironment,
         get_configured_environments,
     )
+    from settings import load_environments, save_environments  # type: ignore[no-redef]
 
 load_dotenv()
 
 st.set_page_config(page_title="Portainer Dashboard", layout="wide")
 st.title("🚀 Streamlit Portainer Dashboard")
+
+
+if "portainer_envs" not in st.session_state:
+    st.session_state["portainer_envs"] = load_environments()
+
+if "portainer_selected_env" not in st.session_state:
+    environments = st.session_state["portainer_envs"]
+    st.session_state["portainer_selected_env"] = (
+        environments[0]["name"] if environments else ""
+    )
+
+if "portainer_env_form_selection" not in st.session_state:
+    default_env = st.session_state.get("portainer_selected_env") or "New environment"
+    st.session_state["portainer_env_form_selection"] = default_env
+
+
+def _get_selected_environment() -> dict[str, object] | None:
+    selected_name = st.session_state.get("portainer_selected_env")
+    for environment in st.session_state.get("portainer_envs", []):
+        if environment.get("name") == selected_name:
+            return environment
+    return None
+
+
+def _apply_selected_environment() -> None:
+    environment = _get_selected_environment()
+    if not environment:
+        return
+    os.environ["PORTAINER_API_URL"] = environment.get("api_url", "")
+    os.environ["PORTAINER_API_KEY"] = environment.get("api_key", "")
+    os.environ["PORTAINER_VERIFY_SSL"] = (
+        "true" if environment.get("verify_ssl", True) else "false"
+    )
 
 
 def _humanize_value(value: object, mapping: dict[int, str]) -> object:
@@ -144,6 +181,14 @@ def get_cached_data(
     return _fetch_portainer_data(environments)
 
 
+_apply_selected_environment()
+selected_environment_name = st.session_state.get("portainer_selected_env")
+if st.session_state.get("portainer_active_env_applied") != selected_environment_name:
+    get_cached_data.clear()
+    st.session_state["portainer_active_env_applied"] = selected_environment_name
+
+
+data_available = True
 try:
     configured_environments = tuple(get_configured_environments())
 except ValueError as exc:
@@ -161,15 +206,26 @@ if not configured_environments:
 
 try:
     stack_data, container_data, warnings = get_cached_data(configured_environments)
+    data_available = False
+    stack_data = pd.DataFrame()
+    container_data = pd.DataFrame()
+    warnings = []
+    st.error(
+        "Missing configuration: set `PORTAINER_API_URL` and `PORTAINER_API_KEY` "
+        "environment variables or add a saved environment.",
+    )
 except PortainerAPIError as exc:
+    data_available = False
+    stack_data = pd.DataFrame()
+    container_data = pd.DataFrame()
+    warnings = []
     st.error(f"Failed to load data from Portainer: {exc}")
-    st.stop()
 
 for warning in warnings:
     st.warning(warning, icon="⚠️")
 
 
-if stack_data.empty and container_data.empty:
+if data_available and stack_data.empty and container_data.empty:
     st.info("No data was returned by the Portainer API for the configured account.")
     st.stop()
 
@@ -181,18 +237,36 @@ page_options = [
     "Running images",
 ]
 
+selected_page = page_options[0]
+selected_endpoints: list[str] = []
+stack_search = ""
+container_search = ""
+
 with st.sidebar:
     if st.button("🔄 Refresh data", use_container_width=True):
         get_cached_data.clear()
         st.rerun()
 
-    st.header("Navigation")
-    selected_page = st.radio(
-        "Page",
-        page_options,
-        index=0,
-        label_visibility="collapsed",
-    )
+    environments_state = st.session_state.get("portainer_envs", [])
+    with st.expander("Portainer environments", expanded=not bool(environments_state)):
+        env_names = [env.get("name", "") for env in environments_state if env.get("name")]
+        form_selection_key = "portainer_env_form_selection"
+        prev_selection_key = "portainer_env_form_prev_selection"
+        options = ["New environment", *env_names]
+        if st.session_state.get(form_selection_key) not in options:
+            active_env = st.session_state.get("portainer_selected_env")
+            st.session_state[form_selection_key] = (
+                active_env if active_env in env_names else "New environment"
+            )
+        selection = st.selectbox(
+            "Manage environment",
+            options,
+            key=form_selection_key,
+        )
+        selected_env = next(
+            (env for env in environments_state if env.get("name") == selection),
+            None,
+        )
 
     st.header("Filters")
     environment_options = sorted(
@@ -234,6 +308,158 @@ with st.sidebar:
     )
     stack_search = st.text_input("Search stack name")
     container_search = st.text_input("Search container or image")
+        if st.session_state.get(prev_selection_key) != selection:
+            st.session_state[prev_selection_key] = selection
+            st.session_state["portainer_env_form_name"] = (
+                selected_env.get("name", "") if selected_env else ""
+            )
+            st.session_state["portainer_env_form_api_url"] = (
+                selected_env.get("api_url", "") if selected_env else ""
+            )
+            st.session_state["portainer_env_form_api_key"] = (
+                selected_env.get("api_key", "") if selected_env else ""
+            )
+            st.session_state["portainer_env_form_verify_ssl"] = (
+                bool(selected_env.get("verify_ssl", True)) if selected_env else True
+            )
+
+        st.session_state.setdefault("portainer_env_form_name", "")
+        st.session_state.setdefault("portainer_env_form_api_url", "")
+        st.session_state.setdefault("portainer_env_form_api_key", "")
+        st.session_state.setdefault("portainer_env_form_verify_ssl", True)
+
+        form_error: str | None = None
+        with st.form("portainer_env_form"):
+            st.text_input("Name", key="portainer_env_form_name")
+            st.text_input("API URL", key="portainer_env_form_api_url")
+            st.text_input(
+                "API key",
+                key="portainer_env_form_api_key",
+                type="password",
+            )
+            st.checkbox(
+                "Verify SSL certificates",
+                key="portainer_env_form_verify_ssl",
+            )
+            submitted = st.form_submit_button(
+                "Save environment", use_container_width=True
+            )
+
+        if submitted:
+            name_value = st.session_state["portainer_env_form_name"].strip()
+            api_url_value = st.session_state["portainer_env_form_api_url"].strip()
+            api_key_value = st.session_state["portainer_env_form_api_key"].strip()
+            verify_ssl_value = bool(st.session_state["portainer_env_form_verify_ssl"])
+
+            missing_fields = [
+                label
+                for label, value in (
+                    ("Name", name_value),
+                    ("API URL", api_url_value),
+                    ("API key", api_key_value),
+                )
+                if not value
+            ]
+            if missing_fields:
+                form_error = f"Please provide values for: {', '.join(missing_fields)}."
+            else:
+                updated_env = {
+                    "name": name_value,
+                    "api_url": api_url_value,
+                    "api_key": api_key_value,
+                    "verify_ssl": verify_ssl_value,
+                }
+                updated_envs = list(environments_state)
+                edit_index = None
+                if selected_env is not None:
+                    edit_index = environments_state.index(selected_env)
+                else:
+                    for idx, env in enumerate(environments_state):
+                        if env.get("name") == name_value:
+                            edit_index = idx
+                            break
+                if edit_index is None:
+                    updated_envs.append(updated_env)
+                else:
+                    updated_envs[edit_index] = updated_env
+                st.session_state["portainer_envs"] = updated_envs
+                st.session_state["portainer_selected_env"] = name_value
+                st.session_state[form_selection_key] = name_value
+                st.session_state[prev_selection_key] = name_value
+                save_environments(updated_envs)
+                get_cached_data.clear()
+                st.experimental_rerun()
+
+        if form_error:
+            st.error(form_error)
+
+        st.markdown("### Saved environments")
+        if env_names:
+            if st.session_state.get("portainer_selected_env") not in env_names:
+                st.session_state["portainer_selected_env"] = env_names[0]
+            st.radio(
+                "Active environment",
+                env_names,
+                key="portainer_selected_env",
+            )
+        else:
+            st.info("No environments saved yet. Use the form above to add one.")
+
+        for env in environments_state:
+            env_name = env.get("name", "")
+            cols = st.columns([3, 1])
+            with cols[0]:
+                st.markdown(f"**{env_name}**  \n{env.get('api_url', '')}")
+            with cols[1]:
+                if st.button("Delete", key=f"delete_env_{env_name}"):
+                    updated_envs = [
+                        existing for existing in environments_state if existing.get("name") != env_name
+                    ]
+                    st.session_state["portainer_envs"] = updated_envs
+                    if st.session_state.get("portainer_selected_env") == env_name:
+                        st.session_state["portainer_selected_env"] = (
+                            updated_envs[0]["name"] if updated_envs else ""
+                        )
+                    if st.session_state.get(form_selection_key) == env_name:
+                        st.session_state[form_selection_key] = (
+                            updated_envs[0]["name"] if updated_envs else "New environment"
+                        )
+                        st.session_state[prev_selection_key] = st.session_state[form_selection_key]
+                    save_environments(updated_envs)
+                    get_cached_data.clear()
+                    st.experimental_rerun()
+
+        st.divider()
+
+    if data_available:
+        st.header("Navigation")
+        selected_page = st.radio(
+            "Page",
+            page_options,
+            index=0,
+            label_visibility="collapsed",
+        )
+
+        st.header("Filters")
+        endpoints = sorted(
+            name
+            for name in stack_data.get(
+                "endpoint_name", pd.Series(dtype="object")
+            ).dropna().unique()
+        )
+        selected_endpoints = st.multiselect(
+            "Edge agents",
+            options=endpoints,
+            default=endpoints,
+        )
+        stack_search = st.text_input("Search stack name")
+        container_search = st.text_input("Search container or image")
+    else:
+        st.info("Select or add a Portainer environment to load data.")
+
+if not data_available:
+    st.info("Add or select a Portainer environment to view dashboards.")
+    st.stop()
 
 stack_filtered = _humanize_stack_dataframe(stack_data)
 if selected_environments:
