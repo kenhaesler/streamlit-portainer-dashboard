@@ -15,6 +15,12 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         render_sidebar_filters,
     )
     from app.portainer_client import PortainerAPIError  # type: ignore[import-not-found]
+    from app.ui_helpers import (  # type: ignore[import-not-found]
+        ExportableDataFrame,
+        render_kpi_row,
+        render_page_header,
+        style_plotly_figure,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
         ConfigurationError,
@@ -26,9 +32,18 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         render_sidebar_filters,
     )
     from portainer_client import PortainerAPIError  # type: ignore[no-redef]
+    from ui_helpers import (  # type: ignore[no-redef]
+        ExportableDataFrame,
+        render_kpi_row,
+        render_page_header,
+        style_plotly_figure,
+    )
 
-
-st.title("Running containers")
+render_page_header(
+    "Running containers",
+    icon="🐳",
+    description="Inspect all running workloads, their images and exposed ports.",
+)
 
 initialise_session_state()
 apply_selected_environment()
@@ -62,15 +77,39 @@ filters = render_sidebar_filters(stack_data, container_data)
 
 containers_filtered = filters.container_data
 
-st.subheader("Running containers")
 if containers_filtered.empty:
     st.info("No running containers for the selected endpoints.")
 else:
-    col1, col2 = st.columns(2)
-    with col1:
-        st.metric("Running containers", int(containers_filtered["container_id"].nunique()))
-    with col2:
-        st.metric("Images in use", int(containers_filtered["image"].nunique()))
+    render_kpi_row(
+        [
+            ("Running containers", int(containers_filtered["container_id"].nunique()), None),
+            ("Images in use", int(containers_filtered["image"].nunique()), None),
+            (
+                "Edge agents",
+                int(containers_filtered["endpoint_id"].nunique()),
+                None,
+            ),
+        ]
+    )
+
+    state_summary = (
+        containers_filtered.groupby(["state"], dropna=False)
+        .agg(container_count=("container_id", "nunique"))
+        .reset_index()
+        .rename(columns={"state": "Container state"})
+    )
+    if not state_summary.empty:
+        import plotly.express as px
+
+        state_chart = px.bar(
+            state_summary,
+            x="Container state",
+            y="container_count",
+            title="Container state overview",
+            labels={"container_count": "Containers"},
+        )
+        state_chart.update_traces(hovertemplate="%{x}<br>Containers: %{y}")
+        st.plotly_chart(style_plotly_figure(state_chart), use_container_width=True)
 
     container_display = containers_filtered.copy()
     created_series = pd.to_datetime(container_display["created_at"], errors="coerce", utc=True)
@@ -97,5 +136,29 @@ else:
         ["environment_name", "endpoint_name", "container_name"],
         na_position="last",
     ).reset_index(drop=True)
-    st.dataframe(container_display, use_container_width=True)
+    st.dataframe(
+        container_display.rename(
+            columns={
+                "environment_name": "Environment",
+                "endpoint_name": "Edge agent",
+                "container_name": "Container",
+                "image": "Image",
+                "state": "State",
+                "status": "Status",
+                "created_at": "Created",
+                "ports": "Published ports",
+            }
+        ),
+        column_config={
+            "Created": st.column_config.TextColumn(help="Container creation timestamp"),
+            "Published ports": st.column_config.TextColumn(help="Public -> private port mapping"),
+        },
+        use_container_width=True,
+    )
+
+    ExportableDataFrame(
+        "⬇️ Download container list",
+        data=container_display,
+        filename="portainer_running_containers.csv",
+    ).render_download_button()
 

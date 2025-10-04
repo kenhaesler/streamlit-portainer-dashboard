@@ -1,6 +1,7 @@
 """Running images dashboard."""
 from __future__ import annotations
 
+import plotly.express as px
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
@@ -14,6 +15,12 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         render_sidebar_filters,
     )
     from app.portainer_client import PortainerAPIError  # type: ignore[import-not-found]
+    from app.ui_helpers import (  # type: ignore[import-not-found]
+        ExportableDataFrame,
+        render_kpi_row,
+        render_page_header,
+        style_plotly_figure,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
         ConfigurationError,
@@ -25,9 +32,18 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         render_sidebar_filters,
     )
     from portainer_client import PortainerAPIError  # type: ignore[no-redef]
+    from ui_helpers import (  # type: ignore[no-redef]
+        ExportableDataFrame,
+        render_kpi_row,
+        render_page_header,
+        style_plotly_figure,
+    )
 
-
-st.title("Running images")
+render_page_header(
+    "Running images",
+    icon="🖼️",
+    description="Identify the images powering your workloads and where they are deployed.",
+)
 
 initialise_session_state()
 apply_selected_environment()
@@ -75,16 +91,75 @@ else:
         .rename(columns={"image": "image_name"})
         .sort_values("running_containers", ascending=False)
     )
-    st.metric("Unique running images", int(images_summary["image_name"].nunique()))
+
+    render_kpi_row(
+        [
+            ("Unique running images", int(images_summary["image_name"].nunique()), None),
+            (
+                "Average containers per image",
+                round(
+                    float(
+                        images_summary["running_containers"].sum()
+                        / max(len(images_summary), 1)
+                    ),
+                    1,
+                ),
+                None,
+            ),
+        ]
+    )
+
+    renamed_summary = images_summary.rename(
+        columns={
+            "environment_name": "Environment",
+            "image_name": "Image",
+            "running_containers": "Running containers",
+            "endpoints": "Edge agents",
+        }
+    ).reset_index(drop=True)
     st.dataframe(
-        images_summary.rename(
-            columns={
-                "environment_name": "Environment",
-                "image_name": "Image",
-                "running_containers": "Running containers",
-                "endpoints": "Edge agents",
-            }
-        ).reset_index(drop=True),
+        renamed_summary,
+        column_config={
+            "Running containers": st.column_config.NumberColumn(format="%d"),
+            "Edge agents": st.column_config.NumberColumn(format="%d"),
+        },
         use_container_width=True,
     )
+    ExportableDataFrame(
+        "⬇️ Download image summary",
+        data=images_summary,
+        filename="portainer_running_images.csv",
+    ).render_download_button()
+
+    top_image_chart = px.bar(
+        images_summary.head(15),
+        x="running_containers",
+        y="image_name",
+        orientation="h",
+        color="environment_name",
+        labels={
+            "running_containers": "Containers",
+            "image_name": "Image",
+            "environment_name": "Environment",
+        },
+        title="Top images by running containers",
+    )
+    top_image_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
+    st.plotly_chart(style_plotly_figure(top_image_chart), use_container_width=True)
+
+    footprint_source = (
+        containers_filtered.assign(image=lambda df: df["image"].fillna("Unknown image"))
+        .groupby(["environment_name", "endpoint_name", "image"], dropna=False)
+        .agg(container_count=("container_id", "nunique"))
+        .reset_index()
+    )
+    if not footprint_source.empty:
+        footprint = px.treemap(
+            footprint_source,
+            path=["environment_name", "endpoint_name", "image"],
+            values="container_count",
+            title="Where images are running",
+        )
+        footprint.update_traces(hovertemplate="%{label}<br>Containers: %{value}")
+        st.plotly_chart(style_plotly_figure(footprint), use_container_width=True)
 
