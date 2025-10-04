@@ -37,7 +37,11 @@ env_names = [env.get("name", "") for env in environments_state if env.get("name"
 
 form_selection_key = "portainer_env_form_selection"
 prev_selection_key = "portainer_env_form_prev_selection"
+pending_selection_key = "portainer_env_form_pending_selection"
 options = ["New environment", *env_names]
+
+if pending_selection := st.session_state.pop(pending_selection_key, None):
+    st.session_state[form_selection_key] = pending_selection
 
 if st.session_state.get(form_selection_key) not in options:
     default_env = get_selected_environment_name() or "New environment"
@@ -125,7 +129,7 @@ if submitted:
             updated_envs[edit_index] = updated_env
         set_saved_environments(updated_envs)
         set_active_environment(name_value)
-        st.session_state[form_selection_key] = name_value
+        st.session_state[pending_selection_key] = name_value
         st.session_state[prev_selection_key] = name_value
         clear_cached_data()
         st.experimental_rerun()
