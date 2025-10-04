@@ -159,7 +159,9 @@ with tab_details:
             title="Stacks deployed per edge agent",
         )
         stack_chart.update_traces(hovertemplate="%{y}<br>Stacks: %{x}")
-        st.plotly_chart(style_plotly_figure(stack_chart), width="stretch")
+        st.plotly_chart(
+            style_plotly_figure(stack_chart), use_container_width=True
+        )
 
     status_summary = (
         stack_filtered[["endpoint_id", "endpoint_status"]]
@@ -178,7 +180,9 @@ with tab_details:
             hole=0.45,
         )
         status_chart.update_traces(textinfo="percent+label")
-        st.plotly_chart(style_plotly_figure(status_chart), width="stretch")
+        st.plotly_chart(
+            style_plotly_figure(status_chart), use_container_width=True
+        )
     else:
         st.info("No status information available for the selected agents.")
 
@@ -208,7 +212,9 @@ with tab_containers:
             title="Running containers per edge agent",
         )
         container_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
-        st.plotly_chart(style_plotly_figure(container_chart), width="stretch")
+        st.plotly_chart(
+            style_plotly_figure(container_chart), use_container_width=True
+        )
 
         treemap_source = (
             containers_filtered.assign(
@@ -227,7 +233,9 @@ with tab_containers:
                 title="Container footprint by environment, agent and image",
             )
             treemap.update_traces(hovertemplate="%{label}<br>Containers: %{value}")
-            st.plotly_chart(style_plotly_figure(treemap), width="stretch")
+            st.plotly_chart(
+                style_plotly_figure(treemap), use_container_width=True
+            )
 
         ExportableDataFrame(
             "⬇️ Download container summary",
