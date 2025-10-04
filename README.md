@@ -10,6 +10,20 @@ The application is configured via environment variables:
 - `PORTAINER_API_KEY` – API key used for authentication.
 - `PORTAINER_VERIFY_SSL` – Optional. Set to `false` to disable TLS certificate verification when using self-signed certificates.
 
+### Theme
+
+The default Streamlit theme is configured through `.streamlit/config.toml`. The dashboard ships with a
+dark-first theme that uses Portainer's signature blue (`#009fe3`) as the accent colour:
+
+```toml
+[theme]
+base = "dark"
+primaryColor = "#009fe3"
+```
+
+Users can still toggle between Streamlit's light and dark modes from the app settings. Only the primary
+accent colour is overridden, so the interface remains readable in either mode.
+
 ## Usage
 
 ### Run with Docker

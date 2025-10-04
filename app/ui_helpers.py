@@ -10,11 +10,40 @@ import streamlit as st
 
 
 # A calm but distinctive palette that works for both light and dark themes.
-DEFAULT_COLOR_SEQUENCE: Sequence[str] = (
-    px.colors.qualitative.Set2
-    + px.colors.qualitative.Pastel1
-    + px.colors.qualitative.Safe
-)
+# The primary color is pulled from the active Streamlit theme so the charts
+# stay in sync with the UI accent colour defined in ``config.toml``.
+def _build_default_color_sequence() -> tuple[str, ...]:
+    base_colors = (
+        px.colors.qualitative.Set2
+        + px.colors.qualitative.Pastel1
+        + px.colors.qualitative.Safe
+    )
+
+    def add_color(colors: list[str], seen: set[str], color: str) -> None:
+        key = color.lower()
+        if key in seen:
+            return
+        colors.append(color)
+        seen.add(key)
+
+    palette: list[str] = []
+    seen: set[str] = set()
+
+    try:
+        primary_color = st.get_option("theme.primaryColor")
+    except Exception:  # pragma: no cover - defensive, streamlit always available
+        primary_color = None
+
+    if isinstance(primary_color, str) and primary_color.strip():
+        add_color(palette, seen, primary_color.strip())
+
+    for color in base_colors:
+        add_color(palette, seen, color)
+
+    return tuple(palette)
+
+
+DEFAULT_COLOR_SEQUENCE: Sequence[str] = _build_default_color_sequence()
 
 
 def style_plotly_figure(fig: Figure, *, show_legend: bool = True) -> Figure:
