@@ -25,6 +25,16 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 
+
+def rerun_app() -> None:
+    """Trigger a Streamlit rerun across supported API versions."""
+
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:  # pragma: no cover - fallback for older Streamlit versions
+        st.experimental_rerun()
+
+
 st.title("Settings")
 
 initialise_session_state()
@@ -132,7 +142,7 @@ if submitted:
         st.session_state[pending_selection_key] = name_value
         st.session_state[prev_selection_key] = name_value
         clear_cached_data()
-        st.experimental_rerun()
+        rerun_app()
 
 if form_error:
     st.error(form_error)
@@ -148,7 +158,7 @@ if env_names:
     )
     if choice != active_env:
         set_active_environment(choice)
-        st.experimental_rerun()
+        rerun_app()
 else:
     st.info("No environments saved yet. Add one using the form above.")
 
@@ -167,5 +177,5 @@ for env in environments_state:
                 next_name = updated_envs[0]["name"] if updated_envs else ""
                 set_active_environment(next_name)
             clear_cached_data()
-            st.experimental_rerun()
+            rerun_app()
 
