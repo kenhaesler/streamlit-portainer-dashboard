@@ -6,16 +6,24 @@ from dotenv import load_dotenv
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.portainer_client import (  # type: ignore[import-not-found]
         PortainerAPIError,
-        load_client_from_env,
+        PortainerClient,
         normalise_endpoint_containers,
         normalise_endpoint_stacks,
+    )
+    from app.settings import (  # type: ignore[import-not-found]
+        PortainerEnvironment,
+        get_configured_environments,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from portainer_client import (  # type: ignore[no-redef]
         PortainerAPIError,
-        load_client_from_env,
+        PortainerClient,
         normalise_endpoint_containers,
         normalise_endpoint_stacks,
+    )
+    from settings import (  # type: ignore[no-redef]
+        PortainerEnvironment,
+        get_configured_environments,
     )
 
 load_dotenv()
@@ -68,44 +76,91 @@ def _humanize_stack_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return humanised
 
 
-def _fetch_portainer_data() -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
-    client = load_client_from_env()
-    endpoints = client.list_edge_endpoints()
-    stacks: dict[int, list[dict]] = {}
-    containers: dict[int, list[dict]] = {}
+def _fetch_portainer_data(
+    environments: tuple[PortainerEnvironment, ...]
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    stack_frames: list[pd.DataFrame] = []
+    container_frames: list[pd.DataFrame] = []
     warnings: list[str] = []
-    for endpoint in endpoints:
-        endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
-        try:
-            stacks[endpoint_id] = client.list_stacks_for_endpoint(endpoint_id)
-        except PortainerAPIError as exc:
-            warnings.append(f"Failed to load stacks for endpoint {endpoint_id}: {exc}")
-            stacks[endpoint_id] = []
-        try:
-            containers[endpoint_id] = client.list_containers_for_endpoint(endpoint_id)
-        except PortainerAPIError as exc:
-            warnings.append(
-                f"Failed to load containers for endpoint {endpoint_id}: {exc}"
-            )
-            containers[endpoint_id] = []
-    stack_data = normalise_endpoint_stacks(endpoints, stacks)
-    container_data = normalise_endpoint_containers(endpoints, containers)
+
+    for environment in environments:
+        client = PortainerClient(
+            base_url=environment.api_url,
+            api_key=environment.api_key,
+            verify_ssl=environment.verify_ssl,
+        )
+        endpoints = client.list_edge_endpoints()
+        stacks: dict[int, list[dict]] = {}
+        containers: dict[int, list[dict]] = {}
+
+        for endpoint in endpoints:
+            endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+            try:
+                stacks[endpoint_id] = client.list_stacks_for_endpoint(endpoint_id)
+            except PortainerAPIError as exc:
+                warnings.append(
+                    f"[{environment.name}] Failed to load stacks for endpoint "
+                    f"{endpoint_id}: {exc}"
+                )
+                stacks[endpoint_id] = []
+            try:
+                containers[endpoint_id] = client.list_containers_for_endpoint(
+                    endpoint_id
+                )
+            except PortainerAPIError as exc:
+                warnings.append(
+                    f"[{environment.name}] Failed to load containers for endpoint "
+                    f"{endpoint_id}: {exc}"
+                )
+                containers[endpoint_id] = []
+
+        stack_df = normalise_endpoint_stacks(endpoints, stacks)
+        stack_df["environment_name"] = environment.name
+        stack_frames.append(stack_df)
+
+        container_df = normalise_endpoint_containers(endpoints, containers)
+        container_df["environment_name"] = environment.name
+        container_frames.append(container_df)
+
+    if stack_frames:
+        stack_data = pd.concat(stack_frames, ignore_index=True)
+    else:
+        stack_data = normalise_endpoint_stacks([], {})
+        stack_data["environment_name"] = pd.Series(dtype="object")
+
+    if container_frames:
+        container_data = pd.concat(container_frames, ignore_index=True)
+    else:
+        container_data = normalise_endpoint_containers([], {})
+        container_data["environment_name"] = pd.Series(dtype="object")
+
     return stack_data, container_data, warnings
 
 
 @st.cache_data(show_spinner=False)
-def get_cached_data() -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
-    return _fetch_portainer_data()
+def get_cached_data(
+    environments: tuple[PortainerEnvironment, ...],
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    return _fetch_portainer_data(environments)
 
 
 try:
-    stack_data, container_data, warnings = get_cached_data()
+    configured_environments = tuple(get_configured_environments())
 except ValueError as exc:
-    st.error(
-        "Missing configuration: set `PORTAINER_API_URL` and `PORTAINER_API_KEY` "
-        "environment variables.",
+    st.error(str(exc))
+    st.stop()
+
+if not configured_environments:
+    st.warning(
+        "No Portainer environments configured. Provide `PORTAINER_API_URL` and "
+        "`PORTAINER_API_KEY`, or define `PORTAINER_ENVIRONMENTS` with specific "
+        "environment settings to continue.",
+        icon="ℹ️",
     )
     st.stop()
+
+try:
+    stack_data, container_data, warnings = get_cached_data(configured_environments)
 except PortainerAPIError as exc:
     st.error(f"Failed to load data from Portainer: {exc}")
     st.stop()
@@ -140,7 +195,38 @@ with st.sidebar:
     )
 
     st.header("Filters")
-    endpoints = sorted(name for name in stack_data["endpoint_name"].dropna().unique())
+    environment_options = sorted(
+        pd.concat(
+            [
+                stack_data.get("environment_name", pd.Series(dtype="object")),
+                container_data.get("environment_name", pd.Series(dtype="object")),
+            ]
+        )
+        .dropna()
+        .unique()
+        .tolist()
+    )
+    selected_environments = st.multiselect(
+        "Environments",
+        options=environment_options,
+        default=environment_options,
+    )
+
+    if selected_environments:
+        endpoint_source = pd.concat(
+            [
+                stack_data[stack_data["environment_name"].isin(selected_environments)][
+                    "endpoint_name"
+                ],
+                container_data[
+                    container_data["environment_name"].isin(selected_environments)
+                ]["endpoint_name"],
+            ],
+            ignore_index=True,
+        )
+    else:
+        endpoint_source = pd.Series(dtype="object")
+    endpoints = sorted(endpoint_source.dropna().unique().tolist())
     selected_endpoints = st.multiselect(
         "Edge agents",
         options=endpoints,
@@ -150,6 +236,10 @@ with st.sidebar:
     container_search = st.text_input("Search container or image")
 
 stack_filtered = _humanize_stack_dataframe(stack_data)
+if selected_environments:
+    stack_filtered = stack_filtered[
+        stack_filtered["environment_name"].isin(selected_environments)
+    ]
 if selected_endpoints:
     stack_filtered = stack_filtered[stack_filtered["endpoint_name"].isin(selected_endpoints)]
 if stack_search:
@@ -158,6 +248,10 @@ if stack_search:
     ]
 
 containers_filtered = container_data.copy()
+if selected_environments:
+    containers_filtered = containers_filtered[
+        containers_filtered["environment_name"].isin(selected_environments)
+    ]
 if selected_endpoints:
     containers_filtered = containers_filtered[
         containers_filtered["endpoint_name"].isin(selected_endpoints)
@@ -182,7 +276,8 @@ if selected_page == "Overview":
     st.subheader("Endpoint & stack overview")
     st.dataframe(
         stack_filtered.sort_values(
-            ["endpoint_name", "stack_name"], na_position="last"
+            ["environment_name", "endpoint_name", "stack_name"],
+            na_position="last",
         ).reset_index(drop=True),
         use_container_width=True,
     )
@@ -190,12 +285,25 @@ if selected_page == "Overview":
     stack_counts = stack_filtered.dropna(subset=["stack_id"])
     if not stack_counts.empty:
         chart_data = (
-            stack_counts.groupby("endpoint_name")
+            stack_counts.groupby(["environment_name", "endpoint_name"])
             .agg(stack_count=("stack_id", "nunique"))
+            .reset_index()
             .sort_values("stack_count", ascending=False)
         )
         st.subheader("Stacks per edge agent")
-        st.bar_chart(chart_data)
+        stack_chart = px.bar(
+            chart_data,
+            x="endpoint_name",
+            y="stack_count",
+            color="environment_name",
+            title="Stacks per edge agent",
+            labels={
+                "endpoint_name": "Edge agent",
+                "stack_count": "Stacks",
+                "environment_name": "Environment",
+            },
+        )
+        st.plotly_chart(stack_chart, use_container_width=True)
     else:
         st.info("No stacks associated with the selected endpoints.")
 
@@ -204,7 +312,12 @@ elif selected_page == "Environment insights":
 
     endpoint_overview = (
         stack_filtered[
-            ["endpoint_id", "endpoint_name", "endpoint_status"]
+            [
+                "environment_name",
+                "endpoint_id",
+                "endpoint_name",
+                "endpoint_status",
+            ]
         ]
         .drop_duplicates()
         .reset_index(drop=True)
@@ -228,17 +341,64 @@ elif selected_page == "Environment insights":
     with col3:
         st.metric("Stack coverage", f"{stack_coverage}%")
 
+    environment_health = []
+    for environment_name, group in endpoint_overview.groupby("environment_name"):
+        total = int(group["endpoint_id"].nunique())
+        healthy = int(
+            group["endpoint_status"].fillna("Unknown").str.lower().eq("up").sum()
+        )
+        coverage = 0
+        if total:
+            endpoints_with_stacks = int(
+                stack_filtered[
+                    (stack_filtered["environment_name"] == environment_name)
+                    & stack_filtered["stack_id"].notna()
+                ]["endpoint_id"].nunique()
+            )
+            coverage = round((endpoints_with_stacks / total) * 100)
+        environment_health.append(
+            {
+                "environment_name": environment_name,
+                "edge_agents": total,
+                "healthy_agents": healthy,
+                "stack_coverage_percent": coverage,
+            }
+        )
+
+    if environment_health:
+        st.dataframe(
+            pd.DataFrame(environment_health)
+            .sort_values("edge_agents", ascending=False)
+            .rename(
+                columns={
+                    "environment_name": "Environment",
+                    "edge_agents": "Edge agents",
+                    "healthy_agents": "Healthy agents",
+                    "stack_coverage_percent": "Stack coverage %",
+                }
+            ),
+            use_container_width=True,
+        )
+
     if not endpoint_overview.empty:
         status_counts = (
-            status_series.value_counts().rename_axis("status").reset_index(name="count")
+            endpoint_overview.assign(endpoint_status=status_series)
+            .groupby(["environment_name", "endpoint_status"])
+            .size()
+            .reset_index(name="count")
         )
-        status_chart = px.pie(
+        status_chart = px.bar(
             status_counts,
-            names="status",
-            values="count",
-            title="Endpoint status distribution",
-            color_discrete_sequence=px.colors.sequential.Viridis,
-            hole=0.35,
+            x="endpoint_status",
+            y="count",
+            color="environment_name",
+            title="Endpoint status distribution by environment",
+            labels={
+                "endpoint_status": "Status",
+                "count": "Edge agents",
+                "environment_name": "Environment",
+            },
+            barmode="stack",
         )
         st.plotly_chart(status_chart, use_container_width=True)
     else:
@@ -248,18 +408,20 @@ elif selected_page == "Environment insights":
 
     stack_counts = (
         stack_filtered.dropna(subset=["stack_id"])
-        .groupby("endpoint_name")
+        .groupby(["environment_name", "endpoint_name"])
         .agg(stacks=("stack_id", "nunique"))
     )
     container_activity = (
-        containers_filtered.groupby("endpoint_name")
+        containers_filtered.groupby(["environment_name", "endpoint_name"])
         .agg(
             running_containers=("container_id", "nunique"),
             unique_images=("image", "nunique"),
         )
     )
     endpoint_status_lookup = (
-        endpoint_overview.set_index("endpoint_name")["endpoint_status"].to_frame()
+        endpoint_overview.set_index(["environment_name", "endpoint_name"])[
+            "endpoint_status"
+        ].to_frame()
     )
     endpoint_summary = (
         endpoint_status_lookup.join(stack_counts, how="left")
@@ -267,6 +429,7 @@ elif selected_page == "Environment insights":
         .fillna({"stacks": 0, "running_containers": 0, "unique_images": 0})
         .astype({"stacks": int, "running_containers": int, "unique_images": int})
         .sort_values(["running_containers", "stacks"], ascending=False)
+        .reset_index()
     )
     st.dataframe(endpoint_summary, use_container_width=True)
 
@@ -274,20 +437,31 @@ elif selected_page == "Environment insights":
         st.subheader("Container landscape")
 
         state_counts = (
-            containers_filtered["state"].fillna("unknown").astype(str).value_counts()
+            containers_filtered.assign(
+                state=containers_filtered["state"].fillna("unknown").astype(str)
+            )
+            .groupby(["environment_name", "state"])
+            .size()
+            .reset_index(name="count")
         )
         state_chart = px.bar(
-            state_counts.rename_axis("state").reset_index(name="count"),
+            state_counts,
             x="state",
             y="count",
+            color="environment_name",
             title="Container state distribution",
-            color="state",
+            labels={
+                "state": "State",
+                "count": "Containers",
+                "environment_name": "Environment",
+            },
+            barmode="stack",
             color_discrete_sequence=px.colors.sequential.Cividis,
         )
         st.plotly_chart(state_chart, use_container_width=True)
 
         container_counts = (
-            containers_filtered.groupby("endpoint_name")
+            containers_filtered.groupby(["environment_name", "endpoint_name"])
             .agg(container_count=("container_id", "nunique"))
             .sort_values("container_count", ascending=False)
             .reset_index()
@@ -299,14 +473,18 @@ elif selected_page == "Environment insights":
                 y="endpoint_name",
                 orientation="h",
                 title="Running containers per endpoint",
-                color="container_count",
-                color_continuous_scale=px.colors.sequential.Blues,
+                color="environment_name",
+                labels={
+                    "endpoint_name": "Endpoint",
+                    "container_count": "Containers",
+                    "environment_name": "Environment",
+                },
             )
             density_chart.update_layout(yaxis_title="Endpoint", xaxis_title="Containers")
             st.plotly_chart(density_chart, use_container_width=True)
 
         top_images = (
-            containers_filtered.groupby("image", dropna=False)
+            containers_filtered.groupby(["environment_name", "image"], dropna=False)
             .agg(count=("container_id", "nunique"))
             .reset_index()
             .sort_values("count", ascending=False)
@@ -319,8 +497,12 @@ elif selected_page == "Environment insights":
                 y="image",
                 orientation="h",
                 title="Top running images",
-                color="count",
-                color_continuous_scale=px.colors.sequential.Plasma,
+                color="environment_name",
+                labels={
+                    "count": "Containers",
+                    "image": "Image",
+                    "environment_name": "Environment",
+                },
             )
             image_chart.update_layout(yaxis_title="Image", xaxis_title="Containers")
             st.plotly_chart(image_chart, use_container_width=True)
@@ -330,11 +512,19 @@ elif selected_page == "Environment insights":
         )
         age_days = (pd.Timestamp.utcnow() - created_series).dt.total_seconds() / 86400
         if age_days.notna().any():
+            age_frame = pd.DataFrame(
+                {
+                    "environment_name": containers_filtered["environment_name"],
+                    "age_days": age_days,
+                }
+            ).dropna(subset=["age_days"])
             age_chart = px.histogram(
-                age_days.dropna(),
+                age_frame,
+                x="age_days",
+                color="environment_name",
                 nbins=20,
                 title="Container age distribution",
-                labels={"value": "Age (days)", "count": "Containers"},
+                labels={"age_days": "Age (days)", "count": "Containers"},
                 color_discrete_sequence=px.colors.sequential.Agsunset,
             )
             st.plotly_chart(age_chart, use_container_width=True)
@@ -358,6 +548,7 @@ elif selected_page == "Running containers":
         container_display["created_at"] = formatted_created
         container_display.loc[created_series.isna(), "created_at"] = ""
         column_order = [
+            "environment_name",
             "endpoint_name",
             "container_name",
             "image",
@@ -373,7 +564,8 @@ elif selected_page == "Running containers":
         ]
         container_display = container_display[existing_columns + remaining_columns]
         container_display = container_display.sort_values(
-            ["endpoint_name", "container_name"], na_position="last"
+            ["environment_name", "endpoint_name", "container_name"],
+            na_position="last",
         ).reset_index(drop=True)
         st.dataframe(container_display, use_container_width=True)
 
@@ -383,7 +575,9 @@ elif selected_page == "Running images":
         st.info("No running containers available to derive image statistics.")
     else:
         images_summary = (
-            containers_filtered.groupby("image", dropna=False)
+            containers_filtered.groupby(
+                ["environment_name", "image"], dropna=False
+            )
             .agg(
                 running_containers=("container_id", "nunique"),
                 endpoints=("endpoint_name", "nunique"),
@@ -393,4 +587,14 @@ elif selected_page == "Running images":
             .sort_values("running_containers", ascending=False)
         )
         st.metric("Unique running images", int(images_summary["image_name"].nunique()))
-        st.dataframe(images_summary, use_container_width=True)
+        st.dataframe(
+            images_summary.rename(
+                columns={
+                    "environment_name": "Environment",
+                    "image_name": "Image",
+                    "running_containers": "Running containers",
+                    "endpoints": "Edge agents",
+                }
+            ),
+            use_container_width=True,
+        )
