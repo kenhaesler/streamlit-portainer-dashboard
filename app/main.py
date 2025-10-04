@@ -129,7 +129,7 @@ page_options = [
 with st.sidebar:
     if st.button("🔄 Refresh data", use_container_width=True):
         get_cached_data.clear()
-        st.experimental_rerun()
+        st.rerun()
 
     st.header("Navigation")
     selected_page = st.radio(
