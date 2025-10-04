@@ -1,4 +1,4 @@
-"""Overview dashboard for Portainer data."""
+"""Fleet overview dashboard for Portainer data."""
 from __future__ import annotations
 
 import plotly.express as px
@@ -40,7 +40,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 render_page_header(
-    "Overview",
+    "Fleet overview",
     icon="🧭",
     description=(
         "Understand how stacks and containers are distributed across your edge agents."

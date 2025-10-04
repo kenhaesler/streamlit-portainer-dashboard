@@ -1,4 +1,4 @@
-"""Running containers dashboard."""
+"""Workload explorer dashboard."""
 from __future__ import annotations
 
 import pandas as pd
@@ -40,9 +40,9 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 render_page_header(
-    "Running containers",
+    "Workload explorer",
     icon="🐳",
-    description="Inspect all running workloads, their images and exposed ports.",
+    description="Inspect active containers, their images and exposed ports.",
 )
 
 initialise_session_state()
@@ -125,6 +125,7 @@ else:
         "image",
         "state",
         "status",
+        "restart_count",
         "created_at",
         "ports",
         "container_id",
@@ -134,6 +135,11 @@ else:
         col for col in container_display.columns if col not in existing_columns
     ]
     container_display = container_display[existing_columns + remaining_columns]
+    if "restart_count" in container_display.columns:
+        container_display["restart_count"] = (
+            container_display["restart_count"].fillna(0).astype(int)
+        )
+
     container_display = container_display.sort_values(
         ["environment_name", "endpoint_name", "container_name"],
         na_position="last",
@@ -147,11 +153,13 @@ else:
                 "image": "Image",
                 "state": "State",
                 "status": "Status",
+                "restart_count": "Restarts",
                 "created_at": "Created",
                 "ports": "Published ports",
             }
         ),
         column_config={
+            "Restarts": st.column_config.NumberColumn(format="%d"),
             "Created": st.column_config.TextColumn(help="Container creation timestamp"),
             "Published ports": st.column_config.TextColumn(help="Public -> private port mapping"),
         },

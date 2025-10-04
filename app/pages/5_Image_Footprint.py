@@ -1,4 +1,4 @@
-"""Running images dashboard."""
+"""Image footprint dashboard."""
 from __future__ import annotations
 
 import plotly.express as px
@@ -40,7 +40,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 render_page_header(
-    "Running images",
+    "Image footprint",
     icon="🖼️",
     description="Identify the images powering your workloads and where they are deployed.",
 )

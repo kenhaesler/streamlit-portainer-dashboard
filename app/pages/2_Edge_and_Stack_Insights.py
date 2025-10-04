@@ -1,4 +1,4 @@
-"""Environment insights dashboard."""
+"""Edge agent and stack insights dashboard."""
 from __future__ import annotations
 
 import pandas as pd
@@ -41,7 +41,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 render_page_header(
-    "Environment insights",
+    "Edge agents & stacks",
     icon="🧪",
     description="Dive deeper into stack coverage, container load and lifecycle trends.",
 )
