@@ -1,6 +1,8 @@
 """Entry point for the Streamlit Portainer dashboard."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 from dotenv import load_dotenv
 
@@ -10,17 +12,32 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         get_saved_environments,
         initialise_session_state,
     )
+    from app.ui_helpers import apply_lucerne_theme  # type: ignore[import-not-found]
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
         apply_selected_environment,
         get_saved_environments,
         initialise_session_state,
     )
+    from ui_helpers import apply_lucerne_theme  # type: ignore[no-redef]
 
 
 load_dotenv()
 
-st.set_page_config(page_title="Portainer Dashboard", layout="wide")
+logo_path = Path(__file__).resolve().parent / "assets" / "ktlu-logo.svg"
+st.set_page_config(
+    page_title="Portainer Dashboard",
+    layout="wide",
+    page_icon=str(logo_path) if logo_path.exists() else "🔷",
+)
+
+if logo_path.exists():
+    try:
+        st.logo(str(logo_path))
+    except Exception:  # pragma: no cover - optional enhancement
+        pass
+
+apply_lucerne_theme()
 
 initialise_session_state()
 apply_selected_environment()
