@@ -1,6 +1,7 @@
 """Authentication utilities for the Streamlit dashboard."""
 from __future__ import annotations
 
+import math
 import os
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -56,6 +57,17 @@ def _format_remaining_time(delta: timedelta) -> str:
     return f"{seconds:d}s"
 
 
+def _format_remaining_minutes(delta: timedelta) -> str:
+    """Return the remaining time rounded up to the nearest minute."""
+    total_seconds = max(0, int(delta.total_seconds()))
+
+    if total_seconds == 0:
+        return "0m"
+
+    total_minutes = math.ceil(total_seconds / 60)
+    return f"{total_minutes:d}m"
+
+
 def require_authentication() -> None:
     """Prompt the user for credentials and block execution until authenticated."""
     expected_username = os.getenv(USERNAME_ENV_VAR)
@@ -104,7 +116,7 @@ def require_authentication() -> None:
                 session_timer_placeholder.empty()
             else:
                 session_timer_placeholder.info(
-                    f"Session expires in {_format_remaining_time(time_remaining)}",
+                    f"Session expires in {_format_remaining_minutes(time_remaining)}",
                     icon="⏳",
                 )
 
