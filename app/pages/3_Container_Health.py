@@ -221,7 +221,9 @@ if not problem_summary.empty:
         title="Distribution of unhealthy containers",
     )
     issue_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
-    st.plotly_chart(style_plotly_figure(issue_chart), width="stretch")
+    st.plotly_chart(
+        style_plotly_figure(issue_chart), use_container_width=True
+    )
 
 if not problem_containers.empty:
     attention_display = problem_containers.copy()
