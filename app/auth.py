@@ -7,6 +7,7 @@ from functools import lru_cache
 from typing import Optional
 
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 USERNAME_ENV_VAR = "DASHBOARD_USERNAME"
 KEY_ENV_VAR = "DASHBOARD_KEY"
@@ -42,6 +43,19 @@ def _get_session_timeout() -> Optional[timedelta]:
     return timedelta(minutes=minutes)
 
 
+def _format_remaining_time(delta: timedelta) -> str:
+    """Return a human friendly representation of a positive timedelta."""
+    total_seconds = max(0, int(delta.total_seconds()))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+
+    if hours:
+        return f"{hours:d}h {minutes:02d}m {seconds:02d}s"
+    if minutes:
+        return f"{minutes:d}m {seconds:02d}s"
+    return f"{seconds:d}s"
+
+
 def require_authentication() -> None:
     """Prompt the user for credentials and block execution until authenticated."""
     expected_username = os.getenv(USERNAME_ENV_VAR)
@@ -62,23 +76,67 @@ def require_authentication() -> None:
         st.stop()
 
     now = datetime.now(timezone.utc)
+    session_timer_placeholder = st.sidebar.empty()
+    auto_refresh_triggered = False
+
+    if st.session_state.get("authenticated") and session_timeout is not None:
+        refresh_count = st_autorefresh(interval=1000, key="session_timeout_refresh")
+        previous_refresh_count = st.session_state.get("_session_timeout_refresh_count")
+        auto_refresh_triggered = (
+            previous_refresh_count is not None and refresh_count != previous_refresh_count
+        )
+        st.session_state["_session_timeout_refresh_count"] = refresh_count
+    else:
+        st.session_state.pop("_session_timeout_refresh_count", None)
+
     if st.session_state.get("authenticated"):
         last_active = st.session_state.get("last_active")
         if not isinstance(last_active, datetime):
             last_active = st.session_state.get("authenticated_at")
 
         if session_timeout is not None and isinstance(last_active, datetime):
-            if now - last_active > session_timeout:
+            time_remaining = session_timeout - (now - last_active)
+            if time_remaining <= timedelta(0):
                 st.session_state.pop("authenticated", None)
                 st.session_state.pop("authenticated_at", None)
                 st.session_state.pop("last_active", None)
                 st.session_state["auth_error"] = "Session expired due to inactivity."
+                session_timer_placeholder.empty()
             else:
-                st.session_state["last_active"] = now
+                session_timer_placeholder.info(
+                    f"Session expires in {_format_remaining_time(time_remaining)}",
+                    icon="⏳",
+                )
+
+                if timedelta(0) < time_remaining <= timedelta(seconds=30):
+                    warning_container = st.empty()
+                    with warning_container.container():
+                        st.warning(
+                            "Your session will expire soon due to inactivity.",
+                            icon="⚠️",
+                        )
+                        st.write(
+                            f"Remaining time: {_format_remaining_time(time_remaining)}"
+                        )
+                        if st.button("Keep me logged in", key="keep_session_active"):
+                            st.session_state["last_active"] = datetime.now(timezone.utc)
+                            _trigger_rerun()
+
+                if not auto_refresh_triggered:
+                    st.session_state["last_active"] = now
                 return
         else:
+            if session_timeout is None:
+                session_timer_placeholder.info(
+                    "Session timeout is not configured.",
+                    icon="🟢",
+                )
+            else:
+                session_timer_placeholder.empty()
             st.session_state["last_active"] = now
             return
+
+    session_timer_placeholder.empty()
 
     st.markdown("### 🔐 Sign in to the Portainer dashboard")
     st.caption(
