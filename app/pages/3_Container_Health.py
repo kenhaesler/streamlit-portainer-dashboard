@@ -6,6 +6,11 @@ import plotly.express as px
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.auth import require_authentication  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from auth import require_authentication  # type: ignore[no-redef]
+
+try:  # pragma: no cover - import shim for Streamlit runtime
     from app.dashboard_state import (  # type: ignore[import-not-found]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
@@ -42,6 +47,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
 
 
 RESTART_ALERT_THRESHOLD = 3
+
+require_authentication()
 
 render_page_header(
     "Container health",

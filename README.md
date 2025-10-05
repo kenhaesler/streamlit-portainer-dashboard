@@ -9,6 +9,11 @@ The application is configured via environment variables:
 - `PORTAINER_API_URL` – Base URL of your Portainer instance (e.g. `https://portainer.example.com/api`).
 - `PORTAINER_API_KEY` – API key used for authentication.
 - `PORTAINER_VERIFY_SSL` – Optional. Set to `false` to disable TLS certificate verification when using self-signed certificates.
+- `DASHBOARD_USERNAME` – Username required to sign in to the dashboard UI.
+- `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
+
+Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
+operators can fix the configuration before exposing the dashboard.
 
 ### Theme
 
@@ -27,7 +32,8 @@ accent colour is overridden, so the interface remains readable in either mode.
 ## Usage
 
 ### Run with Docker Compose
-1. Create a `.env` file (for example by copying `.env.example` if you have one) and populate it with the variables described above.
+1. Create a `.env` file (for example by copying `.env.example` if you have one) and populate it with the variables described above,
+   including the mandatory `DASHBOARD_USERNAME` and `DASHBOARD_KEY` credentials.
 2. Start the application:
    ```bash
    docker compose up -d

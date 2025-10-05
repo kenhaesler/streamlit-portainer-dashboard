@@ -4,6 +4,11 @@ from __future__ import annotations
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.auth import require_authentication  # type: ignore[import-not-found]
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from auth import require_authentication  # type: ignore[no-redef]
+
+try:  # pragma: no cover - import shim for Streamlit runtime
     from app.dashboard_state import (  # type: ignore[import-not-found]
         apply_selected_environment,
         clear_cached_data,
@@ -33,6 +38,8 @@ def rerun_app() -> None:
 
     trigger_rerun()
 
+
+require_authentication()
 
 st.title("Settings")
 

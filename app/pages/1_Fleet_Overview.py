@@ -5,6 +5,7 @@ import plotly.express as px
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.auth import require_authentication  # type: ignore[import-not-found]
     from app.dashboard_state import (  # type: ignore[import-not-found]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
@@ -22,6 +23,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         style_plotly_figure,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from auth import require_authentication  # type: ignore[no-redef]
     from dashboard_state import (  # type: ignore[no-redef]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
@@ -38,6 +40,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         render_page_header,
         style_plotly_figure,
     )
+
+require_authentication()
 
 render_page_header(
     "Fleet overview",
