@@ -160,7 +160,7 @@ else:
     )
     top_image_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
     st.plotly_chart(
-        style_plotly_figure(top_image_chart), width="stretch"
+        style_plotly_figure(top_image_chart), use_container_width=True
     )
 
     footprint_source = (
@@ -178,6 +178,6 @@ else:
         )
         footprint.update_traces(hovertemplate="%{label}<br>Containers: %{value}")
         st.plotly_chart(
-            style_plotly_figure(footprint), width="stretch"
+            style_plotly_figure(footprint), use_container_width=True
         )
 

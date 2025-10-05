@@ -171,7 +171,7 @@ with tab_details:
         )
         stack_chart.update_traces(hovertemplate="%{y}<br>Stacks: %{x}")
         st.plotly_chart(
-            style_plotly_figure(stack_chart), width="stretch"
+            style_plotly_figure(stack_chart), use_container_width=True
         )
 
     status_summary = (
@@ -192,7 +192,7 @@ with tab_details:
         )
         status_chart.update_traces(textinfo="percent+label")
         st.plotly_chart(
-            style_plotly_figure(status_chart), width="stretch"
+            style_plotly_figure(status_chart), use_container_width=True
         )
     else:
         st.info("No status information available for the selected agents.")
@@ -224,7 +224,7 @@ with tab_containers:
         )
         container_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
         st.plotly_chart(
-            style_plotly_figure(container_chart), width="stretch"
+            style_plotly_figure(container_chart), use_container_width=True
         )
 
         treemap_source = (
@@ -245,7 +245,7 @@ with tab_containers:
             )
             treemap.update_traces(hovertemplate="%{label}<br>Containers: %{value}")
             st.plotly_chart(
-                style_plotly_figure(treemap), width="stretch"
+                style_plotly_figure(treemap), use_container_width=True
             )
 
         ExportableDataFrame(
