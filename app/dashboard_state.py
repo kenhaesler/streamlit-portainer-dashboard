@@ -7,6 +7,7 @@ from typing import Iterable, Sequence
 
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from .portainer_client import (  # type: ignore[import-not-found]
@@ -68,6 +69,8 @@ SESSION_FILTER_ENVIRONMENTS = "portainer_filter_selected_environments"
 SESSION_FILTER_ENDPOINTS = "portainer_filter_selected_endpoints"
 SESSION_FILTER_STACK_SEARCH = "portainer_filter_stack_search"
 SESSION_FILTER_CONTAINER_SEARCH = "portainer_filter_container_search"
+SESSION_AUTO_REFRESH_INTERVAL = "portainer_auto_refresh_interval"
+SESSION_AUTO_REFRESH_COUNT = "_portainer_auto_refresh_count"
 
 
 def trigger_rerun() -> None:
@@ -312,6 +315,33 @@ def render_sidebar_filters(
         if st.button("🔄 Refresh data", use_container_width=True):
             clear_cached_data()
             trigger_rerun()
+
+        refresh_options = [0, 15, 30, 60, 120, 300]
+        refresh_interval = st.session_state.get(SESSION_AUTO_REFRESH_INTERVAL, 0)
+        if refresh_interval not in refresh_options:
+            refresh_interval = 0
+
+        refresh_interval = st.select_slider(
+            "Auto-refresh interval",
+            options=refresh_options,
+            value=refresh_interval,
+            help="Automatically refresh Portainer data. Set to 0 to disable auto-refresh.",
+            format_func=lambda value: "Off" if value == 0 else f"Every {value} seconds",
+        )
+        st.session_state[SESSION_AUTO_REFRESH_INTERVAL] = refresh_interval
+
+        if refresh_interval > 0:
+            refresh_count = st_autorefresh(
+                interval=int(refresh_interval * 1000),
+                key="portainer_data_auto_refresh",
+            )
+            previous_count = st.session_state.get(SESSION_AUTO_REFRESH_COUNT)
+            st.session_state[SESSION_AUTO_REFRESH_COUNT] = refresh_count
+            if previous_count is not None and refresh_count != previous_count:
+                clear_cached_data()
+                trigger_rerun()
+        else:
+            st.session_state.pop(SESSION_AUTO_REFRESH_COUNT, None)
 
         saved_envs = get_saved_environments()
         env_names = [env.get("name", "") for env in saved_envs if env.get("name")]
