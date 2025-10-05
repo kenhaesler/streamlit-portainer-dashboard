@@ -80,7 +80,7 @@ def require_authentication() -> None:
     auto_refresh_triggered = False
 
     if st.session_state.get("authenticated") and session_timeout is not None:
-        refresh_count = st_autorefresh(interval=1000, key="session_timeout_refresh")
+        refresh_count = st_autorefresh(interval=30000, key="session_timeout_refresh")
         previous_refresh_count = st.session_state.get("_session_timeout_refresh_count")
         auto_refresh_triggered = (
             previous_refresh_count is not None and refresh_count != previous_refresh_count
