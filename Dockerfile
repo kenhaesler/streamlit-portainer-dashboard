@@ -17,4 +17,4 @@ COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app /app
 
 EXPOSE 8501
-ENTRYPOINT ["python", "-m", "streamlit", "run", "app/main.py", "--server.port=8501", "--server.address=0.0.0.0"]
+ENTRYPOINT ["python", "-m", "streamlit", "run", "app/Home.py", "--server.port=8501", "--server.address=0.0.0.0"]
