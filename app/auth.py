@@ -188,7 +188,7 @@ def render_logout_button() -> None:
     if not st.session_state.get("authenticated"):
         return
 
-    if st.sidebar.button("Log out", use_container_width=True):
+    if st.sidebar.button("Log out", width="stretch"):
         for key in ("authenticated", "auth_error"):
             st.session_state.pop(key, None)
         _trigger_rerun()

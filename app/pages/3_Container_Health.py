@@ -189,7 +189,7 @@ else:
 if not offline_agents.empty:
     st.subheader("Offline edge agents", divider="red")
     st.dataframe(
-        offline_agents.reset_index(drop=True), use_container_width=True
+        offline_agents.reset_index(drop=True), width="stretch"
     )
     ExportableDataFrame(
         "⬇️ Download offline agent list",
@@ -221,7 +221,7 @@ if not problem_summary.empty:
         title="Distribution of unhealthy containers",
     )
     issue_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
-    st.plotly_chart(style_plotly_figure(issue_chart), use_container_width=True)
+    st.plotly_chart(style_plotly_figure(issue_chart), width="stretch")
 
 if not problem_containers.empty:
     attention_display = problem_containers.copy()
@@ -260,7 +260,7 @@ if not problem_containers.empty:
             "Restarts": st.column_config.NumberColumn(format="%d"),
             "Created": st.column_config.TextColumn(help="Container creation timestamp"),
         },
-        use_container_width=True,
+        width="stretch",
     )
     ExportableDataFrame(
         "⬇️ Download attention list",
@@ -307,7 +307,7 @@ if not high_restart_containers.empty:
             "Restarts": st.column_config.NumberColumn(format="%d"),
             "Created": st.column_config.TextColumn(help="Container creation timestamp"),
         },
-        use_container_width=True,
+        width="stretch",
     )
     ExportableDataFrame(
         "⬇️ Download restart report",
