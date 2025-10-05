@@ -309,7 +309,7 @@ def render_sidebar_filters(
     """Render common sidebar controls and return the applied filters."""
 
     with st.sidebar:
-        if st.button("🔄 Refresh data", width="stretch"):
+        if st.button("🔄 Refresh data", use_container_width=True):
             clear_cached_data()
             trigger_rerun()
 

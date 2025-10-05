@@ -137,7 +137,7 @@ else:
             "Running containers": st.column_config.NumberColumn(format="%d"),
             "Edge agents": st.column_config.NumberColumn(format="%d"),
         },
-        width="stretch",
+        use_container_width=True,
     )
     ExportableDataFrame(
         "⬇️ Download image summary",

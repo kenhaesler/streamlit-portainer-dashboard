@@ -188,7 +188,9 @@ else:
 
 if not offline_agents.empty:
     st.subheader("Offline edge agents", divider="red")
-    st.dataframe(offline_agents.reset_index(drop=True), width="stretch")
+    st.dataframe(
+        offline_agents.reset_index(drop=True), use_container_width=True
+    )
     ExportableDataFrame(
         "⬇️ Download offline agent list",
         data=offline_agents,
@@ -258,7 +260,7 @@ if not problem_containers.empty:
             "Restarts": st.column_config.NumberColumn(format="%d"),
             "Created": st.column_config.TextColumn(help="Container creation timestamp"),
         },
-        width="stretch",
+        use_container_width=True,
     )
     ExportableDataFrame(
         "⬇️ Download attention list",
@@ -305,7 +307,7 @@ if not high_restart_containers.empty:
             "Restarts": st.column_config.NumberColumn(format="%d"),
             "Created": st.column_config.TextColumn(help="Container creation timestamp"),
         },
-        width="stretch",
+        use_container_width=True,
     )
     ExportableDataFrame(
         "⬇️ Download restart report",

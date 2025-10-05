@@ -130,11 +130,13 @@ with st.form("portainer_env_form"):
     )
     save_col, test_col = st.columns(2)
     with save_col:
-        submitted = st.form_submit_button("Save environment", width="stretch")
+        submitted = st.form_submit_button(
+            "Save environment", use_container_width=True
+        )
     with test_col:
         test_connection_clicked = st.form_submit_button(
             "Test connection",
-            width="stretch",
+            use_container_width=True,
         )
 
 name_value = st.session_state["portainer_env_form_name"].strip()

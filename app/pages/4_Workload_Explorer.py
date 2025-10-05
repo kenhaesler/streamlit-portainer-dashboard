@@ -179,7 +179,7 @@ else:
             "Created": st.column_config.TextColumn(help="Container creation timestamp"),
             "Published ports": st.column_config.TextColumn(help="Public -> private port mapping"),
         },
-        width="stretch",
+        use_container_width=True,
     )
 
     ExportableDataFrame(
