@@ -11,6 +11,7 @@ The application is configured via environment variables:
 - `PORTAINER_VERIFY_SSL` – Optional. Set to `false` to disable TLS certificate verification when using self-signed certificates.
 - `DASHBOARD_USERNAME` – Username required to sign in to the dashboard UI.
 - `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
+- `DASHBOARD_SESSION_TIMEOUT_MINUTES` – Optional. Expire authenticated sessions after the specified number of minutes of inactivity. Omit or set to a non-positive value to disable the timeout.
 
 Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
 operators can fix the configuration before exposing the dashboard.
