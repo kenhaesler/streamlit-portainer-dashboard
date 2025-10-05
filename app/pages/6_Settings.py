@@ -37,6 +37,17 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         trigger_rerun,
     )
 
+try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.portainer_client import (  # type: ignore[import-not-found]
+        PortainerAPIError,
+        PortainerClient,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from portainer_client import (  # type: ignore[no-redef]
+        PortainerAPIError,
+        PortainerClient,
+    )
+
 
 
 def rerun_app() -> None:
@@ -104,6 +115,7 @@ st.session_state.setdefault("portainer_env_form_api_key", "")
 st.session_state.setdefault("portainer_env_form_verify_ssl", True)
 
 form_error: str | None = None
+test_connection_clicked = False
 with st.form("portainer_env_form"):
     st.text_input("Name", key="portainer_env_form_name")
     st.text_input("API URL", key="portainer_env_form_api_url")
@@ -116,14 +128,21 @@ with st.form("portainer_env_form"):
         "Verify SSL certificates",
         key="portainer_env_form_verify_ssl",
     )
-    submitted = st.form_submit_button("Save environment", width="stretch")
+    save_col, test_col = st.columns(2)
+    with save_col:
+        submitted = st.form_submit_button("Save environment", width="stretch")
+    with test_col:
+        test_connection_clicked = st.form_submit_button(
+            "Test connection",
+            width="stretch",
+        )
+
+name_value = st.session_state["portainer_env_form_name"].strip()
+api_url_value = st.session_state["portainer_env_form_api_url"].strip()
+api_key_value = st.session_state["portainer_env_form_api_key"].strip()
+verify_ssl_value = bool(st.session_state["portainer_env_form_verify_ssl"])
 
 if submitted:
-    name_value = st.session_state["portainer_env_form_name"].strip()
-    api_url_value = st.session_state["portainer_env_form_api_url"].strip()
-    api_key_value = st.session_state["portainer_env_form_api_key"].strip()
-    verify_ssl_value = bool(st.session_state["portainer_env_form_verify_ssl"])
-
     missing_fields = [
         label
         for label, value in (
@@ -164,6 +183,24 @@ if submitted:
 
 if form_error:
     st.error(form_error)
+
+if test_connection_clicked and not submitted:
+    if not api_url_value or not api_key_value:
+        st.error("Please provide values for: API URL, API key.")
+    else:
+        try:
+            client = PortainerClient(
+                base_url=api_url_value,
+                api_key=api_key_value,
+                verify_ssl=verify_ssl_value,
+            )
+            client.list_edge_endpoints()
+        except ValueError as exc:
+            st.error(f"Connection test failed: {exc}")
+        except PortainerAPIError as exc:
+            st.error(f"Connection test failed: {exc}")
+        else:
+            st.success("Successfully connected to Portainer.")
 
 if env_names:
     st.subheader("Active environment")
