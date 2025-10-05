@@ -140,7 +140,7 @@ with tab_details:
             "Stack status": st.column_config.TextColumn(),
             "Stack type": st.column_config.TextColumn(),
         },
-        width="stretch",
+        use_container_width=True,
     )
     ExportableDataFrame(
         "⬇️ Download stack overview",

@@ -126,6 +126,6 @@ class ExportableDataFrame:
             data=csv_bytes,
             file_name=self.filename,
             mime="text/csv",
-            width="stretch",
+            use_container_width=True,
         )
 

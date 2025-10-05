@@ -145,7 +145,7 @@ if not endpoint_overview.empty:
         endpoint_overview.sort_values(
             ["environment_name", "endpoint_name"], na_position="last"
         ).reset_index(drop=True),
-        width="stretch",
+        use_container_width=True,
     )
     ExportableDataFrame(
         "⬇️ Download endpoint overview",
