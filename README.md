@@ -54,7 +54,9 @@ accent colour is overridden, so the interface remains readable in either mode.
    docker build -t streamlit-portainer-dashboard .
    ```
 2. Create a `.env` file that contains the variables described above.
-3. Create a named volume so the app can persist the saved Portainer environments between runs:
+3. Create a named volume so the app can persist the saved Portainer environments between runs. Fresh volumes receive the
+   pre-populated `.streamlit` directory owned by the distroless `nonroot` user (UID/GID `65532`), so the container can write
+   the `portainer_environments.json` file without any manual permission changes:
    ```bash
    docker volume create streamlit_portainer_envs
    ```
@@ -66,6 +68,15 @@ accent colour is overridden, so the interface remains readable in either mode.
    ```
 5. Visit http://localhost:8501 to access the dashboard. Any Portainer environments you add inside the app will be stored in the mounted volume and remain available for future container runs.
 6. Use the sidebar controls to manage Portainer environments and filtering. The **Auto-refresh interval** slider can automatically reload data at 15–300 second intervals (set it to `Off`/`0` to disable auto-refresh).
+
+#### Repairing existing volumes
+
+If you created the `streamlit_portainer_envs` volume before this ownership fix, update its permissions so the runtime user can persist changes:
+
+```bash
+docker run --rm -v streamlit_portainer_envs:/app/.streamlit busybox \
+  chown -R 65532:65532 /app/.streamlit
+```
 
 ### Customising the storage location
 
