@@ -9,12 +9,17 @@ RUN pip install --upgrade pip && \
 COPY .streamlit ./.streamlit
 COPY app ./app
 
+# Ensure the Streamlit configuration directory is writable by the runtime user
+RUN chown -R 65532:65532 ./.streamlit
+
 # --- Runtime stage (distroless 3.12) ---
 FROM gcr.io/distroless/python3-debian12:nonroot
 WORKDIR /app
 
 COPY --from=builder /usr/local /usr/local
 COPY --from=builder /app /app
+# Guarantee the runtime user owns the Streamlit configuration directory
+COPY --from=builder --chown=65532:65532 /app/.streamlit /app/.streamlit
 
 EXPOSE 8501
 
