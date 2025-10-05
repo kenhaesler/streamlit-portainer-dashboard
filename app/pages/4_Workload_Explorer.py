@@ -5,9 +5,15 @@ import pandas as pd
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
-    from app.auth import require_authentication  # type: ignore[import-not-found]
+    from app.auth import (  # type: ignore[import-not-found]
+        render_logout_button,
+        require_authentication,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
-    from auth import require_authentication  # type: ignore[no-redef]
+    from auth import (  # type: ignore[no-redef]
+        render_logout_button,
+        require_authentication,
+    )
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.dashboard_state import (  # type: ignore[import-not-found]
@@ -45,6 +51,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
 
 require_authentication()
+render_logout_button()
 
 render_page_header(
     "Workload explorer",

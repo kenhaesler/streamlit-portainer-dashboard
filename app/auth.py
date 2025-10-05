@@ -111,3 +111,14 @@ def require_authentication() -> None:
             _trigger_rerun()
 
     st.stop()
+
+
+def render_logout_button() -> None:
+    """Display a logout control in the sidebar for authenticated users."""
+    if not st.session_state.get("authenticated"):
+        return
+
+    if st.sidebar.button("Log out", use_container_width=True):
+        for key in ("authenticated", "auth_error"):
+            st.session_state.pop(key, None)
+        _trigger_rerun()

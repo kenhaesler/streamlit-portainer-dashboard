@@ -16,6 +16,9 @@ The application is configured via environment variables:
 Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
 operators can fix the configuration before exposing the dashboard.
 
+After signing in, operators can use the persistent **Log out** button in the sidebar to clear their authentication session when
+they step away from the dashboard.
+
 ### Theme
 
 The default Streamlit theme is configured through `.streamlit/config.toml`. The dashboard ships with a

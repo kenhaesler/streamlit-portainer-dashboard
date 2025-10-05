@@ -5,14 +5,20 @@ import streamlit as st
 from dotenv import load_dotenv
 
 try:  # pragma: no cover - import shim for Streamlit runtime
-    from app.auth import require_authentication  # type: ignore[import-not-found]
+    from app.auth import (  # type: ignore[import-not-found]
+        render_logout_button,
+        require_authentication,
+    )
     from app.dashboard_state import (  # type: ignore[import-not-found]
         apply_selected_environment,
         get_saved_environments,
         initialise_session_state,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
-    from auth import require_authentication  # type: ignore[no-redef]
+    from auth import (  # type: ignore[no-redef]
+        render_logout_button,
+        require_authentication,
+    )
     from dashboard_state import (  # type: ignore[no-redef]
         apply_selected_environment,
         get_saved_environments,
@@ -25,6 +31,7 @@ load_dotenv()
 st.set_page_config(page_title="Portainer Dashboard", layout="wide")
 
 require_authentication()
+render_logout_button()
 
 initialise_session_state()
 apply_selected_environment()
