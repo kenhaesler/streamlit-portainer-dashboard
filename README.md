@@ -17,7 +17,10 @@ Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing
 operators can fix the configuration before exposing the dashboard.
 
 After signing in, operators can use the persistent **Log out** button in the sidebar to clear their authentication session when
-they step away from the dashboard.
+they step away from the dashboard. When a session timeout is configured, the remaining time is shown in the sidebar so
+operators can always see how much longer the session will stay active. The dashboard automatically refreshes idle sessions every
+second to keep the countdown up to date. During the final 30 seconds a warning banner appears with a **Keep me logged in**
+button; clicking it immediately refreshes the activity timestamp and prevents the session from expiring.
 
 ### Theme
 
