@@ -131,12 +131,12 @@ with st.form("portainer_env_form"):
     save_col, test_col = st.columns(2)
     with save_col:
         submitted = st.form_submit_button(
-            "Save environment", use_container_width=True
+            "Save environment", width="stretch"
         )
     with test_col:
         test_connection_clicked = st.form_submit_button(
             "Test connection",
-            use_container_width=True,
+            width="stretch",
         )
 
 name_value = st.session_state["portainer_env_form_name"].strip()

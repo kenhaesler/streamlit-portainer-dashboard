@@ -145,7 +145,7 @@ if not endpoint_overview.empty:
         endpoint_overview.sort_values(
             ["environment_name", "endpoint_name"], na_position="last"
         ).reset_index(drop=True),
-        use_container_width=True,
+        width="stretch",
     )
     ExportableDataFrame(
         "⬇️ Download endpoint overview",
@@ -181,7 +181,7 @@ if not endpoint_overview.empty:
             hovertemplate="%{hovertext}<br>Stacks: %{x}<br>Containers: %{y}"
         )
         st.plotly_chart(
-            style_plotly_figure(load_scatter), use_container_width=True
+            style_plotly_figure(load_scatter), width="stretch"
         )
 else:
     st.info("No stack information available for the selected filters.")
@@ -208,7 +208,7 @@ if not container_summary.empty:
     )
     density_chart.update_layout(yaxis_title="Endpoint", xaxis_title="Containers")
     st.plotly_chart(
-        style_plotly_figure(density_chart), use_container_width=True
+        style_plotly_figure(density_chart), width="stretch"
     )
 
     top_images = (
@@ -235,7 +235,7 @@ if not container_summary.empty:
         image_chart.update_layout(yaxis_title="Image", xaxis_title="Containers")
         image_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
         st.plotly_chart(
-            style_plotly_figure(image_chart), use_container_width=True
+            style_plotly_figure(image_chart), width="stretch"
         )
         ExportableDataFrame(
             "⬇️ Download top images",
@@ -287,7 +287,7 @@ if not container_summary.empty:
         )
         age_chart.update_traces(hovertemplate="Age: %{x:.1f} days<br>Containers: %{y}")
         st.plotly_chart(
-            style_plotly_figure(age_chart), use_container_width=True
+            style_plotly_figure(age_chart), width="stretch"
         )
 else:
     st.info("No container data available for the selected filters.")
