@@ -46,6 +46,7 @@ accent colour is overridden, so the interface remains readable in either mode.
    docker compose up -d
    ```
 3. Visit http://localhost:8501 to access the dashboard. Any Portainer environments you add inside the app will be stored in the named `streamlit_portainer_envs` volume and remain available for future runs.
+4. Use the sidebar controls to manage Portainer environments and filtering. The **Auto-refresh interval** slider can automatically reload data at 15–300 second intervals (set it to `Off`/`0` to disable auto-refresh).
 
 ### Run with Docker
 1. Build the image (or pull it from your own registry):
@@ -64,6 +65,7 @@ accent colour is overridden, so the interface remains readable in either mode.
      streamlit-portainer-dashboard
    ```
 5. Visit http://localhost:8501 to access the dashboard. Any Portainer environments you add inside the app will be stored in the mounted volume and remain available for future container runs.
+6. Use the sidebar controls to manage Portainer environments and filtering. The **Auto-refresh interval** slider can automatically reload data at 15–300 second intervals (set it to `Off`/`0` to disable auto-refresh).
 
 ### Customising the storage location
 
