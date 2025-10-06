@@ -10,6 +10,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
     from app.auth import (  # type: ignore[import-not-found]
         render_logout_button,
         require_authentication,
+        get_active_session_count,
     )
     from app.dashboard_state import (  # type: ignore[import-not-found]
         apply_selected_environment,
@@ -20,6 +21,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     from auth import (  # type: ignore[no-redef]
         render_logout_button,
         require_authentication,
+        get_active_session_count,
     )
     from dashboard_state import (  # type: ignore[no-redef]
         apply_selected_environment,
@@ -113,6 +115,7 @@ secured_environment_count = sum(
     1 for env in saved_environments if bool(env.get("verify_ssl", True))
 )
 api_keys_available = sum(1 for env in saved_environments if env.get("api_key"))
+active_sessions = get_active_session_count()
 
 hero_col1, hero_col2 = st.columns([3, 2], gap="large")
 with hero_col1:
@@ -139,12 +142,21 @@ with hero_col2:
         """,
         unsafe_allow_html=True,
     )
-    metric_cols = st.columns(2, gap="medium")
-    metric_cols[0].metric("Environments", len(saved_environments), help="Configured Portainer environments")
+    metric_cols = st.columns(3, gap="medium")
+    metric_cols[0].metric(
+        "Environments",
+        len(saved_environments),
+        help="Configured Portainer environments",
+    )
     metric_cols[1].metric(
         "Secured connections",
         secured_environment_count,
         help="Environments with SSL verification enabled",
+    )
+    metric_cols[2].metric(
+        "Active sessions",
+        active_sessions,
+        help="Authenticated users currently connected to the dashboard",
     )
     st.metric(
         "API keys stored",
