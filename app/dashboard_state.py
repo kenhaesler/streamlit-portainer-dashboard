@@ -16,6 +16,12 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         normalise_endpoint_containers,
         normalise_endpoint_stacks,
     )
+    from .environment_cache import (  # type: ignore[import-not-found]
+        build_cache_key as build_portainer_cache_key,
+        clear_cache as clear_persistent_portainer_cache,
+        load_cache_entry as load_portainer_cache_entry,
+        store_cache_entry as store_portainer_cache_entry,
+    )
     from .settings import (  # type: ignore[import-not-found]
         PortainerEnvironment,
         get_configured_environments,
@@ -28,6 +34,12 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
         PortainerClient,
         normalise_endpoint_containers,
         normalise_endpoint_stacks,
+    )
+    from environment_cache import (  # type: ignore[no-redef]
+        build_cache_key as build_portainer_cache_key,
+        clear_cache as clear_persistent_portainer_cache,
+        load_cache_entry as load_portainer_cache_entry,
+        store_cache_entry as store_portainer_cache_entry,
     )
     from settings import (  # type: ignore[no-redef]
         PortainerEnvironment,
@@ -174,6 +186,25 @@ def clear_cached_data() -> None:
     """Clear cached Portainer data."""
 
     fetch_portainer_data.clear()  # type: ignore[attr-defined]
+    clear_persistent_portainer_cache()
+
+
+def _serialise_dataframe(df: pd.DataFrame) -> dict[str, object]:
+    return {"columns": list(df.columns), "records": df.to_dict(orient="records")}
+
+
+def _deserialise_dataframe(payload: object) -> pd.DataFrame:
+    if not isinstance(payload, dict):
+        raise ValueError("Invalid dataframe payload")
+    columns = payload.get("columns")
+    records = payload.get("records")
+    if not isinstance(columns, list) or not all(isinstance(col, str) for col in columns):
+        raise ValueError("Invalid dataframe columns")
+    if not isinstance(records, list):
+        raise ValueError("Invalid dataframe records")
+    if records:
+        return pd.DataFrame.from_records(records, columns=columns)
+    return pd.DataFrame(columns=columns)
 
 
 @st.cache_data(show_spinner=False)
@@ -193,6 +224,24 @@ def fetch_portainer_data(
         containers are included in the response. Defaults to ``False`` to keep
         compatibility with dashboards that focus on running workloads.
     """
+
+    cache_key = build_portainer_cache_key(environments, include_stopped=include_stopped)
+    cached_payload = load_portainer_cache_entry(cache_key)
+    if cached_payload:
+        try:
+            stack_data = _deserialise_dataframe(cached_payload.get("stack_data"))
+            container_data = _deserialise_dataframe(
+                cached_payload.get("container_data")
+            )
+        except ValueError:
+            stack_data = None
+            container_data = None
+        else:
+            warnings = cached_payload.get("warnings")
+            if isinstance(warnings, list) and all(
+                isinstance(item, str) for item in warnings
+            ):
+                return stack_data, container_data, list(warnings)
 
     stack_frames: list[pd.DataFrame] = []
     container_frames: list[pd.DataFrame] = []
@@ -246,6 +295,13 @@ def fetch_portainer_data(
     else:
         container_data = normalise_endpoint_containers([], {})
         container_data["environment_name"] = pd.Series(dtype="object")
+
+    payload = {
+        "stack_data": _serialise_dataframe(stack_data),
+        "container_data": _serialise_dataframe(container_data),
+        "warnings": warnings,
+    }
+    store_portainer_cache_entry(cache_key, payload)
 
     return stack_data, container_data, warnings
 
