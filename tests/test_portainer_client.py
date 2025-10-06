@@ -28,3 +28,24 @@ def test_list_edge_endpoints_requests_status(monkeypatch):
 
     assert captured["path"] == "/endpoints"
     assert captured["params"] == {"edge": "true", "status": "true"}
+
+
+def test_get_stack_image_status(monkeypatch):
+    """Stack image status requests should hit the expected endpoint."""
+
+    client = PortainerClient(base_url="https://portainer.example", api_key="token")
+
+    captured: dict[str, object] = {}
+
+    def fake_request(path: str, *, params=None):  # type: ignore[override]
+        captured["path"] = path
+        captured["params"] = params
+        return {"Status": "updated"}
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    payload = client.get_stack_image_status(42)
+
+    assert captured["path"] == "/stacks/42/images_status"
+    assert captured["params"] is None
+    assert payload == {"Status": "updated"}
