@@ -48,6 +48,15 @@ or the cache is invalidated. The cache is automatically cleared when operators s
 environment, press the **Refresh data** button in the sidebar, or modify the saved environment configuration. You
 can adjust or disable the behaviour through the new environment variables documented above.
 
+### LLM assistant
+
+The **LLM assistant** page lets you connect an OpenWebUI/Ollama deployment to the dashboard. Provide the chat
+completion endpoint (for example `https://llm.example.com/v1/chat/completions`), your API token and
+model name (such as `gpt-oss`). The page summarises the containers and stacks returned by Portainer—including any
+warnings—and sends that context along with your natural language question. This makes it possible to ask questions
+like “are there any containers that have issues and why?” directly from the dashboard. Responses are displayed in
+the UI and you can download the exact context shared with the model for auditing.
+
 ## Usage
 
 ### Run with Docker Compose
