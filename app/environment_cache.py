@@ -72,7 +72,7 @@ def _cache_directory() -> Path:
     override = os.getenv(_CACHE_DIR_ENV_VAR)
     if override:
         return Path(override).expanduser()
-    return Path(__file__).resolve().parent / ".streamlit" / "cache"
+    return Path(__file__).resolve().parent.parent / ".streamlit" / "cache"
 
 
 def _cache_path(key: str) -> Path:
