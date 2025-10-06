@@ -11,7 +11,11 @@ import requests
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app import portainer_client
-from app.portainer_client import PortainerAPIError, PortainerClient
+from app.portainer_client import (
+    PortainerAPIError,
+    PortainerClient,
+    normalise_endpoint_stacks,
+)
 
 
 def test_list_edge_endpoints_requests_status(monkeypatch):
@@ -100,3 +104,18 @@ def test_create_backup_raises_on_request_errors(monkeypatch):
 
     with pytest.raises(PortainerAPIError):
         client.create_backup()
+
+
+def test_normalise_endpoint_stacks_keeps_zero_status():
+    """A status of ``0`` should not be treated as missing."""
+
+    endpoints = [
+        {
+            "Id": 7,
+            "Name": "edge-0",
+            "Status": 0,
+        }
+    ]
+    result = normalise_endpoint_stacks(endpoints, {7: []})
+
+    assert result.loc[0, "endpoint_status"] == 0
