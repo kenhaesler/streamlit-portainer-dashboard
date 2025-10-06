@@ -13,9 +13,14 @@ try:  # pragma: no cover - import shim for Streamlit runtime
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from portainer_client import PortainerClient  # type: ignore[no-redef]
 
-__all__ = ["backup_directory", "create_environment_backup"]
+__all__ = [
+    "backup_directory",
+    "create_environment_backup",
+    "default_backup_password",
+]
 
 _BACKUP_DIR_ENV_VAR = "PORTAINER_BACKUP_DIR"
+_BACKUP_PASSWORD_ENV_VAR = "PORTAINER_BACKUP_PASSWORD"
 
 
 def backup_directory() -> Path:
@@ -32,6 +37,16 @@ def _ensure_backup_directory() -> Path:
     directory = backup_directory()
     directory.mkdir(parents=True, exist_ok=True)
     return directory
+
+
+def default_backup_password() -> Optional[str]:
+    """Return the configured default password for Portainer backups."""
+
+    value = os.getenv(_BACKUP_PASSWORD_ENV_VAR)
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
 
 
 def _sanitise_component(value: str) -> str:
