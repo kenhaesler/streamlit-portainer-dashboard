@@ -121,7 +121,8 @@ except PortainerAPIError as exc:
 
 render_data_refresh_notice(data_result)
 
-for warning in data_result.warnings:
+warnings = tuple(data_result.warnings)
+for warning in warnings:
     st.warning(warning, icon="⚠️")
 
 stack_data = data_result.stack_data
