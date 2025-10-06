@@ -20,6 +20,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         fetch_portainer_data,
         initialise_session_state,
         load_configured_environment_settings,
+        render_data_refresh_notice,
         render_sidebar_filters,
     )
     from app.portainer_client import PortainerAPIError  # type: ignore[import-not-found]
@@ -43,6 +44,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         fetch_portainer_data,
         initialise_session_state,
         load_configured_environment_settings,
+        render_data_refresh_notice,
         render_sidebar_filters,
     )
     from portainer_client import PortainerAPIError  # type: ignore[no-redef]
@@ -110,17 +112,26 @@ except NoEnvironmentsConfiguredError:
     st.stop()
 
 try:
-    stack_data, container_data, warnings = fetch_portainer_data(
+    data_result = fetch_portainer_data(
         configured_environments, include_stopped=True
     )
 except PortainerAPIError as exc:
     st.error(f"Failed to load data from Portainer: {exc}")
     st.stop()
 
-for warning in warnings:
+render_data_refresh_notice(data_result)
+
+for warning in data_result.warnings:
     st.warning(warning, icon="⚠️")
 
-filters = render_sidebar_filters(stack_data, container_data)
+stack_data = data_result.stack_data
+container_data = data_result.container_data
+
+filters = render_sidebar_filters(
+    stack_data,
+    container_data,
+    data_status=data_result,
+)
 stack_filtered = filters.stack_data
 containers_filtered = filters.container_data
 
@@ -295,15 +306,18 @@ if submitted:
         st.error("Please provide the OpenWebUI/Ollama API endpoint.")
     elif not question_clean:
         st.warning("Enter a question for the LLM before submitting.", icon="ℹ️")
-    elif not context_payload:
-        st.warning(
-            "There is no Portainer data to send to the LLM. Adjust the filters or refresh the data.",
-            icon="ℹ️",
-        )
     elif auth_error:
         st.error(auth_error)
     else:
-        context_json = json.dumps(context_payload, indent=2, ensure_ascii=False)
+        if context_payload:
+            context_json = json.dumps(context_payload, indent=2, ensure_ascii=False)
+        else:
+            st.info(
+                "There is no Portainer data available for the current filters. The question will be "
+                "sent to the LLM without additional context.",
+                icon="ℹ️",
+            )
+            context_json = "{}"
         system_prompt = (
             "You are a helpful assistant that analyses Portainer container telemetry to help operators "
             "understand their Docker environments. Base your answer strictly on the provided context."
@@ -353,20 +367,29 @@ if context_notice:
         % max_context_rows
     )
 
-st.subheader("Container context shared with the LLM")
-ExportableDataFrame(
-    "Download container context",
-    container_context,
-    "portainer_container_context.csv",
-).render_download_button()
-st.dataframe(container_context, use_container_width=True, hide_index=True)
+show_context_default = bool(st.session_state.get("llm_show_context", True))
+show_context = st.toggle(
+    "Show LLM context tables",
+    value=show_context_default,
+    help="Toggle the visibility of the Portainer data that is sent to the LLM as context.",
+)
+st.session_state["llm_show_context"] = show_context
 
-if not stack_context.empty:
-    st.subheader("Stack context shared with the LLM")
+if show_context:
+    st.subheader("Container context shared with the LLM")
     ExportableDataFrame(
-        "Download stack context",
-        stack_context,
-        "portainer_stack_context.csv",
+        "Download container context",
+        container_context,
+        "portainer_container_context.csv",
     ).render_download_button()
-    st.dataframe(stack_context, use_container_width=True, hide_index=True)
+    st.dataframe(container_context, use_container_width=True, hide_index=True)
+
+    if not stack_context.empty:
+        st.subheader("Stack context shared with the LLM")
+        ExportableDataFrame(
+            "Download stack context",
+            stack_context,
+            "portainer_stack_context.csv",
+        ).render_download_button()
+        st.dataframe(stack_context, use_container_width=True, hide_index=True)
 
