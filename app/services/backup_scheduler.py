@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Mapping
 
-from .backup import backup_directory, create_environment_backup
+from .backup import (
+    backup_directory,
+    create_environment_backup,
+    default_backup_password,
+)
 
 __all__ = [
     "configured_interval_seconds",
@@ -178,9 +182,11 @@ def maybe_run_scheduled_backups(
         return []
 
     generated: List[Path] = []
+    password = default_backup_password()
     for environment in envs:
         try:
-            path = create_environment_backup(environment)
+            kwargs = {"password": password} if password else {}
+            path = create_environment_backup(environment, **kwargs)
         except Exception as exc:  # pragma: no cover - defensive guard
             env_name = str(environment.get("name", "environment"))
             LOGGER.warning(

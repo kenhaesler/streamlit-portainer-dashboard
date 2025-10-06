@@ -54,14 +54,18 @@ try:  # pragma: no cover - import shim for Streamlit runtime
     from app.services.backup import (  # type: ignore[import-not-found]
         backup_directory,
         create_environment_backup,
+        default_backup_password,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from services.backup import (  # type: ignore[no-redef]
         backup_directory,
         create_environment_backup,
+        default_backup_password,
     )
 
 _BACKUP_SESSION_KEY = "portainer_backup_latest_path"
+_BACKUP_PASSWORD_KEY = "portainer_backup_password"
+_BACKUP_PASSWORD_RESET_KEY = "portainer_backup_password_reset"
 
 
 def rerun_app() -> None:
@@ -244,9 +248,16 @@ if env_names:
     if active_config is None:
         st.info("Select an environment to create backups.")
     else:
-        password_value = st.text_input(
+        if st.session_state.pop(_BACKUP_PASSWORD_RESET_KEY, False):
+            st.session_state[_BACKUP_PASSWORD_KEY] = default_backup_password() or ""
+
+        st.session_state.setdefault(
+            _BACKUP_PASSWORD_KEY, default_backup_password() or ""
+        )
+
+        st.text_input(
             "Backup password (optional)",
-            key="portainer_backup_password",
+            key=_BACKUP_PASSWORD_KEY,
             type="password",
             help="Portainer encrypts the backup with this password when provided.",
         )
@@ -258,9 +269,11 @@ if env_names:
         if create_backup_clicked:
             with st.spinner("Requesting backup from Portainer..."):
                 try:
+                    password_input = st.session_state[_BACKUP_PASSWORD_KEY].strip()
+                    backup_password = password_input or default_backup_password()
                     backup_path = create_environment_backup(
                         active_config,
-                        password=password_value or None,
+                        password=backup_password or None,
                     )
                 except ValueError as exc:
                     st.error(f"Unable to create backup: {exc}")
@@ -275,7 +288,7 @@ if env_names:
                         "Backup created successfully. Saved to "
                         f"`{backup_display}`."
                     )
-                    st.session_state["portainer_backup_password"] = ""
+                    st.session_state[_BACKUP_PASSWORD_RESET_KEY] = True
 
         latest_backup = st.session_state.get(_BACKUP_SESSION_KEY)
         if latest_backup:
