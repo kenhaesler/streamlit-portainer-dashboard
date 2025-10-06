@@ -139,15 +139,46 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
             "`https://llm.example.com/v1/chat/completions`."
         ),
     )
-    api_token = st.text_input(
-        "API token",
-        value=st.session_state.get("llm_api_token", ""),
-        type="password",
+    auth_mode_options = [
+        "Bearer token",
+        "Username/password (Basic)",
+        "No authentication",
+    ]
+    auth_mode_default = st.session_state.get("llm_auth_mode", auth_mode_options[0])
+    if auth_mode_default not in auth_mode_options:
+        auth_mode_default = auth_mode_options[0]
+    auth_mode = st.selectbox(
+        "Authentication method",
+        options=auth_mode_options,
+        index=auth_mode_options.index(auth_mode_default),
         help=(
-            "Provide either an API token or a `username:password` pair."
-            " Username/password credentials are sent using HTTP Basic auth automatically."
+            "Select how to authenticate with the ParisNeo Ollama proxy server or OpenWebUI "
+            "deployment. Bearer tokens are sent using the `Authorization: Bearer` header and "
+            "username/password credentials use HTTP Basic auth."
         ),
     )
+    bearer_token = st.session_state.get("llm_bearer_token", "")
+    basic_username = st.session_state.get("llm_basic_username", "")
+    basic_password = st.session_state.get("llm_basic_password", "")
+    if auth_mode == "Bearer token":
+        bearer_token = st.text_input(
+            "Bearer token",
+            value=bearer_token,
+            type="password",
+            help="Provide the access token issued by your Ollama proxy or OpenWebUI deployment.",
+        )
+    elif auth_mode == "Username/password (Basic)":
+        basic_username = st.text_input(
+            "Username",
+            value=basic_username,
+            help="Username for HTTP basic authentication.",
+        )
+        basic_password = st.text_input(
+            "Password",
+            value=basic_password,
+            type="password",
+            help="Password for HTTP basic authentication.",
+        )
     model_name = st.text_input(
         "Model",
         value=st.session_state.get("llm_model", "gpt-oss"),
@@ -193,7 +224,10 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
     submitted = st.form_submit_button("Ask the LLM", use_container_width=True)
 
 st.session_state["llm_api_endpoint"] = api_endpoint
-st.session_state["llm_api_token"] = api_token
+st.session_state["llm_auth_mode"] = auth_mode
+st.session_state["llm_bearer_token"] = bearer_token
+st.session_state["llm_basic_username"] = basic_username
+st.session_state["llm_basic_password"] = basic_password
 st.session_state["llm_model"] = model_name
 st.session_state["llm_temperature"] = temperature
 st.session_state["llm_max_tokens"] = max_tokens
@@ -234,6 +268,85 @@ if not stack_context.empty:
 if warnings:
     context_payload["warnings"] = list(warnings)
 
+# The context notice is rendered after the response section to keep feedback near the form.
+response_container = st.container()
+displayed_response = False
+
+if submitted:
+    question_clean = question.strip()
+    endpoint_clean = api_endpoint.strip()
+    token_to_send: str | None = None
+    auth_error: str | None = None
+    if auth_mode == "Bearer token":
+        token_clean = bearer_token.strip()
+        if not token_clean:
+            auth_error = "Please provide a bearer token for authentication."
+        else:
+            token_to_send = f"Bearer {token_clean}"
+    elif auth_mode == "Username/password (Basic)":
+        username_clean = basic_username.strip()
+        if not username_clean:
+            auth_error = "Please provide a username for basic authentication."
+        else:
+            token_to_send = f"{username_clean}:{basic_password}"
+    else:
+        token_to_send = None
+    if not endpoint_clean:
+        st.error("Please provide the OpenWebUI/Ollama API endpoint.")
+    elif not question_clean:
+        st.warning("Enter a question for the LLM before submitting.", icon="ℹ️")
+    elif not context_payload:
+        st.warning(
+            "There is no Portainer data to send to the LLM. Adjust the filters or refresh the data.",
+            icon="ℹ️",
+        )
+    elif auth_error:
+        st.error(auth_error)
+    else:
+        context_json = json.dumps(context_payload, indent=2, ensure_ascii=False)
+        system_prompt = (
+            "You are a helpful assistant that analyses Portainer container telemetry to help operators "
+            "understand their Docker environments. Base your answer strictly on the provided context."
+        )
+        messages: list[Mapping[str, object]] = [
+            {"role": "system", "content": system_prompt},
+            {
+                "role": "user",
+                "content": (
+                    f"Question: {question_clean}\n\n"
+                    "Context (JSON):\n"
+                    f"{context_json}"
+                ),
+            },
+        ]
+        client = LLMClient(
+            base_url=endpoint_clean,
+            token=token_to_send,
+            model=model_name.strip() or "gpt-oss",
+            verify_ssl=verify_ssl,
+        )
+        with st.spinner("Querying the LLM..."):
+            try:
+                answer = client.chat(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                )
+            except LLMClientError as exc:
+                st.error(f"LLM request failed: {exc}")
+            else:
+                st.session_state["llm_last_question"] = question_clean
+                st.session_state["llm_last_answer"] = answer
+                with response_container:
+                    st.markdown("### LLM response")
+                    st.markdown(answer)
+                displayed_response = True
+
+if not displayed_response and (last_answer := st.session_state.get("llm_last_answer")):
+    with response_container:
+        st.markdown("### Most recent response")
+        st.markdown(last_answer)
+
 if context_notice:
     st.caption(
         "Only the first %s containers are included in the LLM context to keep the prompt concise."
@@ -256,61 +369,4 @@ if not stack_context.empty:
         "portainer_stack_context.csv",
     ).render_download_button()
     st.dataframe(stack_context, use_container_width=True, hide_index=True)
-
-displayed_response = False
-
-if submitted:
-    question_clean = question.strip()
-    endpoint_clean = api_endpoint.strip()
-    if not endpoint_clean:
-        st.error("Please provide the OpenWebUI/Ollama API endpoint.")
-    elif not question_clean:
-        st.warning("Enter a question for the LLM before submitting.", icon="ℹ️")
-    elif not context_payload:
-        st.warning(
-            "There is no Portainer data to send to the LLM. Adjust the filters or refresh the data.",
-            icon="ℹ️",
-        )
-    else:
-        context_json = json.dumps(context_payload, indent=2, ensure_ascii=False)
-        system_prompt = (
-            "You are a helpful assistant that analyses Portainer container telemetry to help operators "
-            "understand their Docker environments. Base your answer strictly on the provided context."
-        )
-        messages: list[Mapping[str, object]] = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"Question: {question_clean}\n\n"
-                    "Context (JSON):\n"
-                    f"{context_json}"
-                ),
-            },
-        ]
-        client = LLMClient(
-            base_url=endpoint_clean,
-            token=api_token or None,
-            model=model_name.strip() or "gpt-oss",
-            verify_ssl=verify_ssl,
-        )
-        with st.spinner("Querying the LLM..."):
-            try:
-                answer = client.chat(
-                    messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            except LLMClientError as exc:
-                st.error(f"LLM request failed: {exc}")
-            else:
-                st.session_state["llm_last_question"] = question_clean
-                st.session_state["llm_last_answer"] = answer
-                st.markdown("### LLM response")
-                st.markdown(answer)
-                displayed_response = True
-
-if not displayed_response and (last_answer := st.session_state.get("llm_last_answer")):
-    st.markdown("### Most recent response")
-    st.markdown(last_answer)
 
