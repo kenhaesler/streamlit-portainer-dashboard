@@ -24,6 +24,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         fetch_portainer_data,
         initialise_session_state,
         load_configured_environment_settings,
+        render_data_refresh_notice,
         render_sidebar_filters,
     )
     from app.portainer_client import PortainerAPIError  # type: ignore[import-not-found]
@@ -41,6 +42,7 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         fetch_portainer_data,
         initialise_session_state,
         load_configured_environment_settings,
+        render_data_refresh_notice,
         render_sidebar_filters,
     )
     from portainer_client import PortainerAPIError  # type: ignore[no-redef]
@@ -81,21 +83,30 @@ except NoEnvironmentsConfiguredError:
     st.stop()
 
 try:
-    stack_data, container_data, warnings = fetch_portainer_data(
+    data_result = fetch_portainer_data(
         configured_environments, include_stopped=True
     )
 except PortainerAPIError as exc:
     st.error(f"Failed to load data from Portainer: {exc}")
     st.stop()
 
-for warning in warnings:
+render_data_refresh_notice(data_result)
+
+for warning in data_result.warnings:
     st.warning(warning, icon="⚠️")
+
+stack_data = data_result.stack_data
+container_data = data_result.container_data
 
 if stack_data.empty and container_data.empty:
     st.info("No data was returned by the Portainer API for the configured account.")
     st.stop()
 
-filters = render_sidebar_filters(stack_data, container_data)
+filters = render_sidebar_filters(
+    stack_data,
+    container_data,
+    data_status=data_result,
+)
 
 stack_filtered = filters.stack_data
 containers_filtered = filters.container_data

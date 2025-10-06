@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Iterable, Sequence
 
 import pandas as pd
@@ -18,6 +20,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         normalise_endpoint_stacks,
     )
     from .environment_cache import (  # type: ignore[import-not-found]
+        CacheEntry,
         build_cache_key as build_portainer_cache_key,
         clear_cache as clear_persistent_portainer_cache,
         load_cache_entry as load_portainer_cache_entry,
@@ -38,6 +41,7 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
         normalise_endpoint_stacks,
     )
     from environment_cache import (  # type: ignore[no-redef]
+        CacheEntry,
         build_cache_key as build_portainer_cache_key,
         clear_cache as clear_persistent_portainer_cache,
         load_cache_entry as load_portainer_cache_entry,
@@ -58,6 +62,7 @@ __all__ = [
     "NoEnvironmentsConfiguredError",
     "trigger_rerun",
     "FilterResult",
+    "PortainerDataResult",
     "apply_selected_environment",
     "clear_cached_data",
     "fetch_portainer_data",
@@ -65,6 +70,7 @@ __all__ = [
     "get_selected_environment_name",
     "initialise_session_state",
     "load_configured_environment_settings",
+    "render_data_refresh_notice",
     "render_sidebar_filters",
     "set_active_environment",
     "set_saved_environments",
@@ -72,6 +78,9 @@ __all__ = [
 
 
 LOGGER = logging.getLogger(__name__)
+
+_REFRESH_LOCK = threading.Lock()
+_ACTIVE_REFRESHERS: dict[str, threading.Thread] = {}
 
 
 class ConfigurationError(RuntimeError):
@@ -234,42 +243,50 @@ def _deserialise_dataframe(payload: object) -> pd.DataFrame:
     return pd.DataFrame(columns=columns)
 
 
-@st.cache_data(show_spinner=False)
-def fetch_portainer_data(
-    environments: tuple[PortainerEnvironment, ...],
-    *,
-    include_stopped: bool = False,
+def _timestamp_to_datetime(timestamp: float | None) -> datetime | None:
+    if timestamp is None:
+        return None
+    try:
+        dt = datetime.fromtimestamp(timestamp, tz=timezone.utc)
+    except (OverflowError, OSError, ValueError):
+        return None
+    return dt.astimezone()
+
+
+def _build_cached_payload(
+    stack_data: pd.DataFrame,
+    container_data: pd.DataFrame,
+    warnings: list[str],
+) -> dict[str, object]:
+    return {
+        "stack_data": _serialise_dataframe(stack_data),
+        "container_data": _serialise_dataframe(container_data),
+        "warnings": warnings,
+    }
+
+
+def _deserialise_cache_entry(
+    entry: CacheEntry,
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
+    payload = entry.payload
+    try:
+        stack_data = _deserialise_dataframe(payload.get("stack_data"))
+        container_data = _deserialise_dataframe(payload.get("container_data"))
+    except ValueError:
+        return None
+    warnings_raw = payload.get("warnings")
+    if isinstance(warnings_raw, list) and all(
+        isinstance(item, str) for item in warnings_raw
+    ):
+        warnings = list(warnings_raw)
+    else:
+        warnings = []
+    return stack_data, container_data, warnings
+
+
+def _fetch_portainer_payload(
+    environments: tuple[PortainerEnvironment, ...], *, include_stopped: bool
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
-    """Fetch data for the provided environments, caching the result.
-
-    Parameters
-    ----------
-    environments:
-        Sequence of configured Portainer environments to query.
-    include_stopped:
-        When ``True`` the Docker API is queried with ``all=1`` so stopped
-        containers are included in the response. Defaults to ``False`` to keep
-        compatibility with dashboards that focus on running workloads.
-    """
-
-    cache_key = build_portainer_cache_key(environments, include_stopped=include_stopped)
-    cached_payload = load_portainer_cache_entry(cache_key)
-    if cached_payload:
-        try:
-            stack_data = _deserialise_dataframe(cached_payload.get("stack_data"))
-            container_data = _deserialise_dataframe(
-                cached_payload.get("container_data")
-            )
-        except ValueError:
-            stack_data = None
-            container_data = None
-        else:
-            warnings = cached_payload.get("warnings")
-            if isinstance(warnings, list) and all(
-                isinstance(item, str) for item in warnings
-            ):
-                return stack_data, container_data, list(warnings)
-
     stack_frames: list[pd.DataFrame] = []
     container_frames: list[pd.DataFrame] = []
     warnings: list[str] = []
@@ -323,14 +340,142 @@ def fetch_portainer_data(
         container_data = normalise_endpoint_containers([], {})
         container_data["environment_name"] = pd.Series(dtype="object")
 
-    payload = {
-        "stack_data": _serialise_dataframe(stack_data),
-        "container_data": _serialise_dataframe(container_data),
-        "warnings": warnings,
-    }
-    store_portainer_cache_entry(cache_key, payload)
-
     return stack_data, container_data, warnings
+
+
+def _start_background_refresh(
+    cache_key: str,
+    environments: tuple[PortainerEnvironment, ...],
+    *,
+    include_stopped: bool,
+) -> bool:
+    if not environments:
+        return False
+
+    def _worker() -> None:
+        try:
+            stack_data, container_data, warnings = _fetch_portainer_payload(
+                environments, include_stopped=include_stopped
+            )
+            payload = _build_cached_payload(stack_data, container_data, warnings)
+            store_portainer_cache_entry(cache_key, payload)
+        except Exception:  # pragma: no cover - defensive guard for background thread
+            LOGGER.warning(
+                "Background refresh for cache key %s failed", cache_key, exc_info=True
+            )
+        finally:
+            fetch_portainer_data.clear()  # type: ignore[attr-defined]
+            with _REFRESH_LOCK:
+                _ACTIVE_REFRESHERS.pop(cache_key, None)
+
+    with _REFRESH_LOCK:
+        existing = _ACTIVE_REFRESHERS.get(cache_key)
+        if existing and existing.is_alive():
+            return True
+        thread = threading.Thread(
+            target=_worker,
+            name=f"portainer-refresh-{cache_key[:8]}",
+            daemon=True,
+        )
+        _ACTIVE_REFRESHERS[cache_key] = thread
+        try:
+            thread.start()
+        except RuntimeError:  # pragma: no cover - unexpected runtime limitation
+            LOGGER.warning(
+                "Unable to start background refresh thread for cache key %s",
+                cache_key,
+                exc_info=True,
+            )
+            _ACTIVE_REFRESHERS.pop(cache_key, None)
+            return False
+    return True
+
+
+@st.cache_data(show_spinner=False)
+def fetch_portainer_data(
+    environments: tuple[PortainerEnvironment, ...],
+    *,
+    include_stopped: bool = False,
+) -> PortainerDataResult:
+    """Fetch data for the provided environments, caching the result.
+
+    Parameters
+    ----------
+    environments:
+        Sequence of configured Portainer environments to query.
+    include_stopped:
+        When ``True`` the Docker API is queried with ``all=1`` so stopped
+        containers are included in the response. Defaults to ``False`` to keep
+        compatibility with dashboards that focus on running workloads.
+    """
+
+    cache_key = build_portainer_cache_key(environments, include_stopped=include_stopped)
+    cache_entry = load_portainer_cache_entry(cache_key)
+
+    if cache_entry:
+        cached = _deserialise_cache_entry(cache_entry)
+        if cached:
+            stack_data, container_data, warnings = cached
+            refreshed_at = _timestamp_to_datetime(cache_entry.refreshed_at)
+            is_refreshing = False
+            if cache_entry.is_expired:
+                is_refreshing = _start_background_refresh(
+                    cache_key, environments, include_stopped=include_stopped
+                )
+            if is_refreshing or not cache_entry.is_expired:
+                return PortainerDataResult(
+                    stack_data=stack_data,
+                    container_data=container_data,
+                    warnings=warnings,
+                    refreshed_at=refreshed_at,
+                    is_stale=cache_entry.is_expired,
+                    is_refreshing=is_refreshing,
+                )
+
+    stack_data, container_data, warnings = _fetch_portainer_payload(
+        environments, include_stopped=include_stopped
+    )
+    refreshed_timestamp = store_portainer_cache_entry(
+        cache_key, _build_cached_payload(stack_data, container_data, warnings)
+    )
+    refreshed_at = _timestamp_to_datetime(refreshed_timestamp)
+    if refreshed_at is None:
+        refreshed_at = datetime.now(timezone.utc).astimezone()
+
+    return PortainerDataResult(
+        stack_data=stack_data,
+        container_data=container_data,
+        warnings=warnings,
+        refreshed_at=refreshed_at,
+        is_stale=False,
+        is_refreshing=False,
+    )
+
+
+def _format_refresh_timestamp(value: datetime | None) -> str | None:
+    if value is None:
+        return None
+    formatted = value.strftime("%Y-%m-%d %H:%M:%S %Z").strip()
+    return formatted or value.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def render_data_refresh_notice(result: PortainerDataResult) -> None:
+    """Display the current refresh state to the user."""
+
+    timestamp_text = _format_refresh_timestamp(result.refreshed_at)
+
+    if result.is_refreshing:
+        message = "Refreshing Portainer data in the background."
+        if timestamp_text:
+            message += f" Showing cached results from {timestamp_text}."
+        st.info(message, icon="🔄")
+    elif result.is_stale:
+        message = "Cached Portainer data is out of date."
+        if timestamp_text:
+            message += f" Last successful refresh {timestamp_text}."
+        st.warning(message, icon="⚠️")
+    elif timestamp_text:
+        st.caption(f"Last synced with Portainer on {timestamp_text}.")
 
 
 def _humanise_value(value: object, mapping: dict[int, str]) -> object:
@@ -379,22 +524,51 @@ class FilterResult:
     container_data: pd.DataFrame
 
 
+@dataclass
+class PortainerDataResult:
+    stack_data: pd.DataFrame
+    container_data: pd.DataFrame
+    warnings: list[str]
+    refreshed_at: datetime | None
+    is_stale: bool
+    is_refreshing: bool
+
+
 def _ensure_session_list(key: str, options: Sequence[str]) -> list[str]:
     current = list(st.session_state.get(key, []))
     valid = [item for item in current if item in options]
     return valid or list(options)
 
 
+def _render_sidebar_refresh_status(status: PortainerDataResult) -> None:
+    timestamp_text = _format_refresh_timestamp(status.refreshed_at)
+    if status.is_refreshing:
+        message = "🔄 Refreshing Portainer data…"
+        if timestamp_text:
+            message += f" Last update {timestamp_text}."
+        st.caption(message)
+    elif status.is_stale:
+        message = "⚠️ Cached data is out of date."
+        if timestamp_text:
+            message += f" Last update {timestamp_text}."
+        st.caption(message)
+    elif timestamp_text:
+        st.caption(f"📅 Last update {timestamp_text}.")
+
+
 def render_sidebar_filters(
     stack_data: pd.DataFrame,
     container_data: pd.DataFrame,
     *,
+    data_status: PortainerDataResult | None = None,
     show_stack_search: bool = True,
     show_container_search: bool = True,
 ) -> FilterResult:
     """Render common sidebar controls and return the applied filters."""
 
     with st.sidebar:
+        if data_status is not None:
+            _render_sidebar_refresh_status(data_status)
         if st.button("🔄 Refresh data", width="stretch"):
             clear_cached_data()
             trigger_rerun()
