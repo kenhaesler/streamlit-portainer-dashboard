@@ -33,7 +33,11 @@ class _PersistentSession:
         return now - self.last_active >= self.session_timeout
 
 
-_PERSISTENT_SESSIONS: Dict[str, _PersistentSession] = {}
+@st.cache_resource(show_spinner=False)
+def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
+    """Return a process-wide store of persistent session metadata."""
+
+    return {}
 
 
 def _trigger_rerun() -> None:
@@ -91,16 +95,12 @@ def _format_remaining_minutes(delta: timedelta) -> str:
 
 def _get_session_token_from_query_params() -> Optional[str]:
     """Return the persistent session token from the query parameters, if any."""
-    params = st.query_params
+    params = st.experimental_get_query_params()
     token_values = params.get("session_token")
     if not token_values:
         return None
 
-    if isinstance(token_values, str):
-        token = token_values
-    else:
-        token = token_values[0]
-
+    token = token_values[0]
     if not token:
         return None
     return token
@@ -109,23 +109,19 @@ def _get_session_token_from_query_params() -> Optional[str]:
 def _ensure_session_query_param(token: Optional[str]) -> None:
     """Synchronise the ``session_token`` query parameter with the provided token."""
 
-    params = st.query_params
+    params = st.experimental_get_query_params()
     current_token_values = params.get("session_token")
-    if isinstance(current_token_values, str):
-        current_token = current_token_values
-    elif current_token_values:
-        current_token = current_token_values[0]
-    else:
-        current_token = None
+    current_token = current_token_values[0] if current_token_values else None
 
     if token == current_token:
         return
 
     if token is None:
-        if "session_token" in params:
-            del params["session_token"]
+        params.pop("session_token", None)
     else:
         params["session_token"] = [token]
+
+    st.experimental_set_query_params(**params)
 
 
 def _clear_persistent_session(remove_query_param: bool = True) -> None:
@@ -133,7 +129,7 @@ def _clear_persistent_session(remove_query_param: bool = True) -> None:
 
     token = st.session_state.pop("_session_token", None)
     if token:
-        _PERSISTENT_SESSIONS.pop(token, None)
+        _get_persistent_sessions().pop(token, None)
 
     if remove_query_param:
         _ensure_session_query_param(None)
@@ -145,7 +141,7 @@ def _store_persistent_session(
     """Create and persist a new session token for the authenticated user."""
 
     token = token_urlsafe(32)
-    _PERSISTENT_SESSIONS[token] = _PersistentSession(
+    _get_persistent_sessions()[token] = _PersistentSession(
         username=username,
         authenticated_at=now,
         last_active=now,
@@ -164,7 +160,7 @@ def _update_persistent_session_activity(
     if not isinstance(token, str):
         return
 
-    session = _PERSISTENT_SESSIONS.get(token)
+    session = _get_persistent_sessions().get(token)
     if session is None:
         return
 
@@ -181,9 +177,10 @@ def _restore_persistent_session(
     if token is None:
         return
 
-    session = _PERSISTENT_SESSIONS.get(token)
+    sessions = _get_persistent_sessions()
+    session = sessions.get(token)
     if session is None or session.username != expected_username:
-        _PERSISTENT_SESSIONS.pop(token, None)
+        sessions.pop(token, None)
         _ensure_session_query_param(None)
         return
 
@@ -191,7 +188,7 @@ def _restore_persistent_session(
     session.session_timeout = session_timeout
 
     if session.is_expired(now):
-        _PERSISTENT_SESSIONS.pop(token, None)
+        sessions.pop(token, None)
         _ensure_session_query_param(None)
         st.session_state.pop("authenticated", None)
         st.session_state.pop("authenticated_at", None)
