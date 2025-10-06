@@ -16,6 +16,7 @@ Welcome! This repository powers the Streamlit Portainer dashboard. Follow these 
 ## Environment & configuration
 - Streamlit configuration and cached Portainer data live under `.streamlit/`. When your changes touch persistence or caching, verify they respect the `PORTAINER_CACHE_*` variables described in `README.md`.
 - Authentication relies on the `DASHBOARD_USERNAME` and `DASHBOARD_KEY` environment variables. Tests should not depend on real credentials—mock them via `monkeypatch` if necessary.
+- To exercise the full UI (including automated flows that log in, open the LLM assistant, and capture screenshots), export `DASHBOARD_USERNAME` and `DASHBOARD_KEY` in your shell before launching Streamlit so the login form is prefilled.
 
 ## Pull request expectations
 - Update the documentation when you add new environment variables, UI pages, or background jobs.
