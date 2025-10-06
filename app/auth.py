@@ -91,12 +91,16 @@ def _format_remaining_minutes(delta: timedelta) -> str:
 
 def _get_session_token_from_query_params() -> Optional[str]:
     """Return the persistent session token from the query parameters, if any."""
-    params = st.experimental_get_query_params()
+    params = st.query_params
     token_values = params.get("session_token")
     if not token_values:
         return None
 
-    token = token_values[0]
+    if isinstance(token_values, str):
+        token = token_values
+    else:
+        token = token_values[0]
+
     if not token:
         return None
     return token
@@ -105,19 +109,23 @@ def _get_session_token_from_query_params() -> Optional[str]:
 def _ensure_session_query_param(token: Optional[str]) -> None:
     """Synchronise the ``session_token`` query parameter with the provided token."""
 
-    params = st.experimental_get_query_params()
+    params = st.query_params
     current_token_values = params.get("session_token")
-    current_token = current_token_values[0] if current_token_values else None
+    if isinstance(current_token_values, str):
+        current_token = current_token_values
+    elif current_token_values:
+        current_token = current_token_values[0]
+    else:
+        current_token = None
 
     if token == current_token:
         return
 
     if token is None:
-        params.pop("session_token", None)
+        if "session_token" in params:
+            del params["session_token"]
     else:
         params["session_token"] = [token]
-
-    st.experimental_set_query_params(**params)
 
 
 def _clear_persistent_session(remove_query_param: bool = True) -> None:
