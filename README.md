@@ -12,6 +12,9 @@ The application is configured via environment variables:
 - `DASHBOARD_USERNAME` – Username required to sign in to the dashboard UI.
 - `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
 - `DASHBOARD_SESSION_TIMEOUT_MINUTES` – Optional. Expire authenticated sessions after the specified number of minutes of inactivity. Omit or set to a non-positive value to disable the timeout.
+- `PORTAINER_CACHE_ENABLED` – Optional. Defaults to `true`. Set to `false` to disable persistent caching of Portainer API responses between sessions.
+- `PORTAINER_CACHE_TTL_SECONDS` – Optional. Number of seconds before cached Portainer API responses are refreshed. Defaults to 900 seconds (15 minutes). Set to `0` or a negative value to keep cached data until it is manually invalidated.
+- `PORTAINER_CACHE_DIR` – Optional. Directory used to persist cached Portainer data. Defaults to `.streamlit/cache` inside the application directory.
 
 Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
 operators can fix the configuration before exposing the dashboard.
@@ -35,6 +38,15 @@ primaryColor = "#009fe3"
 
 Users can still toggle between Streamlit's light and dark modes from the app settings. Only the primary
 accent colour is overridden, so the interface remains readable in either mode.
+
+### Persistent API caching
+
+The dashboard now caches Portainer API responses to reduce latency for returning users. The first fetch after
+start-up populates the cache on disk (by default inside `.streamlit/cache`, which is persisted automatically when
+using the provided Docker volume). Subsequent logins reuse the cached data until either the configured TTL expires
+or the cache is invalidated. The cache is automatically cleared when operators switch the active Portainer
+environment, press the **Refresh data** button in the sidebar, or modify the saved environment configuration. You
+can adjust or disable the behaviour through the new environment variables documented above.
 
 ## Usage
 
