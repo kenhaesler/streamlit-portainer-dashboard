@@ -35,9 +35,6 @@ def test_list_edge_endpoints_requests_status(monkeypatch):
 
 
 def test_create_backup_posts_to_backup_endpoint(monkeypatch):
-def test_get_stack_image_status(monkeypatch):
-    """Stack image status requests should hit the expected endpoint."""
-
     client = PortainerClient(base_url="https://portainer.example", api_key="token")
 
     captured: dict[str, object] = {}
@@ -72,16 +69,13 @@ def test_get_stack_image_status(monkeypatch):
     assert filename == "portainer.tar.gz"
 
 
-def test_create_backup_raises_on_request_errors(monkeypatch):
+def test_get_stack_image_status(monkeypatch):
+    """Stack image status requests should hit the expected endpoint."""
+
     client = PortainerClient(base_url="https://portainer.example", api_key="token")
 
-    def fake_post(*args, **kwargs):  # type: ignore[override]
-        raise requests.RequestException("boom")
+    captured: dict[str, object] = {}
 
-    monkeypatch.setattr(portainer_client.requests, "post", fake_post)
-
-    with pytest.raises(PortainerAPIError):
-        client.create_backup()
     def fake_request(path: str, *, params=None):  # type: ignore[override]
         captured["path"] = path
         captured["params"] = params
@@ -94,3 +88,15 @@ def test_create_backup_raises_on_request_errors(monkeypatch):
     assert captured["path"] == "/stacks/42/images_status"
     assert captured["params"] is None
     assert payload == {"Status": "updated"}
+
+
+def test_create_backup_raises_on_request_errors(monkeypatch):
+    client = PortainerClient(base_url="https://portainer.example", api_key="token")
+
+    def fake_post(*args, **kwargs):  # type: ignore[override]
+        raise requests.RequestException("boom")
+
+    monkeypatch.setattr(portainer_client.requests, "post", fake_post)
+
+    with pytest.raises(PortainerAPIError):
+        client.create_backup()

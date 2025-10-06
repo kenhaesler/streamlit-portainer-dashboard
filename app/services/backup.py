@@ -24,7 +24,8 @@ def backup_directory() -> Path:
     override = os.getenv(_BACKUP_DIR_ENV_VAR)
     if override:
         return Path(override).expanduser()
-    return Path(__file__).resolve().parent.parent / ".streamlit" / "backups"
+    project_root = Path(__file__).resolve().parents[2]
+    return project_root / ".streamlit" / "backups"
 
 
 def _ensure_backup_directory() -> Path:

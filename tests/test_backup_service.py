@@ -77,3 +77,12 @@ def test_create_environment_backup_generates_unique_names(tmp_path, monkeypatch)
     assert first != second
     assert first.exists() and second.exists()
     assert second.name != first.name
+
+
+def test_backup_directory_defaults_to_project_streamlit_dir(monkeypatch):
+    monkeypatch.delenv("PORTAINER_BACKUP_DIR", raising=False)
+
+    expected_root = Path(__file__).resolve().parents[1]
+    expected = expected_root / ".streamlit" / "backups"
+
+    assert backup_service.backup_directory() == expected
