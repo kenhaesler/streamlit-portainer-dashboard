@@ -1,6 +1,7 @@
 """Fleet overview dashboard for Portainer data."""
 from __future__ import annotations
 
+import pandas as pd
 import plotly.express as px
 import streamlit as st
 
@@ -91,6 +92,11 @@ filters = render_sidebar_filters(stack_data, container_data)
 stack_filtered = filters.stack_data
 containers_filtered = filters.container_data
 
+if "image" in containers_filtered.columns:
+    active_image_count = int(containers_filtered["image"].dropna().nunique())
+else:
+    active_image_count = 0
+
 render_kpi_row(
     [
         ("Visible environments", int(stack_filtered["environment_name"].nunique()), None),
@@ -100,6 +106,11 @@ render_kpi_row(
             "Running containers",
             int(containers_filtered["container_id"].nunique()),
             "Based on the applied filters",
+        ),
+        (
+            "Active images",
+            active_image_count,
+            "Unique container images across the selected endpoints",
         ),
     ]
 )
@@ -148,14 +159,14 @@ with tab_details:
         filename="portainer_stacks.csv",
     ).render_download_button()
 
-    stack_counts = stack_filtered.dropna(subset=["stack_id"])
+    stack_counts = (
+        stack_filtered.dropna(subset=["stack_id"])
+        .groupby(["environment_name", "endpoint_name"], dropna=False)
+        .agg(stack_count=("stack_id", "nunique"))
+        .reset_index()
+    )
     if not stack_counts.empty:
-        chart_data = (
-            stack_counts.groupby(["environment_name", "endpoint_name"])
-            .agg(stack_count=("stack_id", "nunique"))
-            .reset_index()
-            .sort_values("stack_count", ascending=False)
-        )
+        chart_data = stack_counts.sort_values("stack_count", ascending=False)
         stack_chart = px.bar(
             chart_data,
             x="stack_count",
@@ -197,6 +208,92 @@ with tab_details:
     else:
         st.info("No status information available for the selected agents.")
 
+    endpoint_overview = (
+        stack_filtered[
+            [
+                "environment_name",
+                "endpoint_id",
+                "endpoint_name",
+                "endpoint_status",
+            ]
+        ]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
+    if not endpoint_overview.empty:
+        endpoint_overview = endpoint_overview.merge(
+            stack_counts,
+            on=["environment_name", "endpoint_name"],
+            how="left",
+        )
+        container_counts = (
+            containers_filtered.groupby(
+                ["environment_name", "endpoint_name"], dropna=False
+            )
+            .agg(container_count=("container_id", "nunique"))
+            .reset_index()
+        )
+        endpoint_overview = endpoint_overview.merge(
+            container_counts,
+            on=["environment_name", "endpoint_name"],
+            how="left",
+        )
+        endpoint_overview["stack_count"] = (
+            endpoint_overview["stack_count"].fillna(0).astype(int)
+        )
+        endpoint_overview["container_count"] = (
+            endpoint_overview["container_count"].fillna(0).astype(int)
+        )
+
+        st.subheader("Edge agent coverage", divider="blue")
+        st.dataframe(
+            endpoint_overview.rename(
+                columns={
+                    "environment_name": "Environment",
+                    "endpoint_name": "Edge agent",
+                    "endpoint_status": "Agent status",
+                    "stack_count": "Stacks",
+                    "container_count": "Running containers",
+                }
+            ).sort_values(["Environment", "Edge agent"], na_position="last"),
+            width="stretch",
+        )
+        ExportableDataFrame(
+            "⬇️ Download endpoint coverage",
+            data=endpoint_overview,
+            filename="portainer_endpoint_coverage.csv",
+        ).render_download_button()
+
+        combined_load = endpoint_overview[
+            [
+                "environment_name",
+                "endpoint_name",
+                "stack_count",
+                "container_count",
+            ]
+        ]
+        if not combined_load.empty:
+            load_scatter = px.scatter(
+                combined_load,
+                x="stack_count",
+                y="container_count",
+                size="container_count",
+                color="environment_name",
+                hover_name="endpoint_name",
+                labels={
+                    "stack_count": "Stacks",
+                    "container_count": "Containers",
+                    "environment_name": "Environment",
+                },
+                title="Stack coverage vs. container load",
+            )
+            load_scatter.update_traces(
+                hovertemplate="%{hovertext}<br>Stacks: %{x}<br>Containers: %{y}"
+            )
+            st.plotly_chart(
+                style_plotly_figure(load_scatter), use_container_width=True
+            )
+
 with tab_containers:
     st.subheader("Container insights", divider="blue")
     if containers_filtered.empty:
@@ -227,29 +324,124 @@ with tab_containers:
             style_plotly_figure(container_chart), use_container_width=True
         )
 
-        treemap_source = (
-            containers_filtered.assign(
-                image=lambda df: df["image"].fillna("Unknown image"),
-                endpoint_name=lambda df: df["endpoint_name"].fillna("Unknown agent"),
-            )
-            .groupby(["environment_name", "endpoint_name", "image"], dropna=False)
-            .agg(container_count=("container_id", "nunique"))
-            .reset_index()
-        )
-        if not treemap_source.empty:
-            treemap = px.treemap(
-                treemap_source,
-                path=["environment_name", "endpoint_name", "image"],
-                values="container_count",
-                title="Container footprint by environment, agent and image",
-            )
-            treemap.update_traces(hovertemplate="%{label}<br>Containers: %{value}")
-            st.plotly_chart(
-                style_plotly_figure(treemap), use_container_width=True
-            )
-
         ExportableDataFrame(
             "⬇️ Download container summary",
+            data=containers_overview.rename(
+                columns={
+                    "environment_name": "Environment",
+                    "endpoint_name": "Edge agent",
+                    "running_containers": "Containers",
+                }
+            ),
+            filename="portainer_container_summary.csv",
+        ).render_download_button()
+
+        if "image" in containers_filtered.columns:
+            treemap_source = (
+                containers_filtered.assign(
+                    image=lambda df: df["image"].fillna("Unknown image"),
+                    endpoint_name=lambda df: df["endpoint_name"].fillna("Unknown agent"),
+                )
+                .groupby(["environment_name", "endpoint_name", "image"], dropna=False)
+                .agg(container_count=("container_id", "nunique"))
+                .reset_index()
+            )
+            if not treemap_source.empty:
+                treemap = px.treemap(
+                    treemap_source,
+                    path=["environment_name", "endpoint_name", "image"],
+                    values="container_count",
+                    title="Container footprint by environment, agent and image",
+                )
+                treemap.update_traces(
+                    hovertemplate="%{label}<br>Containers: %{value}"
+                )
+                st.plotly_chart(
+                    style_plotly_figure(treemap), use_container_width=True
+                )
+
+            top_images = (
+                treemap_source.groupby([
+                    "environment_name",
+                    "image",
+                ])
+                .agg(container_count=("container_count", "sum"))
+                .reset_index()
+                .sort_values("container_count", ascending=False)
+                .head(10)
+            )
+            if not top_images.empty:
+                image_chart = px.bar(
+                    top_images,
+                    x="container_count",
+                    y="image",
+                    orientation="h",
+                    title="Top running images",
+                    color="environment_name",
+                    labels={
+                        "container_count": "Containers",
+                        "image": "Image",
+                        "environment_name": "Environment",
+                    },
+                )
+                image_chart.update_traces(
+                    hovertemplate="%{y}<br>Containers: %{x}"
+                )
+                st.plotly_chart(
+                    style_plotly_figure(image_chart), use_container_width=True
+                )
+                ExportableDataFrame(
+                    "⬇️ Download top images",
+                    data=top_images,
+                    filename="portainer_top_images.csv",
+                ).render_download_button()
+
+        created_raw = containers_filtered.get("created_at")
+        if created_raw is not None:
+            created_series = pd.to_datetime(created_raw, errors="coerce", utc=True)
+            age_days = (
+                pd.Timestamp.utcnow() - created_series
+            ).dt.total_seconds() / 86400
+            age_frame = pd.DataFrame(
+                {
+                    "environment_name": containers_filtered["environment_name"],
+                    "age_days": age_days,
+                }
+            ).dropna(subset=["age_days"])
+            if not age_frame.empty:
+                median_age = age_frame["age_days"].median()
+                newest_age = age_frame["age_days"].min()
+                render_kpi_row(
+                    [
+                        (
+                            "Median container age",
+                            round(float(median_age), 1),
+                            "Days since creation",
+                        ),
+                        (
+                            "Most recent container",
+                            round(float(newest_age), 1),
+                            "Days old",
+                        ),
+                    ]
+                )
+                age_chart = px.histogram(
+                    age_frame,
+                    x="age_days",
+                    color="environment_name",
+                    nbins=20,
+                    title="Container age distribution",
+                    labels={"age_days": "Age (days)", "count": "Containers"},
+                )
+                age_chart.update_traces(
+                    hovertemplate="Age: %{x:.1f} days<br>Containers: %{y}"
+                )
+                st.plotly_chart(
+                    style_plotly_figure(age_chart), use_container_width=True
+                )
+
+        ExportableDataFrame(
+            "⬇️ Download container details",
             data=containers_filtered,
             filename="portainer_containers.csv",
         ).render_download_button()
