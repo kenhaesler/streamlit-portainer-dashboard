@@ -295,15 +295,18 @@ if submitted:
         st.error("Please provide the OpenWebUI/Ollama API endpoint.")
     elif not question_clean:
         st.warning("Enter a question for the LLM before submitting.", icon="ℹ️")
-    elif not context_payload:
-        st.warning(
-            "There is no Portainer data to send to the LLM. Adjust the filters or refresh the data.",
-            icon="ℹ️",
-        )
     elif auth_error:
         st.error(auth_error)
     else:
-        context_json = json.dumps(context_payload, indent=2, ensure_ascii=False)
+        if context_payload:
+            context_json = json.dumps(context_payload, indent=2, ensure_ascii=False)
+        else:
+            st.info(
+                "There is no Portainer data available for the current filters. The question will be "
+                "sent to the LLM without additional context.",
+                icon="ℹ️",
+            )
+            context_json = "{}"
         system_prompt = (
             "You are a helpful assistant that analyses Portainer container telemetry to help operators "
             "understand their Docker environments. Base your answer strictly on the provided context."
@@ -353,20 +356,29 @@ if context_notice:
         % max_context_rows
     )
 
-st.subheader("Container context shared with the LLM")
-ExportableDataFrame(
-    "Download container context",
-    container_context,
-    "portainer_container_context.csv",
-).render_download_button()
-st.dataframe(container_context, use_container_width=True, hide_index=True)
+show_context_default = bool(st.session_state.get("llm_show_context", True))
+show_context = st.toggle(
+    "Show LLM context tables",
+    value=show_context_default,
+    help="Toggle the visibility of the Portainer data that is sent to the LLM as context.",
+)
+st.session_state["llm_show_context"] = show_context
 
-if not stack_context.empty:
-    st.subheader("Stack context shared with the LLM")
+if show_context:
+    st.subheader("Container context shared with the LLM")
     ExportableDataFrame(
-        "Download stack context",
-        stack_context,
-        "portainer_stack_context.csv",
+        "Download container context",
+        container_context,
+        "portainer_container_context.csv",
     ).render_download_button()
-    st.dataframe(stack_context, use_container_width=True, hide_index=True)
+    st.dataframe(container_context, use_container_width=True, hide_index=True)
+
+    if not stack_context.empty:
+        st.subheader("Stack context shared with the LLM")
+        ExportableDataFrame(
+            "Download stack context",
+            stack_context,
+            "portainer_stack_context.csv",
+        ).render_download_button()
+        st.dataframe(stack_context, use_container_width=True, hide_index=True)
 
