@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import math
 import os
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from secrets import token_urlsafe
 from functools import lru_cache
-from typing import Optional
+from typing import Dict, Optional
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
@@ -13,6 +15,29 @@ from streamlit_autorefresh import st_autorefresh
 USERNAME_ENV_VAR = "DASHBOARD_USERNAME"
 KEY_ENV_VAR = "DASHBOARD_KEY"
 SESSION_TIMEOUT_ENV_VAR = "DASHBOARD_SESSION_TIMEOUT_MINUTES"
+
+
+@dataclass
+class _PersistentSession:
+    """Metadata used to keep track of long-lived authenticated sessions."""
+
+    username: str
+    authenticated_at: datetime
+    last_active: datetime
+    session_timeout: Optional[timedelta]
+
+    def is_expired(self, now: datetime) -> bool:
+        """Return ``True`` if the session expired according to the timeout."""
+        if self.session_timeout is None:
+            return False
+        return now - self.last_active >= self.session_timeout
+
+
+@st.cache_resource(show_spinner=False)
+def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
+    """Return a process-wide store of persistent session metadata."""
+
+    return {}
 
 
 def _trigger_rerun() -> None:
@@ -68,6 +93,116 @@ def _format_remaining_minutes(delta: timedelta) -> str:
     return f"{total_minutes:d}m"
 
 
+def _get_session_token_from_query_params() -> Optional[str]:
+    """Return the persistent session token from the query parameters, if any."""
+    params = st.experimental_get_query_params()
+    token_values = params.get("session_token")
+    if not token_values:
+        return None
+
+    token = token_values[0]
+    if not token:
+        return None
+    return token
+
+
+def _ensure_session_query_param(token: Optional[str]) -> None:
+    """Synchronise the ``session_token`` query parameter with the provided token."""
+
+    params = st.experimental_get_query_params()
+    current_token_values = params.get("session_token")
+    current_token = current_token_values[0] if current_token_values else None
+
+    if token == current_token:
+        return
+
+    if token is None:
+        params.pop("session_token", None)
+    else:
+        params["session_token"] = [token]
+
+    st.experimental_set_query_params(**params)
+
+
+def _clear_persistent_session(remove_query_param: bool = True) -> None:
+    """Forget any persisted session token for the active user."""
+
+    token = st.session_state.pop("_session_token", None)
+    if token:
+        _get_persistent_sessions().pop(token, None)
+
+    if remove_query_param:
+        _ensure_session_query_param(None)
+
+
+def _store_persistent_session(
+    username: str, now: datetime, session_timeout: Optional[timedelta]
+) -> None:
+    """Create and persist a new session token for the authenticated user."""
+
+    token = token_urlsafe(32)
+    _get_persistent_sessions()[token] = _PersistentSession(
+        username=username,
+        authenticated_at=now,
+        last_active=now,
+        session_timeout=session_timeout,
+    )
+    st.session_state["_session_token"] = token
+    _ensure_session_query_param(token)
+
+
+def _update_persistent_session_activity(
+    now: datetime, session_timeout: Optional[timedelta]
+) -> None:
+    """Update the ``last_active`` timestamp for the stored session token."""
+
+    token = st.session_state.get("_session_token")
+    if not isinstance(token, str):
+        return
+
+    session = _get_persistent_sessions().get(token)
+    if session is None:
+        return
+
+    session.last_active = now
+    session.session_timeout = session_timeout
+
+
+def _restore_persistent_session(
+    expected_username: str, session_timeout: Optional[timedelta], now: datetime
+) -> None:
+    """Restore an authenticated session based on the persisted token, if present."""
+
+    token = _get_session_token_from_query_params()
+    if token is None:
+        return
+
+    sessions = _get_persistent_sessions()
+    session = sessions.get(token)
+    if session is None or session.username != expected_username:
+        sessions.pop(token, None)
+        _ensure_session_query_param(None)
+        return
+
+    # Ensure we use the most up-to-date timeout configuration.
+    session.session_timeout = session_timeout
+
+    if session.is_expired(now):
+        sessions.pop(token, None)
+        _ensure_session_query_param(None)
+        st.session_state.pop("authenticated", None)
+        st.session_state.pop("authenticated_at", None)
+        st.session_state.pop("last_active", None)
+        st.session_state["auth_error"] = "Session expired due to inactivity."
+        return
+
+    st.session_state["authenticated"] = True
+    st.session_state["authenticated_at"] = session.authenticated_at
+    st.session_state["last_active"] = now
+    st.session_state["_session_token"] = token
+    session.last_active = now
+
+
 def require_authentication() -> None:
     """Prompt the user for credentials and block execution until authenticated."""
     expected_username = os.getenv(USERNAME_ENV_VAR)
@@ -88,6 +223,7 @@ def require_authentication() -> None:
         st.stop()
 
     now = datetime.now(timezone.utc)
+    _restore_persistent_session(expected_username, session_timeout, now)
     session_timer_placeholder = st.sidebar.empty()
     auto_refresh_triggered = False
 
@@ -112,6 +248,7 @@ def require_authentication() -> None:
                 st.session_state.pop("authenticated", None)
                 st.session_state.pop("authenticated_at", None)
                 st.session_state.pop("last_active", None)
+                _clear_persistent_session()
                 st.session_state["auth_error"] = "Session expired due to inactivity."
                 session_timer_placeholder.empty()
             else:
@@ -136,6 +273,7 @@ def require_authentication() -> None:
 
                 if not auto_refresh_triggered:
                     st.session_state["last_active"] = now
+                    _update_persistent_session_activity(now, session_timeout)
                 return
         else:
             if session_timeout is None:
@@ -146,6 +284,7 @@ def require_authentication() -> None:
             else:
                 session_timer_placeholder.empty()
             st.session_state["last_active"] = now
+            _update_persistent_session_activity(now, session_timeout)
             return
 
     session_timer_placeholder.empty()
@@ -174,6 +313,7 @@ def require_authentication() -> None:
             st.session_state["authenticated"] = True
             st.session_state["authenticated_at"] = now
             st.session_state["last_active"] = now
+            _store_persistent_session(username, now, session_timeout)
             st.session_state.pop("auth_error", None)
             _trigger_rerun()
         else:
@@ -189,6 +329,7 @@ def render_logout_button() -> None:
         return
 
     if st.sidebar.button("Log out", width="stretch"):
+        _clear_persistent_session()
         for key in ("authenticated", "auth_error"):
             st.session_state.pop(key, None)
         _trigger_rerun()
