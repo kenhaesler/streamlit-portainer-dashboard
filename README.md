@@ -1,5 +1,8 @@
 # streamlit-portainer-dashboard
 
+<img width="1860" height="1049" alt="image" src="https://github.com/user-attachments/assets/b2200e6e-0d41-423f-b8ee-e67d882b571b" />
+
+
 A streamlit application that pulls information from the Portainer API and visualizes everything.
 
 ## Configuration
