@@ -153,21 +153,23 @@ def _set_environment_variables(environment: dict[str, object] | None) -> None:
 def set_active_environment(name: str) -> None:
     """Update the active environment selection."""
 
+    previous_selection = st.session_state.get(SESSION_SELECTED_ENV_KEY, "")
     st.session_state[SESSION_SELECTED_ENV_KEY] = name
     st.session_state.pop(SESSION_APPLIED_ENV_KEY, None)
-    clear_cached_data()
+    clear_cached_data(persistent=bool(str(previous_selection).strip()))
 
 
 def apply_selected_environment() -> None:
     """Apply the selected environment if it has changed since the last run."""
 
     selected = get_selected_environment_name()
-    if st.session_state.get(SESSION_APPLIED_ENV_KEY) == selected:
+    applied = st.session_state.get(SESSION_APPLIED_ENV_KEY)
+    if applied == selected:
         return
     environment = _get_selected_environment()
     _set_environment_variables(environment)
     st.session_state[SESSION_APPLIED_ENV_KEY] = selected
-    clear_cached_data()
+    clear_cached_data(persistent=applied is not None)
 
 
 def load_configured_environment_settings() -> tuple[PortainerEnvironment, ...]:
@@ -182,11 +184,22 @@ def load_configured_environment_settings() -> tuple[PortainerEnvironment, ...]:
     return environments
 
 
-def clear_cached_data() -> None:
-    """Clear cached Portainer data."""
+def clear_cached_data(*, persistent: bool = True) -> None:
+    """Clear cached Portainer data.
+
+    Parameters
+    ----------
+    persistent:
+        When ``True`` (the default), remove any entries stored in the
+        cross-session cache on disk. When ``False`` only the Streamlit
+        in-memory cache for the current session is cleared. This is useful for
+        avoiding unnecessary cache invalidations across user sessions while
+        still ensuring the current session refreshes its data.
+    """
 
     fetch_portainer_data.clear()  # type: ignore[attr-defined]
-    clear_persistent_portainer_cache()
+    if persistent:
+        clear_persistent_portainer_cache()
 
 
 def _serialise_dataframe(df: pd.DataFrame) -> dict[str, object]:
