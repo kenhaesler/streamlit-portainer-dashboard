@@ -6,6 +6,7 @@ import json
 import logging
 import os
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -25,6 +26,7 @@ _CACHE_FILE_SUFFIX = ".json"
 
 
 __all__ = [
+    "CacheEntry",
     "build_cache_key",
     "cache_ttl_seconds",
     "clear_cache",
@@ -32,6 +34,23 @@ __all__ = [
     "load_cache_entry",
     "store_cache_entry",
 ]
+
+
+@dataclass(frozen=True)
+class CacheEntry:
+    """Representation of a cached Portainer payload."""
+
+    payload: dict[str, Any]
+    refreshed_at: float | None
+    expires_at: float | None
+
+    @property
+    def is_expired(self) -> bool:
+        """Return ``True`` when the cache entry has passed its TTL."""
+
+        if self.expires_at is None:
+            return False
+        return self.expires_at <= time.time()
 
 
 def _parse_bool(value: str | None, *, default: bool = True) -> bool:
@@ -119,24 +138,26 @@ def build_cache_key(
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
-def _read_payload(path: Path) -> dict[str, Any] | None:
+def _read_payload(path: Path) -> CacheEntry | None:
     try:
         data = json.loads(path.read_text("utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     if not isinstance(data, dict):
         return None
-    expires_at = data.get("expires_at")
-    if isinstance(expires_at, (int, float)) and expires_at <= time.time():
-        try:
-            path.unlink()
-        except OSError:
-            pass
+    payload = data.get("payload") if "payload" in data else None
+    if not isinstance(payload, dict):
         return None
-    return data.get("payload") if "payload" in data else None
+    expires_at = data.get("expires_at")
+    if not isinstance(expires_at, (int, float)):
+        expires_at = None
+    refreshed_at = data.get("refreshed_at")
+    if not isinstance(refreshed_at, (int, float)):
+        refreshed_at = None
+    return CacheEntry(payload=payload, refreshed_at=refreshed_at, expires_at=expires_at)
 
 
-def load_cache_entry(key: str) -> dict[str, Any] | None:
+def load_cache_entry(key: str) -> CacheEntry | None:
     """Load a cached payload for ``key`` when available."""
 
     if not is_cache_enabled():
@@ -147,29 +168,35 @@ def load_cache_entry(key: str) -> dict[str, Any] | None:
             return None
     except OSError:
         return None
-    payload = _read_payload(path)
-    if payload is None:
-        return None
-    return payload
+    return _read_payload(path)
 
 
-def store_cache_entry(key: str, payload: dict[str, Any]) -> None:
-    """Persist ``payload`` under ``key`` respecting the configured TTL."""
+def store_cache_entry(key: str, payload: dict[str, Any]) -> float | None:
+    """Persist ``payload`` under ``key`` respecting the configured TTL.
+
+    Returns
+    -------
+    float | None
+        Unix timestamp representing when the payload was refreshed. Returns
+        ``None`` when caching is disabled or persistence fails.
+    """
 
     if not is_cache_enabled():
-        return
+        return None
     try:
         _ensure_cache_directory()
     except OSError:
-        return
+        return None
     ttl = cache_ttl_seconds()
     expires_at: float | None
     if ttl <= 0:
         expires_at = None
     else:
         expires_at = time.time() + ttl
+    refreshed_at = time.time()
     data = {
         "expires_at": expires_at,
+        "refreshed_at": refreshed_at,
         "payload": payload,
     }
     path = _cache_path(key)
@@ -177,6 +204,8 @@ def store_cache_entry(key: str, payload: dict[str, Any]) -> None:
         path.write_text(json.dumps(data), "utf-8")
     except OSError:
         LOGGER.warning("Unable to persist cache entry %s", path)
+        return None
+    return refreshed_at
 
 
 def clear_cache(key: str | None = None) -> None:

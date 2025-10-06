@@ -48,8 +48,10 @@ accent colour is overridden, so the interface remains readable in either mode.
 The dashboard now caches Portainer API responses to reduce latency for returning users. The first fetch after
 start-up populates the cache on disk (by default inside `.streamlit/cache`, which is persisted automatically when
 using the provided Docker volume). Subsequent logins reuse the cached data until either the configured TTL expires
-or the cache is invalidated. The cache is automatically cleared when operators switch the active Portainer
-environment, press the **Refresh data** button in the sidebar, or modify the saved environment configuration. You
+or the cache is invalidated. When cached data becomes stale the dashboard serves the previous snapshot immediately
+and refreshes it in the background, clearly indicating when the repull is in progress. The cache is automatically
+cleared when operators switch the active Portainer environment, press the **Refresh data** button in the sidebar,
+or modify the saved environment configuration. You
 can adjust or disable the behaviour through the new environment variables documented above.
 
 ### LLM assistant
