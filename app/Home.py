@@ -173,12 +173,31 @@ st.divider()
 
 st.subheader("Where to next?")
 page_links = [
-    ("🛰️ Fleet overview", "pages/1_Fleet_Overview.py", "Understand environment usage at a glance."),
-    ("🏗️ Edge & stack insights", "pages/2_Edge_and_Stack_Insights.py", "Compare stack deployments across environments."),
-    ("🛠️ Workload explorer", "pages/4_Workload_Explorer.py", "Filter containers, stacks, and endpoints in real time."),
-    ("🩺 Container health", "pages/3_Container_Health.py", "Spot issues quickly with health and status checks."),
-    ("🧱 Image footprint", "pages/5_Image_Footprint.py", "Track image usage and storage across environments."),
-    ("⚙️ Settings", "pages/6_Settings.py", "Manage API connections and environment credentials."),
+    (
+        "🛰️ Fleet overview",
+        "pages/1_Fleet_Overview.py",
+        "Analyse stack coverage, container load, and image usage at a glance.",
+    ),
+    (
+        "🛠️ Workload explorer",
+        "pages/4_Workload_Explorer.py",
+        "Filter containers, stacks, and endpoints in real time.",
+    ),
+    (
+        "🩺 Container health",
+        "pages/3_Container_Health.py",
+        "Spot issues quickly with health and status checks.",
+    ),
+    (
+        "🧱 Image footprint",
+        "pages/5_Image_Footprint.py",
+        "Track image usage and storage across environments.",
+    ),
+    (
+        "⚙️ Settings",
+        "pages/6_Settings.py",
+        "Manage API connections and environment credentials.",
+    ),
 ]
 
 page_link = getattr(st, "page_link", None)
