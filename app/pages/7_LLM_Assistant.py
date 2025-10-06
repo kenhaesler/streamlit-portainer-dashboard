@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Iterable
 from typing import Mapping
 
@@ -141,6 +142,7 @@ if stack_filtered.empty and containers_filtered.empty:
 
 
 DEFAULT_ENDPOINT = "https://llm.example.com/v1/chat/completions"
+SYSTEM_BEARER_TOKEN = os.getenv("LLM_BEARER_TOKEN")
 
 with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
     api_endpoint = st.text_input(
@@ -169,13 +171,19 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
             "username/password credentials use HTTP Basic auth."
         ),
     )
-    bearer_token = st.session_state.get("llm_bearer_token", "")
+    if "llm_bearer_token" in st.session_state:
+        bearer_token_default = str(st.session_state.get("llm_bearer_token", ""))
+    elif SYSTEM_BEARER_TOKEN is not None:
+        bearer_token_default = SYSTEM_BEARER_TOKEN
+    else:
+        bearer_token_default = ""
+    bearer_token = bearer_token_default
     basic_username = st.session_state.get("llm_basic_username", "")
     basic_password = st.session_state.get("llm_basic_password", "")
     if auth_mode == "Bearer token":
         bearer_token = st.text_input(
             "Bearer token",
-            value=bearer_token,
+            value=bearer_token_default,
             type="password",
             help="Provide the access token issued by your Ollama proxy or OpenWebUI deployment.",
         )
