@@ -108,7 +108,8 @@ class PortainerClient:
             raise PortainerAPIError("Invalid JSON response from Portainer") from exc
 
     def list_edge_endpoints(self) -> List[Dict[str, object]]:
-        data = self._request("/endpoints", params={"edge": "true"})
+        params = {"edge": "true", "status": "true"}
+        data = self._request("/endpoints", params=params)
         if not isinstance(data, list):
             raise PortainerAPIError("Unexpected endpoints payload from Portainer")
         return data
