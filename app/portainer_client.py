@@ -207,6 +207,14 @@ class PortainerClient:
             raise PortainerAPIError("Unexpected containers payload from Portainer")
         return data
 
+    def get_stack_image_status(self, stack_id: int) -> object:
+        """Return the image status payload for the specified stack."""
+
+        data = self._request(f"/stacks/{stack_id}/images_status")
+        if not isinstance(data, (dict, list)):
+            raise PortainerAPIError("Unexpected stack image status payload from Portainer")
+        return data
+
 
 def normalise_endpoint_stacks(
     endpoints: Iterable[Dict[str, object]],
