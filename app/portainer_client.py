@@ -35,6 +35,23 @@ def _coerce_int(value: object) -> int | None:
     return None
 
 
+def _first_present(mapping: Dict[str, object], *keys: str) -> object:
+    """Return the first value present for ``keys`` in ``mapping``.
+
+    Unlike using ``or`` to coalesce values, this helper treats ``0`` and
+    ``False`` as valid values. Only ``None`` is considered missing which keeps
+    numeric status codes intact.
+    """
+
+    for key in keys:
+        if key not in mapping:
+            continue
+        value = mapping.get(key)
+        if value is not None:
+            return value
+    return None
+
+
 def _stack_targets_endpoint(stack: Dict[str, object], endpoint_id: int) -> bool:
     """Return ``True`` when a stack is assigned to the provided endpoint."""
 
@@ -224,9 +241,11 @@ def normalise_endpoint_stacks(
 
     records: List[Dict[str, object]] = []
     for endpoint in endpoints:
-        endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+        endpoint_id = int(
+            _first_present(endpoint, "Id", "id") or 0
+        )
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
-        endpoint_status = endpoint.get("Status") or endpoint.get("status")
+        endpoint_status = _first_present(endpoint, "Status", "status")
         stacks = stacks_by_endpoint.get(endpoint_id) or []
         targeted_stacks = [
             stack
@@ -240,10 +259,10 @@ def normalise_endpoint_stacks(
                         "endpoint_id": endpoint_id,
                         "endpoint_name": endpoint_name,
                         "endpoint_status": endpoint_status,
-                        "stack_id": stack.get("Id") or stack.get("id"),
+                        "stack_id": _first_present(stack, "Id", "id"),
                         "stack_name": stack.get("Name") or stack.get("name"),
-                        "stack_status": stack.get("Status") or stack.get("status"),
-                        "stack_type": stack.get("Type") or stack.get("type"),
+                        "stack_status": _first_present(stack, "Status", "status"),
+                        "stack_type": _first_present(stack, "Type", "type"),
                     }
                 )
         else:
@@ -281,7 +300,7 @@ def normalise_endpoint_containers(
 
     records: List[Dict[str, object]] = []
     for endpoint in endpoints:
-        endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+        endpoint_id = int(_first_present(endpoint, "Id", "id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
         containers = containers_by_endpoint.get(endpoint_id) or []
         for container in containers:
