@@ -1,6 +1,8 @@
 """Settings page for managing Portainer environments."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
@@ -48,6 +50,18 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         PortainerClient,
     )
 
+try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.services.backup import (  # type: ignore[import-not-found]
+        backup_directory,
+        create_environment_backup,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from services.backup import (  # type: ignore[no-redef]
+        backup_directory,
+        create_environment_backup,
+    )
+
+_BACKUP_SESSION_KEY = "portainer_backup_latest_path"
 
 
 def rerun_app() -> None:
@@ -216,6 +230,68 @@ if env_names:
     if choice != active_env:
         set_active_environment(choice)
         rerun_app()
+
+    st.subheader("Backups")
+    backup_dir = str(backup_directory())
+    st.caption(
+        "Backups are stored in the dashboard volume under "
+        f"`{backup_dir}`."
+    )
+    active_config = next(
+        (env for env in environments_state if env.get("name") == active_env),
+        None,
+    )
+    if active_config is None:
+        st.info("Select an environment to create backups.")
+    else:
+        password_value = st.text_input(
+            "Backup password (optional)",
+            key="portainer_backup_password",
+            type="password",
+            help="Portainer encrypts the backup with this password when provided.",
+        )
+        create_backup_clicked = st.button(
+            "Create backup",
+            key="portainer_create_backup",
+            use_container_width=True,
+        )
+        if create_backup_clicked:
+            with st.spinner("Requesting backup from Portainer..."):
+                try:
+                    backup_path = create_environment_backup(
+                        active_config,
+                        password=password_value or None,
+                    )
+                except ValueError as exc:
+                    st.error(f"Unable to create backup: {exc}")
+                except PortainerAPIError as exc:
+                    st.error(f"Backup failed: {exc}")
+                except OSError as exc:
+                    st.error(f"Failed to save backup: {exc}")
+                else:
+                    st.session_state[_BACKUP_SESSION_KEY] = str(backup_path)
+                    backup_display = str(backup_path)
+                    st.success(
+                        "Backup created successfully. Saved to "
+                        f"`{backup_display}`."
+                    )
+                    st.session_state["portainer_backup_password"] = ""
+
+        latest_backup = st.session_state.get(_BACKUP_SESSION_KEY)
+        if latest_backup:
+            backup_path = Path(str(latest_backup))
+            if backup_path.exists():
+                with backup_path.open("rb") as handle:
+                    st.download_button(
+                        "Download latest backup",
+                        data=handle.read(),
+                        file_name=backup_path.name,
+                        use_container_width=True,
+                        key="portainer_download_backup",
+                    )
+                st.caption(f"Latest backup located at `{backup_path}`.")
+            else:
+                st.session_state.pop(_BACKUP_SESSION_KEY, None)
 else:
     st.info("No environments saved yet. Add one using the form above.")
 

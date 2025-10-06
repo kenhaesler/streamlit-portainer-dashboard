@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -106,6 +107,59 @@ class PortainerClient:
             return response.json()
         except ValueError as exc:  # pragma: no cover - defensive
             raise PortainerAPIError("Invalid JSON response from Portainer") from exc
+
+    def _post(
+        self,
+        path: str,
+        *,
+        json: Optional[Dict[str, object]] = None,
+    ) -> requests.Response:
+        url = f"{self.base_url}{path}"
+        try:
+            response = requests.post(
+                url,
+                headers=self._headers,
+                json=json,
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:  # pragma: no cover - defensive
+            raise PortainerAPIError(str(exc)) from exc
+        return response
+
+    @staticmethod
+    def _extract_filename(header_value: Optional[str]) -> Optional[str]:
+        if not header_value:
+            return None
+        parts = [part.strip() for part in header_value.split(";")]
+        filename: Optional[str] = None
+        for part in parts:
+            if not part:
+                continue
+            key, _, value = part.partition("=")
+            if not value:
+                continue
+            lowered_key = key.strip().lower()
+            cleaned_value = value.strip().strip('"')
+            if lowered_key == "filename*":
+                if cleaned_value.lower().startswith("utf-8''"):
+                    cleaned_value = cleaned_value[7:]
+                filename = requests.utils.unquote(cleaned_value)
+                break
+            if lowered_key == "filename":
+                filename = cleaned_value
+        if filename:
+            filename = re.sub(r"[\\/]+", "-", filename).strip()
+        return filename or None
+
+    def create_backup(self, *, password: Optional[str] = None) -> Tuple[bytes, Optional[str]]:
+        payload: Dict[str, object] = {}
+        if password:
+            payload["password"] = password
+        response = self._post("/backup", json=payload or {})
+        filename = self._extract_filename(response.headers.get("Content-Disposition"))
+        return response.content, filename
 
     def list_edge_endpoints(self) -> List[Dict[str, object]]:
         params = {"edge": "true", "status": "true"}
