@@ -3,7 +3,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import logging
+
 import streamlit as st
+
+LOGGER = logging.getLogger(__name__)
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.auth import (  # type: ignore[import-not-found]
@@ -192,8 +196,10 @@ if submitted:
                     break
         if edit_index is None:
             updated_envs.append(updated_env)
+            LOGGER.info("Created Portainer environment %s", name_value)
         else:
             updated_envs[edit_index] = updated_env
+            LOGGER.info("Updated Portainer environment %s", name_value)
         set_saved_environments(updated_envs)
         set_active_environment(name_value)
         st.session_state[pending_selection_key] = name_value
@@ -208,6 +214,11 @@ if test_connection_clicked and not submitted:
     if not api_url_value or not api_key_value:
         st.error("Please provide values for: API URL, API key.")
     else:
+        LOGGER.info(
+            "Testing Portainer connection for %s (%s)",
+            name_value or "<unnamed>",
+            api_url_value,
+        )
         try:
             client = PortainerClient(
                 base_url=api_url_value,
@@ -217,10 +228,23 @@ if test_connection_clicked and not submitted:
             client.list_edge_endpoints()
         except ValueError as exc:
             st.error(f"Connection test failed: {exc}")
+            LOGGER.warning(
+                "Portainer connection test failed for %s: %s",
+                name_value or "<unnamed>",
+                exc,
+            )
         except PortainerAPIError as exc:
             st.error(f"Connection test failed: {exc}")
+            LOGGER.warning(
+                "Portainer API connection test failed for %s: %s",
+                name_value or "<unnamed>",
+                exc,
+            )
         else:
             st.success("Successfully connected to Portainer.")
+            LOGGER.info(
+                "Portainer connection test succeeded for %s", name_value or "<unnamed>"
+            )
 
 if env_names:
     st.subheader("Active environment")
@@ -267,6 +291,9 @@ if env_names:
             use_container_width=True,
         )
         if create_backup_clicked:
+            LOGGER.info(
+                "Backup requested for environment %s", active_env or "<unnamed>"
+            )
             with st.spinner("Requesting backup from Portainer..."):
                 try:
                     password_input = st.session_state[_BACKUP_PASSWORD_KEY].strip()
@@ -277,16 +304,36 @@ if env_names:
                     )
                 except ValueError as exc:
                     st.error(f"Unable to create backup: {exc}")
+                    LOGGER.warning(
+                        "Unable to create backup for %s: %s",
+                        active_env or "<unnamed>",
+                        exc,
+                    )
                 except PortainerAPIError as exc:
                     st.error(f"Backup failed: {exc}")
+                    LOGGER.warning(
+                        "Portainer backup failed for %s: %s",
+                        active_env or "<unnamed>",
+                        exc,
+                    )
                 except OSError as exc:
                     st.error(f"Failed to save backup: {exc}")
+                    LOGGER.warning(
+                        "Failed saving backup for %s: %s",
+                        active_env or "<unnamed>",
+                        exc,
+                    )
                 else:
                     st.session_state[_BACKUP_SESSION_KEY] = str(backup_path)
                     backup_display = str(backup_path)
                     st.success(
                         "Backup created successfully. Saved to "
                         f"`{backup_display}`."
+                    )
+                    LOGGER.info(
+                        "Backup for %s saved to %s",
+                        active_env or "<unnamed>",
+                        backup_path,
                     )
                     st.session_state[_BACKUP_PASSWORD_RESET_KEY] = True
 
@@ -323,5 +370,6 @@ for env in environments_state:
                 next_name = updated_envs[0]["name"] if updated_envs else ""
                 st.session_state[pending_active_env_key] = next_name
             clear_cached_data()
+            LOGGER.info("Deleted Portainer environment %s", env_name or "<unnamed>")
             rerun_app()
 

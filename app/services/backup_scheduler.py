@@ -159,6 +159,11 @@ def maybe_run_scheduled_backups(
 
     interval_seconds = configured_interval_seconds()
     if interval_seconds <= 0:
+        if schedule_state_path().exists():
+            LOGGER.info(
+                "Scheduled backups disabled via %s; clearing existing schedule",
+                _INTERVAL_ENV_VAR,
+            )
         _clear_schedule()
         return []
 
@@ -168,6 +173,10 @@ def maybe_run_scheduled_backups(
     if schedule is None or schedule.interval_seconds != interval_seconds:
         next_run = _advance_schedule(now, interval_seconds)
         _store_schedule(_ScheduleState(next_run=next_run, interval_seconds=interval_seconds))
+        LOGGER.info(
+            "Scheduled backups configured to run every %s seconds",
+            interval_seconds,
+        )
         return []
 
     if not envs:
@@ -184,20 +193,28 @@ def maybe_run_scheduled_backups(
     generated: List[Path] = []
     password = default_backup_password()
     for environment in envs:
+        env_name = str(environment.get("name", "environment")) or "environment"
         try:
             kwargs = {"password": password} if password else {}
             path = create_environment_backup(environment, **kwargs)
         except Exception as exc:  # pragma: no cover - defensive guard
-            env_name = str(environment.get("name", "environment"))
             LOGGER.warning(
                 "Scheduled backup failed for %s: %s", env_name, exc, exc_info=True
             )
             continue
         generated.append(path)
+        LOGGER.info(
+            "Scheduled backup created for %s at %s", env_name, path
+        )
 
     next_run = schedule.next_run
     delta = _dt.timedelta(seconds=interval_seconds)
     while next_run <= now:
         next_run += delta
     _store_schedule(_ScheduleState(next_run=next_run, interval_seconds=interval_seconds))
+    LOGGER.info(
+        "Scheduled backup run completed for %s environments; next run at %s",
+        len(generated),
+        next_run.isoformat(),
+    )
     return generated

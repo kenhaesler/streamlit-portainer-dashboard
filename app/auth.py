@@ -1,6 +1,7 @@
 """Authentication utilities for the Streamlit dashboard."""
 from __future__ import annotations
 
+import logging
 import math
 import os
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from typing import Dict, Optional
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+
+LOGGER = logging.getLogger(__name__)
 
 USERNAME_ENV_VAR = "DASHBOARD_USERNAME"
 KEY_ENV_VAR = "DASHBOARD_KEY"
@@ -46,6 +49,15 @@ def _trigger_rerun() -> None:
         st.experimental_rerun()
     except AttributeError:  # pragma: no cover - Streamlit >= 1.27
         st.rerun()  # type: ignore[attr-defined]
+
+
+def _set_authenticated_username(username: Optional[str]) -> None:
+    """Persist the authenticated username in Streamlit session state."""
+
+    if username:
+        st.session_state["authenticated_username"] = username
+    else:
+        st.session_state.pop("authenticated_username", None)
 
 
 @lru_cache(maxsize=1)
@@ -132,6 +144,8 @@ def _clear_persistent_session(remove_query_param: bool = True) -> None:
     if remove_query_param:
         _ensure_session_query_param(None)
 
+    _set_authenticated_username(None)
+
 
 def _store_persistent_session(
     username: str, now: datetime, session_timeout: Optional[timedelta]
@@ -147,6 +161,7 @@ def _store_persistent_session(
     )
     st.session_state["_session_token"] = token
     _ensure_session_query_param(token)
+    _set_authenticated_username(username)
 
 
 def _update_persistent_session_activity(
@@ -180,24 +195,36 @@ def _restore_persistent_session(
     if session is None or session.username != expected_username:
         sessions.pop(token, None)
         _ensure_session_query_param(None)
+        if session is not None:
+            LOGGER.warning(
+                "Discarded session token for unexpected user %s", session.username
+            )
         return
 
     # Ensure we use the most up-to-date timeout configuration.
     session.session_timeout = session_timeout
 
+    was_authenticated = bool(st.session_state.get("authenticated"))
+
     if session.is_expired(now):
+        LOGGER.info("Session expired for user %s", session.username)
         sessions.pop(token, None)
         _ensure_session_query_param(None)
         st.session_state.pop("authenticated", None)
         st.session_state.pop("authenticated_at", None)
         st.session_state.pop("last_active", None)
         st.session_state["auth_error"] = "Session expired due to inactivity."
+        _set_authenticated_username(None)
         return
 
     st.session_state["authenticated"] = True
     st.session_state["authenticated_at"] = session.authenticated_at
     st.session_state["last_active"] = now
     st.session_state["_session_token"] = token
+    _set_authenticated_username(session.username)
+
+    if not was_authenticated:
+        LOGGER.info("Restored authenticated session for user %s", session.username)
     session.last_active = now
 
 
@@ -313,9 +340,13 @@ def require_authentication() -> None:
             st.session_state["last_active"] = now
             _store_persistent_session(username, now, session_timeout)
             st.session_state.pop("auth_error", None)
+            LOGGER.info("User %s authenticated successfully", username)
             _trigger_rerun()
         else:
             st.session_state["auth_error"] = "Invalid username or access key."
+            LOGGER.warning(
+                "Failed authentication attempt for username %s", username or "<empty>"
+            )
             _trigger_rerun()
 
     st.stop()
@@ -327,6 +358,9 @@ def render_logout_button() -> None:
         return
 
     if st.sidebar.button("Log out", width="stretch"):
+        username = st.session_state.get("authenticated_username")
+        if username:
+            LOGGER.info("User %s logged out", username)
         _clear_persistent_session()
         for key in ("authenticated", "auth_error"):
             st.session_state.pop(key, None)

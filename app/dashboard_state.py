@@ -167,7 +167,13 @@ def _set_environment_variables(environment: dict[str, object] | None) -> None:
 def set_active_environment(name: str) -> None:
     """Update the active environment selection."""
 
-    previous_selection = st.session_state.get(SESSION_SELECTED_ENV_KEY, "")
+    previous_selection = str(st.session_state.get(SESSION_SELECTED_ENV_KEY, ""))
+    if name != previous_selection:
+        LOGGER.info(
+            "Active environment changed from %s to %s",
+            previous_selection or "<none>",
+            name or "<none>",
+        )
     st.session_state[SESSION_SELECTED_ENV_KEY] = name
     st.session_state.pop(SESSION_APPLIED_ENV_KEY, None)
     clear_cached_data(persistent=bool(str(previous_selection).strip()))
@@ -183,6 +189,7 @@ def apply_selected_environment() -> None:
     environment = _get_selected_environment()
     _set_environment_variables(environment)
     st.session_state[SESSION_APPLIED_ENV_KEY] = selected
+    LOGGER.info("Applied Portainer environment %s", selected or "<none>")
     clear_cached_data(persistent=applied is not None)
 
 
