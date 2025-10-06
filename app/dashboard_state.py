@@ -1,6 +1,7 @@
 """Shared state and data helpers for the dashboard pages."""
 from __future__ import annotations
 
+import logging
 import os
 from dataclasses import dataclass
 from typing import Iterable, Sequence
@@ -22,6 +23,7 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         load_cache_entry as load_portainer_cache_entry,
         store_cache_entry as store_portainer_cache_entry,
     )
+    from .services.backup_scheduler import maybe_run_scheduled_backups  # type: ignore[import-not-found]
     from .settings import (  # type: ignore[import-not-found]
         PortainerEnvironment,
         get_configured_environments,
@@ -40,6 +42,9 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
         clear_cache as clear_persistent_portainer_cache,
         load_cache_entry as load_portainer_cache_entry,
         store_cache_entry as store_portainer_cache_entry,
+    )
+    from services.backup_scheduler import (  # type: ignore[no-redef]
+        maybe_run_scheduled_backups,
     )
     from settings import (  # type: ignore[no-redef]
         PortainerEnvironment,
@@ -64,6 +69,9 @@ __all__ = [
     "set_active_environment",
     "set_saved_environments",
 ]
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 class ConfigurationError(RuntimeError):
@@ -99,6 +107,12 @@ def initialise_session_state() -> None:
 
     if SESSION_ENVIRONMENTS_KEY not in st.session_state:
         st.session_state[SESSION_ENVIRONMENTS_KEY] = load_environments()
+
+    environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
+    try:
+        maybe_run_scheduled_backups(environments)
+    except Exception:  # pragma: no cover - defensive guard for Streamlit runtime
+        LOGGER.warning("Scheduled backup execution failed", exc_info=True)
 
     if SESSION_SELECTED_ENV_KEY not in st.session_state:
         environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
