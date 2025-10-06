@@ -42,6 +42,32 @@ def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
     return {}
 
 
+def get_active_session_count(*, now: Optional[datetime] = None) -> int:
+    """Return the number of currently active authenticated sessions.
+
+    The count is derived from the persistent session store used for cookie
+    based authentication. Expired sessions are discarded based on their
+    configured timeout. Active sessions are those which have not expired –
+    callers may optionally provide ``now`` to aid deterministic testing.
+    """
+
+    reference_time = now or datetime.now(timezone.utc)
+    sessions = _get_persistent_sessions()
+    active_tokens: list[str] = []
+    expired_tokens: list[str] = []
+
+    for token, session in list(sessions.items()):
+        if session.is_expired(reference_time):
+            expired_tokens.append(token)
+            continue
+        active_tokens.append(token)
+
+    for token in expired_tokens:
+        sessions.pop(token, None)
+
+    return len(active_tokens)
+
+
 def _trigger_rerun() -> None:
     """Trigger a Streamlit rerun using the available API."""
     try:  # Streamlit < 1.27
