@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.portainer_client import PortainerClient
+from app.portainer_client import PortainerClient, normalise_endpoint_stacks
 
 
 def test_list_edge_endpoints_requests_status(monkeypatch):
@@ -28,3 +28,28 @@ def test_list_edge_endpoints_requests_status(monkeypatch):
 
     assert captured["path"] == "/endpoints"
     assert captured["params"] == {"edge": "true", "status": "true"}
+
+
+def test_normalise_endpoint_stacks_preserves_zero_status():
+    """Agent status should keep zero values rather than dropping them."""
+
+    endpoints = [{"Id": 1, "Name": "edge-one", "Status": 0}]
+    result = normalise_endpoint_stacks(endpoints, {1: []})
+
+    assert result.loc[0, "endpoint_status"] == 0
+
+
+def test_normalise_endpoint_stacks_uses_edge_agent_status():
+    """Edge-specific status fields should be used when present."""
+
+    endpoints = [
+        {
+            "Id": 2,
+            "Name": "edge-two",
+            "Status": None,
+            "EdgeAgentStatus": 2,
+        }
+    ]
+    result = normalise_endpoint_stacks(endpoints, {2: []})
+
+    assert result.loc[0, "endpoint_status"] == 2

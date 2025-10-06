@@ -154,6 +154,22 @@ class PortainerClient:
         return data
 
 
+def _extract_endpoint_status(endpoint: Dict[str, object]) -> object:
+    """Return the most useful status value for an endpoint."""
+
+    status_keys = ("Status", "status", "EdgeAgentStatus", "EdgeAgentState")
+    for key in status_keys:
+        if key not in endpoint:
+            continue
+        value = endpoint.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and value.strip() == "":
+            continue
+        return value
+    return None
+
+
 def normalise_endpoint_stacks(
     endpoints: Iterable[Dict[str, object]],
     stacks_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
@@ -164,7 +180,7 @@ def normalise_endpoint_stacks(
     for endpoint in endpoints:
         endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
-        endpoint_status = endpoint.get("Status") or endpoint.get("status")
+        endpoint_status = _extract_endpoint_status(endpoint)
         stacks = stacks_by_endpoint.get(endpoint_id) or []
         targeted_stacks = [
             stack
