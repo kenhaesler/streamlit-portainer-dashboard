@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import sys
 from pathlib import Path
 
@@ -58,6 +59,30 @@ def test_chat_returns_first_message(monkeypatch):
     assert captured["json"]["temperature"] == 0.5
     assert captured["json"]["max_tokens"] == 256
     assert captured["verify"] is False
+
+
+def test_chat_supports_basic_auth(monkeypatch):
+    """Username/password tokens should be sent as HTTP Basic credentials."""
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url, *, headers=None, json=None, timeout=None, verify=None):  # type: ignore[override]
+        captured["headers"] = headers
+        return _DummyResponse({
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Response"},
+                }
+            ]
+        })
+
+    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
+
+    client = LLMClient(base_url="https://example.test/api", token="user:secret")
+    client.chat([{"role": "user", "content": "Ping"}])
+
+    expected = "Basic " + base64.b64encode(b"user:secret").decode("ascii")
+    assert captured["headers"]["Authorization"] == expected
 
 
 def test_chat_raises_for_missing_choices(monkeypatch):

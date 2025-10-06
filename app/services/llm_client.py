@@ -1,6 +1,7 @@
 """Client helpers for interacting with OpenWebUI/Ollama compatible APIs."""
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence
 
@@ -53,8 +54,23 @@ class LLMClient:
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
-        if self.token:
-            headers["Authorization"] = f"Bearer {self.token.strip()}"
+        if not self.token:
+            return headers
+
+        token_clean = self.token.strip()
+        if not token_clean:
+            return headers
+
+        prefix = token_clean.split(" ", 1)[0].lower()
+        if prefix in {"bearer", "basic"}:
+            headers["Authorization"] = token_clean
+            return headers
+
+        if ":" in token_clean:
+            basic_token = base64.b64encode(token_clean.encode("utf-8")).decode("ascii")
+            headers["Authorization"] = f"Basic {basic_token}"
+        else:
+            headers["Authorization"] = f"Bearer {token_clean}"
         return headers
 
     def _payload(

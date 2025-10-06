@@ -56,7 +56,8 @@ can adjust or disable the behaviour through the new environment variables docume
 
 The **LLM assistant** page lets you connect an OpenWebUI/Ollama deployment to the dashboard. Provide the chat
 completion endpoint (for example `https://llm.example.com/v1/chat/completions`), your API token and
-model name (such as `gpt-oss`). The page summarises the containers and stacks returned by Portainer—including any
+model name (such as `gpt-oss`). The token field accepts either a traditional bearer token or a `username:password`
+pair, which is automatically sent using HTTP Basic authentication when detected. The page summarises the containers and stacks returned by Portainer—including any
 warnings—and sends that context along with your natural language question. This makes it possible to ask questions
 like “are there any containers that have issues and why?” directly from the dashboard. Responses are displayed in
 the UI and you can download the exact context shared with the model for auditing.
