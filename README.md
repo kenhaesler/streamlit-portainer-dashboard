@@ -19,6 +19,7 @@ The application is configured via environment variables:
 - `PORTAINER_CACHE_TTL_SECONDS` – Optional. Number of seconds before cached Portainer API responses are refreshed. Defaults to 900 seconds (15 minutes). Set to `0` or a negative value to keep cached data until it is manually invalidated.
 - `PORTAINER_CACHE_DIR` – Optional. Directory used to persist cached Portainer data. Defaults to `.streamlit/cache` inside the application directory.
 - `PORTAINER_BACKUP_INTERVAL` – Optional. Interval used for automatic Portainer backups (for example `24h` or `30m`). Set to `0`, `off`, or leave unset to disable recurring backups. The dashboard persists the next scheduled run on disk so restarts continue the cadence without creating duplicate backups.
+- `LLM_BEARER_TOKEN` – Optional. When set, the LLM assistant page pre-populates the bearer token field so every authenticated user can reuse the shared credentials.
 
 Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
 operators can fix the configuration before exposing the dashboard.
@@ -58,7 +59,9 @@ can adjust or disable the behaviour through the new environment variables docume
 
 The **LLM assistant** page lets you connect an OpenWebUI/Ollama deployment to the dashboard. Provide the chat
 completion endpoint (for example `https://llm.example.com/v1/chat/completions`), your API token and
-model name (such as `gpt-oss`). The token field accepts either a traditional bearer token or a `username:password`
+model name (such as `gpt-oss`). When the `LLM_BEARER_TOKEN` environment variable is present, the bearer-token
+field is pre-filled automatically so operators can start querying immediately. The token field accepts either a
+traditional bearer token or a `username:password`
 pair, which is automatically sent using HTTP Basic authentication when detected. The page summarises the containers and stacks returned by Portainer—including any
 warnings—and sends that context along with your natural language question. This makes it possible to ask questions
 like “are there any containers that have issues and why?” directly from the dashboard. Responses are displayed in

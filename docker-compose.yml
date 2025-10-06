@@ -8,6 +8,7 @@ services:
     environment:
       DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:?Set dashboard username}
       DASHBOARD_KEY: ${DASHBOARD_KEY:?Set dashboard key}
+      LLM_BEARER_TOKEN: ${LLM_BEARER_TOKEN:-}
     volumes:
       - streamlit_portainer_envs:/app/.streamlit
     restart: unless-stopped
