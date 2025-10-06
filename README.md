@@ -15,6 +15,7 @@ The application is configured via environment variables:
 - `DASHBOARD_USERNAME` – Username required to sign in to the dashboard UI.
 - `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
 - `DASHBOARD_SESSION_TIMEOUT_MINUTES` – Optional. Expire authenticated sessions after the specified number of minutes of inactivity. Omit or set to a non-positive value to disable the timeout.
+- `DASHBOARD_LOG_LEVEL` – Optional. Overrides the log verbosity for the dashboard. Accepts standard Python levels (e.g. `INFO`, `DEBUG`, `ERROR`) plus `TRACE`/`VERBOSE`. Defaults to `INFO` when unset or invalid.
 - `PORTAINER_CACHE_ENABLED` – Optional. Defaults to `true`. Set to `false` to disable persistent caching of Portainer API responses between sessions.
 - `PORTAINER_CACHE_TTL_SECONDS` – Optional. Number of seconds before cached Portainer API responses are refreshed. Defaults to 900 seconds (15 minutes). Set to `0` or a negative value to keep cached data until it is manually invalidated.
 - `PORTAINER_CACHE_DIR` – Optional. Directory used to persist cached Portainer data. Defaults to `.streamlit/cache` inside the application directory.
