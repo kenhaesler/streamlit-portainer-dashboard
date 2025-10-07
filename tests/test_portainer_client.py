@@ -43,6 +43,32 @@ def test_list_edge_endpoints_requests_status(monkeypatch):
     assert captured["params"] == {"edge": "true", "status": "true"}
 
 
+def test_list_stacks_for_endpoint_merges_edge_payloads(monkeypatch):
+    """Stacks fetched from both endpoints should be combined."""
+
+    client = PortainerClient(base_url="https://portainer.example", api_key="token")
+
+    def fake_request(path: str, *, params=None):  # type: ignore[override]
+        assert params == {"endpointId": 9}
+        if path == "/stacks":
+            return [{"Id": 101, "Name": "compose"}]
+        if path == "/edge/stacks":
+            return [
+                {"Id": 101, "Name": "compose"},
+                {"Id": 202, "Name": "edge-app"},
+            ]
+        raise AssertionError(f"Unexpected path: {path}")
+
+    monkeypatch.setattr(client, "_request", fake_request)
+
+    stacks = client.list_stacks_for_endpoint(9)
+
+    assert stacks == [
+        {"Id": 101, "Name": "compose"},
+        {"Id": 202, "Name": "edge-app"},
+    ]
+
+
 def test_create_backup_posts_to_backup_endpoint(monkeypatch):
     client = PortainerClient(base_url="https://portainer.example", api_key="token")
 
