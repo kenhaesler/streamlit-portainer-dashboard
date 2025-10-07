@@ -39,6 +39,8 @@ from .config import (
     _load_oidc_config as _config_load_oidc_config,
 )
 
+_OIDCSettings = OIDCConfig
+
 SESSION_COOKIE_NAME = "dashboard_session_token"
 DEFAULT_SESSION_COOKIE_DURATION = timedelta(days=30)
 
