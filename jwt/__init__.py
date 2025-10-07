@@ -79,10 +79,7 @@ def encode(
 def get_unverified_header(token: str) -> dict[str, Any]:
     """Return the JWT header without validating the signature."""
 
-    try:
-        header_segment = token.split(".", 1)[0]
-    except ValueError as exc:  # pragma: no cover - defensive
-        raise InvalidTokenError("Token structure is invalid.") from exc
+    header_segment = token.split(".", 1)[0]
 
     try:
         header_bytes = _base64url_decode(header_segment)
