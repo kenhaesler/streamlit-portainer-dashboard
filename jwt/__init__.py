@@ -103,7 +103,7 @@ def _validate_audience(payload: Mapping[str, Any], audience: str | None) -> None
     aud = payload.get("aud")
     if aud is None:
         raise InvalidTokenError("Token is missing the required audience claim.")
-    if isinstance(aud, Sequence) and not isinstance(aud, (str, bytes)):
+    if isinstance(aud, (list, tuple)):
         if audience not in aud:
             raise InvalidTokenError("Token audience does not match the expected value.")
         return
