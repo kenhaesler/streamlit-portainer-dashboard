@@ -14,6 +14,8 @@ EnvironmentList = list[dict[str, object]]
 def _default_clear_cache(*, persistent: bool = True) -> None:  # pragma: no cover - placeholder
     """Fallback cache clearer used when none is provided."""
 
+    pass
+
 
 @dataclass
 class EnvironmentManager:

@@ -4,11 +4,6 @@ from typing import Any
 
 import pytest
 
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-
 from app.managers.environment_manager import EnvironmentManager
 
 
