@@ -155,6 +155,46 @@ def test_normalise_endpoint_stacks_handles_endpoint_scoped_payload():
     assert result.loc[0, "stack_type"] == 2
 
 
+def test_normalise_endpoint_stacks_ignores_foreign_metadata():
+    """Stacks with explicit endpoint metadata should not leak to other rows."""
+
+    endpoints = [
+        {"Id": 3, "Name": "local", "Status": 1},
+        {"Id": 4, "Name": "edge-remote", "Status": 0},
+    ]
+    stacks = {
+        3: [
+            {
+                "Id": 10,
+                "Name": "local-only",
+                "Status": 1,
+            },
+            {
+                "Id": 42,
+                "Name": "remote-app",
+                "Status": 1,
+                "EndpointId": 4,
+            },
+        ],
+        4: [
+            {
+                "Id": 42,
+                "Name": "remote-app",
+                "Status": 1,
+                "EndpointId": 4,
+            }
+        ],
+    }
+
+    result = normalise_endpoint_stacks(endpoints, stacks)
+
+    local_rows = result[result["endpoint_id"] == 3]
+    assert list(local_rows["stack_id"]) == [10]
+
+    remote_rows = result[result["endpoint_id"] == 4]
+    assert list(remote_rows["stack_id"]) == [42]
+
+
 def test_inspect_container_hits_expected_endpoint(monkeypatch):
     client = PortainerClient(base_url="https://portainer.example", api_key="token")
 

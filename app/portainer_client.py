@@ -85,6 +85,36 @@ def _stack_targets_endpoint(stack: Dict[str, object], endpoint_id: int) -> bool:
     return False
 
 
+def _stack_has_endpoint_metadata(stack: Dict[str, object]) -> bool:
+    """Return ``True`` when the stack embeds any endpoint assignment metadata."""
+
+    endpoint_keys = ("EndpointId", "EndpointID", "endpointId", "endpointID")
+    for key in endpoint_keys:
+        if key not in stack:
+            continue
+        coerced = _coerce_int(stack.get(key))
+        if coerced is None:
+            continue
+        return True
+
+    deployment_info = stack.get("DeploymentInfo") or stack.get("deploymentInfo")
+    if isinstance(deployment_info, dict):
+        if any(_coerce_int(key) is not None for key in deployment_info.keys()):
+            return True
+        for info in deployment_info.values():
+            if not isinstance(info, dict):
+                continue
+            for key in endpoint_keys:
+                if key not in info:
+                    continue
+                coerced = _coerce_int(info.get(key))
+                if coerced is None:
+                    continue
+                return True
+
+    return False
+
+
 @dataclass
 class PortainerClient:
     """Lightweight Portainer API client."""
@@ -322,7 +352,13 @@ def normalise_endpoint_stacks(
             for stack in raw_stacks
             if _stack_targets_endpoint(stack, endpoint_id)
         ]
-        stacks = targeted_stacks or raw_stacks
+        stacks = targeted_stacks
+        if not stacks:
+            stacks = [
+                stack
+                for stack in raw_stacks
+                if not _stack_has_endpoint_metadata(stack)
+            ]
 
         if stacks:
             for stack in stacks:
