@@ -126,3 +126,61 @@ def test_chat_supports_structured_content(monkeypatch):
 
     assert response == "Hello world"
 
+
+def test_chat_surfaces_truncation_errors(monkeypatch):
+    """Truncated responses should raise a descriptive error."""
+
+    def fake_post(*args, **kwargs):  # type: ignore[override]
+        return _DummyResponse(
+            {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": ""},
+                        "finish_reason": "length",
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
+
+    client = LLMClient(base_url="https://example.test/api")
+
+    with pytest.raises(LLMClientError) as excinfo:
+        client.chat([{"role": "user", "content": "Ping"}])
+
+    message = str(excinfo.value)
+    assert "truncated" in message
+    assert "context window" in message
+
+
+def test_chat_includes_usage_hint_when_available(monkeypatch):
+    """Usage metadata should be surfaced in truncation errors if provided."""
+
+    def fake_post(*args, **kwargs):  # type: ignore[override]
+        return _DummyResponse(
+            {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": ""},
+                        "finish_reason": "length",
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": 46595,
+                    "prompt_tokens_limit": 8192,
+                },
+            }
+        )
+
+    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
+
+    client = LLMClient(base_url="https://example.test/api")
+
+    with pytest.raises(LLMClientError) as excinfo:
+        client.chat([{"role": "user", "content": "Ping"}])
+
+    message = str(excinfo.value)
+    assert "46595" in message
+    assert "8192" in message
+

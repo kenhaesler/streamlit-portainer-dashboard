@@ -40,12 +40,46 @@ def _coerce_content_to_text(content: object) -> str | None:
     return None
 
 
+def _format_truncation_hint(payload: Mapping[str, object]) -> str | None:
+    """Extract any usage metadata that can explain truncation."""
+
+    usage = payload.get("usage")
+    if isinstance(usage, Mapping):
+        prompt_tokens = usage.get("prompt_tokens") or usage.get("prompt_token_count")
+        limit_tokens = (
+            usage.get("prompt_tokens_limit")
+            or usage.get("prompt_limit")
+            or usage.get("context_window")
+        )
+        if isinstance(prompt_tokens, int) and prompt_tokens > 0:
+            if isinstance(limit_tokens, int) and limit_tokens > 0:
+                return (
+                    "The request used approximately "
+                    f"{prompt_tokens} prompt tokens against a {limit_tokens}-token context window."
+                )
+            return f"The request used approximately {prompt_tokens} prompt tokens."
+
+    detail = payload.get("detail") or payload.get("error")
+    if isinstance(detail, Mapping):
+        detail_message = detail.get("message") or detail.get("detail")
+        if isinstance(detail_message, str) and detail_message.strip():
+            return detail_message.strip()
+    if isinstance(detail, str) and detail.strip():
+        return detail.strip()
+
+    return None
+
+
 def _extract_response_text(payload: Mapping[str, object]) -> str:
     choices = payload.get("choices")
     if not isinstance(choices, Sequence) or not choices:
         raise LLMClientError("LLM API response did not include any choices")
     first_choice = choices[0]
+    finish_reason: str | None = None
     if isinstance(first_choice, Mapping):
+        finish_reason_value = first_choice.get("finish_reason")
+        if isinstance(finish_reason_value, str):
+            finish_reason = finish_reason_value.strip()
         message = first_choice.get("message")
         if isinstance(message, Mapping):
             content_text = _coerce_content_to_text(message.get("content"))
@@ -56,6 +90,19 @@ def _extract_response_text(payload: Mapping[str, object]) -> str:
             return content_text
     if isinstance(first_choice, str) and first_choice.strip():
         return first_choice.strip()
+    if finish_reason:
+        finish_reason_normalised = finish_reason.lower()
+        if finish_reason_normalised in {"length", "model_length", "context_length_exceeded"}:
+            hint = _format_truncation_hint(payload)
+            raise LLMClientError(
+                "LLM API truncated the response before any text was generated. "
+                "This typically means the combined prompt and expected completion exceeded the model's context window. "
+                "Reduce the prompt size or request fewer tokens and try again."
+                + (f" {hint}" if hint else "")
+            )
+        raise LLMClientError(
+            "LLM API reported finish reason '%s' without returning any text" % finish_reason
+        )
     raise LLMClientError("LLM API response did not contain text output")
 
 
