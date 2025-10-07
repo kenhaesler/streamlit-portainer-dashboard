@@ -31,7 +31,9 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         load_cache_entry as load_portainer_cache_entry,
         store_cache_entry as store_portainer_cache_entry,
     )
-    from .services.backup_scheduler import maybe_run_scheduled_backups  # type: ignore[import-not-found]
+    from .services.backup_scheduler import (  # type: ignore[import-not-found]
+        ensure_scheduler_running,
+    )
     from .settings import (  # type: ignore[import-not-found]
         PortainerEnvironment,
         get_configured_environments,
@@ -58,7 +60,7 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
         store_cache_entry as store_portainer_cache_entry,
     )
     from services.backup_scheduler import (  # type: ignore[no-redef]
-        maybe_run_scheduled_backups,
+        ensure_scheduler_running,
     )
     from settings import (  # type: ignore[no-redef]
         PortainerEnvironment,
@@ -128,11 +130,10 @@ def initialise_session_state() -> None:
     if SESSION_ENVIRONMENTS_KEY not in st.session_state:
         st.session_state[SESSION_ENVIRONMENTS_KEY] = load_environments()
 
-    environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
     try:
-        maybe_run_scheduled_backups(environments)
+        ensure_scheduler_running()
     except Exception:  # pragma: no cover - defensive guard for Streamlit runtime
-        LOGGER.warning("Scheduled backup execution failed", exc_info=True)
+        LOGGER.warning("Scheduled backup runner failed to start", exc_info=True)
 
     if SESSION_SELECTED_ENV_KEY not in st.session_state:
         environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
