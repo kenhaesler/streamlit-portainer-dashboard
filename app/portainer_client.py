@@ -85,6 +85,36 @@ def _stack_targets_endpoint(stack: Dict[str, object], endpoint_id: int) -> bool:
     return False
 
 
+def _stack_has_endpoint_metadata(stack: Dict[str, object]) -> bool:
+    """Return ``True`` when the stack embeds any endpoint assignment metadata."""
+
+    endpoint_keys = ("EndpointId", "EndpointID", "endpointId", "endpointID")
+    for key in endpoint_keys:
+        if key not in stack:
+            continue
+        coerced = _coerce_int(stack.get(key))
+        if coerced is None:
+            continue
+        return True
+
+    deployment_info = stack.get("DeploymentInfo") or stack.get("deploymentInfo")
+    if isinstance(deployment_info, dict):
+        if any(_coerce_int(key) is not None for key in deployment_info.keys()):
+            return True
+        for info in deployment_info.values():
+            if not isinstance(info, dict):
+                continue
+            for key in endpoint_keys:
+                if key not in info:
+                    continue
+                coerced = _coerce_int(info.get(key))
+                if coerced is None:
+                    continue
+                return True
+
+    return False
+
+
 @dataclass
 class PortainerClient:
     """Lightweight Portainer API client."""
@@ -197,15 +227,28 @@ class PortainerClient:
             ("/stacks", {"endpointId": endpoint_id}),
             ("/edge/stacks", {"endpointId": endpoint_id}),
         )
+        results: list[dict[str, object]] = []
+        seen_stack_ids: set[int] = set()
+
         for path, params in paths:
             try:
                 data = self._request(path, params=params)
             except PortainerAPIError as exc:
                 LOGGER.debug("Failed fetching %s for endpoint %s: %s", path, endpoint_id, exc)
                 continue
-            if isinstance(data, list):
-                return data
-        return []
+            if not isinstance(data, list):
+                continue
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                raw_id = item.get("Id") or item.get("ID") or item.get("id")
+                stack_id = _coerce_int(raw_id)
+                if stack_id is not None and stack_id in seen_stack_ids:
+                    continue
+                if stack_id is not None:
+                    seen_stack_ids.add(stack_id)
+                results.append(item)
+        return results
 
     def list_containers_for_endpoint(
         self,
@@ -322,7 +365,13 @@ def normalise_endpoint_stacks(
             for stack in raw_stacks
             if _stack_targets_endpoint(stack, endpoint_id)
         ]
-        stacks = targeted_stacks or raw_stacks
+        stacks = targeted_stacks
+        if not stacks:
+            stacks = [
+                stack
+                for stack in raw_stacks
+                if not _stack_has_endpoint_metadata(stack)
+            ]
 
         if stacks:
             for stack in stacks:

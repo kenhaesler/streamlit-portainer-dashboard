@@ -98,3 +98,31 @@ def test_chat_raises_for_missing_choices(monkeypatch):
     with pytest.raises(LLMClientError):
         client.chat([{"role": "user", "content": "Ping"}])
 
+
+def test_chat_supports_structured_content(monkeypatch):
+    """LLM responses using message content blocks should be flattened."""
+
+    def fake_post(*args, **kwargs):  # type: ignore[override]
+        return _DummyResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": "Hello"},
+                                {"type": "text", "text": " world"},
+                            ],
+                        }
+                    }
+                ]
+            }
+        )
+
+    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
+
+    client = LLMClient(base_url="https://example.test/api")
+    response = client.chat([{"role": "user", "content": "Ping"}])
+
+    assert response == "Hello world"
+
