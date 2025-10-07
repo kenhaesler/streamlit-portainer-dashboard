@@ -279,7 +279,12 @@ def store_cache_entry(*args: Any, **kwargs: Any) -> float | None:
             raise TypeError("store_cache_entry() missing required key/payload arguments")
         key, payload = args
     elif len(args) == 3:
-        config, key, payload = args  # type: ignore[assignment]
+        config_candidate, key_candidate, payload_candidate = args
+        if not (isinstance(key_candidate, str) and isinstance(payload_candidate, dict)):
+            raise TypeError("store_cache_entry() requires key to be a string and payload to be a dictionary")
+        config = config_candidate
+        key = key_candidate
+        payload = payload_candidate
     elif len(args) == 2:
         config = None
         key, payload = args
