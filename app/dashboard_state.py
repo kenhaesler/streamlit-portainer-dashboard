@@ -11,7 +11,7 @@ import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-from .config import Config
+from .config import Config, PortainerDefaults
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from .portainer_client import (  # type: ignore[import-not-found]
@@ -114,6 +114,17 @@ SESSION_AUTO_REFRESH_INTERVAL = "portainer_auto_refresh_interval"
 SESSION_AUTO_REFRESH_COUNT = "_portainer_auto_refresh_count"
 
 
+def _environment_from_defaults(defaults: PortainerDefaults) -> dict[str, object]:
+    """Serialise the default Portainer environment into the session format."""
+
+    return {
+        "name": defaults.environment_name or "Default",
+        "api_url": defaults.api_url,
+        "api_key": defaults.api_key,
+        "verify_ssl": defaults.verify_ssl,
+    }
+
+
 def trigger_rerun() -> None:
     """Request Streamlit to rerun the script, handling legacy APIs."""
 
@@ -131,14 +142,7 @@ def initialise_session_state(config: Config) -> None:
         if not stored:
             defaults = config.portainer.default_environment
             if defaults.api_url and defaults.api_key:
-                stored = [
-                    {
-                        "name": defaults.environment_name or "Default",
-                        "api_url": defaults.api_url,
-                        "api_key": defaults.api_key,
-                        "verify_ssl": defaults.verify_ssl,
-                    }
-                ]
+                stored = [_environment_from_defaults(defaults)]
         st.session_state[SESSION_ENVIRONMENTS_KEY] = stored
 
     environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
@@ -200,12 +204,7 @@ def apply_selected_environment(config: Config) -> None:
     if environment is None:
         defaults = config.portainer.default_environment
         if defaults.api_url and defaults.api_key:
-            environment = {
-                "name": defaults.environment_name or "Default",
-                "api_url": defaults.api_url,
-                "api_key": defaults.api_key,
-                "verify_ssl": defaults.verify_ssl,
-            }
+            environment = _environment_from_defaults(defaults)
 
     if applied == selected:
         st.session_state["active_portainer_environment"] = environment

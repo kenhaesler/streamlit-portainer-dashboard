@@ -17,9 +17,12 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         PortainerEnvironment,
         get_configured_environments,
     )
-
-
 LOGGER = logging.getLogger(__name__)
+
+try:
+    PROJECT_ROOT = Path(__file__).resolve().parents[2]
+except IndexError:  # pragma: no cover - defensive fallback when module layout changes
+    PROJECT_ROOT = Path(__file__).resolve().parent
 
 # Authentication environment variables
 USERNAME_ENV_VAR = "DASHBOARD_USERNAME"
@@ -227,6 +230,13 @@ def _load_auth_config() -> AuthConfig:
     )
 
 
+def _default_cache_directory() -> Path:
+    """Return the default cache directory relative to the project root."""
+
+    candidate = PROJECT_ROOT / ".streamlit" / "cache"
+    return candidate
+
+
 def _load_cache_config() -> CacheConfig:
     enabled = _parse_bool(_get_env(CACHE_ENABLED_ENV_VAR), default=True)
     raw_ttl = _get_env(CACHE_TTL_ENV_VAR)
@@ -247,7 +257,7 @@ def _load_cache_config() -> CacheConfig:
     if directory_override:
         directory = Path(directory_override).expanduser()
     else:
-        directory = Path(__file__).resolve().parent.parent / ".streamlit" / "cache"
+        directory = _default_cache_directory()
     return CacheConfig(enabled=enabled, ttl_seconds=ttl_seconds, directory=directory)
 
 

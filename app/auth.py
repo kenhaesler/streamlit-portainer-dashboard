@@ -71,9 +71,6 @@ class _PersistentSession:
         return now - self.last_active >= self.session_timeout
 
 
-_OIDCSettings = OIDCConfig
-
-
 @st.cache_resource(show_spinner=False)
 def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
     """Return a process-wide store of persistent session metadata."""
