@@ -15,11 +15,17 @@ The application is configured via environment variables:
 - `DASHBOARD_USERNAME` – Username required to sign in to the dashboard UI.
 - `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
 - `DASHBOARD_SESSION_TIMEOUT_MINUTES` – Optional. Expire authenticated sessions after the specified number of minutes of inactivity. Omit or set to a non-positive value to disable the timeout.
+- `DASHBOARD_LOG_LEVEL` – Optional. Overrides the log verbosity for the dashboard. Accepts standard Python levels (e.g. `INFO`, `DEBUG`, `ERROR`) plus `TRACE`/`VERBOSE`. Defaults to `INFO` when unset or invalid.
 - `PORTAINER_CACHE_ENABLED` – Optional. Defaults to `true`. Set to `false` to disable persistent caching of Portainer API responses between sessions.
 - `PORTAINER_CACHE_TTL_SECONDS` – Optional. Number of seconds before cached Portainer API responses are refreshed. Defaults to 900 seconds (15 minutes). Set to `0` or a negative value to keep cached data until it is manually invalidated.
 - `PORTAINER_CACHE_DIR` – Optional. Directory used to persist cached Portainer data. Defaults to `.streamlit/cache` inside the application directory.
-- `PORTAINER_BACKUP_INTERVAL` – Optional. Interval used for automatic Portainer backups (for example `24h` or `30m`). Set to `0`, `off`, or leave unset to disable recurring backups. The dashboard persists the next scheduled run on disk so restarts continue the cadence without creating duplicate backups.
-- `LLM_BEARER_TOKEN` – Optional. When set, the LLM assistant page pre-populates the bearer token field so every authenticated user can reuse the shared credentials.
+- `PORTAINER_BACKUP_INTERVAL` – Optional. Interval used for automatic Portainer backups (for example `24h` or `30m`). Set to `0`, `off`, or leave unset to disable recurring backups. Operators can also configure the cadence from **Settings → Scheduled backups**, which persists the value on disk. When this environment variable is set (for example in Docker Compose), the dashboard surfaces the configured value but the UI controls become read-only so the container configuration remains authoritative.
+- `LLM_API_ENDPOINT` – Optional. When set, the LLM assistant page defaults to this chat completion endpoint.
+- `LLM_BEARER_TOKEN` – Optional. When set, the LLM assistant page pre-populates the bearer token field so every authenticated user can reuse the shared credentials. When both `LLM_API_ENDPOINT` and `LLM_BEARER_TOKEN` are provided the endpoint and credential inputs become read-only, signalling that the deployment manages the LLM configuration.
+- `KIBANA_LOGS_ENDPOINT` – Optional. Full URL of the Kibana/Elasticsearch search endpoint (for example `https://elastic.example.com/_search`) used to retrieve container logs.
+- `KIBANA_API_KEY` – Optional. API key sent via the `Authorization: ApiKey <token>` header when querying Kibana. Required when `KIBANA_LOGS_ENDPOINT` is set.
+- `KIBANA_VERIFY_SSL` – Optional. Defaults to `true`. Set to `false` to skip TLS verification when connecting to Kibana with self-signed certificates.
+- `KIBANA_TIMEOUT_SECONDS` – Optional. Request timeout (in seconds) for Kibana log queries. Defaults to 30 seconds when unset or invalid.
 
 Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
 operators can fix the configuration before exposing the dashboard.
@@ -60,12 +66,22 @@ can adjust or disable the behaviour through the new environment variables docume
 The **LLM assistant** page lets you connect an OpenWebUI/Ollama deployment to the dashboard. Provide the chat
 completion endpoint (for example `https://llm.example.com/v1/chat/completions`), your API token and
 model name (such as `gpt-oss`). When the `LLM_BEARER_TOKEN` environment variable is present, the bearer-token
-field is pre-filled automatically so operators can start querying immediately. The token field accepts either a
+field is pre-filled automatically so operators can start querying immediately. Setting both `LLM_API_ENDPOINT`
+and `LLM_BEARER_TOKEN` locks the connection details, making it clear which managed LLM instance the dashboard uses.
+The token field accepts either a
 traditional bearer token or a `username:password`
 pair, which is automatically sent using HTTP Basic authentication when detected. The page summarises the containers and stacks returned by Portainer—including any
 warnings—and sends that context along with your natural language question. This makes it possible to ask questions
 like “are there any containers that have issues and why?” directly from the dashboard. Responses are displayed in
 the UI and you can download the exact context shared with the model for auditing.
+
+### Edge agent log explorer
+
+The **Edge agent logs** page surfaces container logs collected in Kibana/Elasticsearch. Configure the
+`KIBANA_LOGS_ENDPOINT` and `KIBANA_API_KEY` environment variables to enable the integration. The page reuses your
+current Portainer filters so you can drill into a specific subset of environments or endpoints before issuing a log
+query. Specify a time window (15 minutes to 24 hours), optional container name or message search term and download the
+results as CSV for further analysis.
 
 ## Usage
 

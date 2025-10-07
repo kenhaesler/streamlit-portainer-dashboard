@@ -42,6 +42,32 @@ def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
     return {}
 
 
+def _prune_expired_sessions(*, now: Optional[datetime] = None) -> None:
+    """Remove expired sessions from the persistent store."""
+
+    reference_time = now or datetime.now(timezone.utc)
+    sessions = _get_persistent_sessions()
+
+    for token, session in list(sessions.items()):
+        if session.is_expired(reference_time):
+            sessions.pop(token, None)
+
+
+def get_active_session_count(*, now: Optional[datetime] = None) -> int:
+    """Return the number of currently active authenticated sessions.
+
+    The count is derived from the persistent session store used for cookie
+    based authentication. Expired sessions are discarded based on their
+    configured timeout. Active sessions are those which have not expired –
+    callers may optionally provide ``now`` to aid deterministic testing.
+    """
+
+    reference_time = now or datetime.now(timezone.utc)
+    sessions = _get_persistent_sessions()
+    _prune_expired_sessions(now=reference_time)
+    return len(sessions)
+
+
 def _trigger_rerun() -> None:
     """Trigger a Streamlit rerun using the available API."""
     try:  # Streamlit < 1.27
@@ -183,6 +209,7 @@ def _store_persistent_session(
 ) -> None:
     """Create and persist a new session token for the authenticated user."""
 
+    _prune_expired_sessions(now=now)
     token = token_urlsafe(32)
     _get_persistent_sessions()[token] = _PersistentSession(
         username=username,
@@ -210,6 +237,7 @@ def _update_persistent_session_activity(
 
     session.last_active = now
     session.session_timeout = session_timeout
+    _ensure_session_query_param(token)
     _set_session_cookie(token, now=now, session_timeout=session_timeout)
 
 
@@ -218,6 +246,7 @@ def _restore_persistent_session(
 ) -> None:
     """Restore an authenticated session based on the persisted token, if present."""
 
+    _prune_expired_sessions(now=now)
     tokens_to_check = []
     token_from_query = _get_session_token_from_query_params()
     if token_from_query:
