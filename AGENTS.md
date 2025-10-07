@@ -12,6 +12,7 @@ Welcome! This repository powers the Streamlit Portainer dashboard. Follow these 
 - Run formatting/linters that ship with the repository (currently none). Stay consistent with the existing style—standard library first, third-party next, local imports last.
 - Write tests with `pytest`. Use `pytest -q` for the unit suite. When you add new behaviour that touches Portainer interactions, make sure to mock HTTP requests just like the existing tests do.
 - Use `scripts/check_app_starts.sh` for a quick smoke test after substantial UI changes. It expects the Streamlit dependencies to be installed in the current environment.
+- Keep the dashboard user-friendly and responsive. Optimise for performance where practical and ensure new features preserve the app's security posture.
 
 ## Environment & configuration
 - Streamlit configuration and cached Portainer data live under `.streamlit/`. When your changes touch persistence or caching, verify they respect the `PORTAINER_CACHE_*` variables described in `README.md`.
