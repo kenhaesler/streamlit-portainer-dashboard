@@ -2,15 +2,16 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Sequence
+from typing import Iterable, MutableMapping, Sequence
 
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+
+from .config import Config, PortainerDefaults
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from .portainer_client import (  # type: ignore[import-not-found]
@@ -40,6 +41,12 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         load_environments,
         save_environments,
     )
+    from .managers.environment_manager import (  # type: ignore[import-not-found]
+        EnvironmentManager,
+    )
+    from .managers.background_job_runner import (  # type: ignore[import-not-found]
+        BackgroundJobRunner,
+    )
 except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when executed as a script
     from portainer_client import (  # type: ignore[no-redef]
         PortainerAPIError,
@@ -67,6 +74,12 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
         get_configured_environments,
         load_environments,
         save_environments,
+    )
+    from managers.environment_manager import (  # type: ignore[no-redef]
+        EnvironmentManager,
+    )
+    from managers.background_job_runner import (  # type: ignore[no-redef]
+        BackgroundJobRunner,
     )
 
 __all__ = [
@@ -104,15 +117,26 @@ class NoEnvironmentsConfiguredError(RuntimeError):
     """Raised when no Portainer environments are available."""
 
 
-SESSION_ENVIRONMENTS_KEY = "portainer_envs"
-SESSION_SELECTED_ENV_KEY = "portainer_selected_env"
-SESSION_APPLIED_ENV_KEY = "portainer_active_env_applied"
+SESSION_ENVIRONMENTS_KEY = EnvironmentManager.ENVIRONMENTS_KEY
+SESSION_SELECTED_ENV_KEY = EnvironmentManager.SELECTED_ENV_KEY
+SESSION_APPLIED_ENV_KEY = EnvironmentManager.APPLIED_ENV_KEY
 SESSION_FILTER_ENVIRONMENTS = "portainer_filter_selected_environments"
 SESSION_FILTER_ENDPOINTS = "portainer_filter_selected_endpoints"
 SESSION_FILTER_STACK_SEARCH = "portainer_filter_stack_search"
 SESSION_FILTER_CONTAINER_SEARCH = "portainer_filter_container_search"
 SESSION_AUTO_REFRESH_INTERVAL = "portainer_auto_refresh_interval"
 SESSION_AUTO_REFRESH_COUNT = "_portainer_auto_refresh_count"
+
+
+def _environment_from_defaults(defaults: PortainerDefaults) -> dict[str, object]:
+    """Serialise the default Portainer environment into the session format."""
+
+    return {
+        "name": defaults.environment_name or "Default",
+        "api_url": defaults.api_url,
+        "api_key": defaults.api_key,
+        "verify_ssl": defaults.verify_ssl,
+    }
 
 
 def trigger_rerun() -> None:
@@ -124,11 +148,30 @@ def trigger_rerun() -> None:
     rerun()
 
 
-def initialise_session_state() -> None:
+def initialise_session_state(config: Config) -> None:
     """Ensure baseline session state is available for all pages."""
 
     if SESSION_ENVIRONMENTS_KEY not in st.session_state:
-        st.session_state[SESSION_ENVIRONMENTS_KEY] = load_environments()
+        stored = load_environments()
+        if not stored:
+            defaults = config.portainer.default_environment
+            if defaults.api_url and defaults.api_key:
+                stored = [_environment_from_defaults(defaults)]
+        st.session_state[SESSION_ENVIRONMENTS_KEY] = stored
+def _get_environment_manager(
+    state: MutableMapping[str, object] | None = None,
+    *,
+    environment_manager: EnvironmentManager | None = None,
+) -> EnvironmentManager:
+    mapping = state or st.session_state
+    if environment_manager is not None:
+        return environment_manager
+    return EnvironmentManager(
+        mapping,
+        clear_cache=clear_cached_data,
+        loader=load_environments,
+        saver=save_environments,
+    )
 
     try:
         ensure_scheduler_running()
@@ -141,77 +184,103 @@ def initialise_session_state() -> None:
             environments[0]["name"] if environments else ""
         )
 
+def initialise_session_state(
+    *,
+    environment_manager: EnvironmentManager | None = None,
+    background_runner: BackgroundJobRunner | None = None,
+) -> None:
+    """Ensure baseline session state is available for all pages."""
 
-def get_saved_environments() -> list[dict[str, object]]:
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    environments = manager.initialise()
+    runner = background_runner or BackgroundJobRunner()
+    runner.maybe_run_backups(environments)
+
+
+def get_saved_environments(
+    *, environment_manager: EnvironmentManager | None = None
+) -> list[dict[str, object]]:
     """Return all saved environments from the current session."""
 
-    return list(st.session_state.get(SESSION_ENVIRONMENTS_KEY, []))
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    return manager.get_saved_environments()
 
 
-def set_saved_environments(environments: Iterable[dict[str, object]]) -> None:
+def set_saved_environments(
+    environments: Iterable[dict[str, object]],
+    *,
+    environment_manager: EnvironmentManager | None = None,
+) -> None:
     """Persist and update the saved environments list."""
 
-    serialisable = list(environments)
-    st.session_state[SESSION_ENVIRONMENTS_KEY] = serialisable
-    save_environments(serialisable)
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager.set_saved_environments(environments)
 
 
-def get_selected_environment_name() -> str:
+def get_selected_environment_name(
+    *, environment_manager: EnvironmentManager | None = None
+) -> str:
     """Return the name of the currently selected environment."""
 
-    return str(st.session_state.get(SESSION_SELECTED_ENV_KEY, ""))
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    return manager.get_selected_environment_name()
 
-
-def _get_selected_environment() -> dict[str, object] | None:
-    selected_name = get_selected_environment_name()
-    for environment in get_saved_environments():
-        if environment.get("name") == selected_name:
-            return environment
-    return None
-
-
-def _set_environment_variables(environment: dict[str, object] | None) -> None:
-    """Apply environment variables for the selected Portainer environment."""
-
-    if environment is None:
-        return
-
-    os.environ["PORTAINER_API_URL"] = str(environment.get("api_url", ""))
-    os.environ["PORTAINER_API_KEY"] = str(environment.get("api_key", ""))
-    os.environ["PORTAINER_VERIFY_SSL"] = (
-        "true" if bool(environment.get("verify_ssl", True)) else "false"
-    )
-    if name := environment.get("name"):
-        os.environ["PORTAINER_ENVIRONMENT_NAME"] = str(name)
-
-
-def set_active_environment(name: str) -> None:
+def set_active_environment(config: Config, name: str) -> None:
     """Update the active environment selection."""
 
     previous_selection = st.session_state.get(SESSION_SELECTED_ENV_KEY, "")
     st.session_state[SESSION_SELECTED_ENV_KEY] = name
     st.session_state.pop(SESSION_APPLIED_ENV_KEY, None)
-    clear_cached_data(persistent=bool(str(previous_selection).strip()))
+    clear_cached_data(config, persistent=bool(str(previous_selection).strip()))
 
 
-def apply_selected_environment() -> None:
+def apply_selected_environment(config: Config) -> None:
     """Apply the selected environment if it has changed since the last run."""
 
     selected = get_selected_environment_name()
     applied = st.session_state.get(SESSION_APPLIED_ENV_KEY)
-    if applied == selected:
-        return
     environment = _get_selected_environment()
-    _set_environment_variables(environment)
+    if environment is None:
+        defaults = config.portainer.default_environment
+        if defaults.api_url and defaults.api_key:
+            environment = _environment_from_defaults(defaults)
+
+    if applied == selected:
+        st.session_state["active_portainer_environment"] = environment
+        return
+
+    st.session_state["active_portainer_environment"] = environment
     st.session_state[SESSION_APPLIED_ENV_KEY] = selected
-    clear_cached_data(persistent=applied is not None)
+    clear_cached_data(config, persistent=applied is not None)
+
+def set_active_environment(
+    name: str,
+    *,
+    environment_manager: EnvironmentManager | None = None,
+) -> None:
+    """Update the active environment selection."""
+
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager.set_active_environment(name)
 
 
-def load_configured_environment_settings() -> tuple[PortainerEnvironment, ...]:
+def apply_selected_environment(
+    *, environment_manager: EnvironmentManager | None = None
+) -> None:
+    """Apply the selected environment if it has changed since the last run."""
+
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager.apply_selected_environment()
+
+
+def load_configured_environment_settings(
+    config: Config,
+) -> tuple[PortainerEnvironment, ...]:
     """Load configured Portainer environments from environment variables."""
 
+    environments = config.portainer.configured_environments
     try:
-        environments = tuple(get_configured_environments())
+        environments = EnvironmentManager.load_configured_environment_settings()
     except ValueError as exc:  # pragma: no cover - depends on runtime configuration
         raise ConfigurationError(str(exc)) from exc
     if not environments:
@@ -219,7 +288,7 @@ def load_configured_environment_settings() -> tuple[PortainerEnvironment, ...]:
     return environments
 
 
-def clear_cached_data(*, persistent: bool = True) -> None:
+def clear_cached_data(config: Config, *, persistent: bool = True) -> None:
     """Clear cached Portainer data.
 
     Parameters
@@ -234,7 +303,7 @@ def clear_cached_data(*, persistent: bool = True) -> None:
 
     fetch_portainer_data.clear()  # type: ignore[attr-defined]
     if persistent:
-        clear_persistent_portainer_cache()
+        clear_persistent_portainer_cache(config.cache)
 
 
 def _serialise_dataframe(df: pd.DataFrame) -> dict[str, object]:
@@ -355,154 +424,154 @@ def _fetch_portainer_payload(
     warnings: list[str] = []
 
     for environment in environments:
-        client = PortainerClient(
+        with PortainerClient(
             base_url=environment.api_url,
             api_key=environment.api_key,
             verify_ssl=environment.verify_ssl,
-        )
-        endpoints = client.list_edge_endpoints()
-        stacks: dict[int, list[dict]] = {}
-        containers: dict[int, list[dict]] = {}
-        inspections: dict[int, dict[str, dict]] = {}
-        stats: dict[int, dict[str, dict]] = {}
-        host_info: dict[int, dict[str, object]] = {}
-        host_usage: dict[int, dict[str, object]] = {}
-        volumes: dict[int, list[dict]] = {}
-        images: dict[int, list[dict]] = {}
+        ) as client:
+            endpoints = client.list_edge_endpoints()
+            stacks: dict[int, list[dict]] = {}
+            containers: dict[int, list[dict]] = {}
+            inspections: dict[int, dict[str, dict]] = {}
+            stats: dict[int, dict[str, dict]] = {}
+            host_info: dict[int, dict[str, object]] = {}
+            host_usage: dict[int, dict[str, object]] = {}
+            volumes: dict[int, list[dict]] = {}
+            images: dict[int, list[dict]] = {}
 
-        def _load_endpoint_payload(
-            endpoint: dict[str, object]
-        ) -> tuple[int, list[dict], list[dict], list[str]]:
-            endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
-            endpoint_warnings: list[str] = []
+            def _load_endpoint_payload(
+                endpoint: dict[str, object]
+            ) -> tuple[int, list[dict], list[dict], list[str]]:
+                endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+                endpoint_warnings: list[str] = []
 
-            try:
-                endpoint_stacks = client.list_stacks_for_endpoint(endpoint_id)
-            except PortainerAPIError as exc:
-                endpoint_warnings.append(
-                    f"[{environment.name}] Failed to load stacks for endpoint {endpoint_id}: {exc}"
-                )
-                endpoint_stacks = []
-            else:
-                if not isinstance(endpoint_stacks, list):
+                try:
+                    endpoint_stacks = client.list_stacks_for_endpoint(endpoint_id)
+                except PortainerAPIError as exc:
+                    endpoint_warnings.append(
+                        f"[{environment.name}] Failed to load stacks for endpoint {endpoint_id}: {exc}"
+                    )
                     endpoint_stacks = []
+                else:
+                    if not isinstance(endpoint_stacks, list):
+                        endpoint_stacks = []
 
-            try:
-                endpoint_containers = client.list_containers_for_endpoint(
-                    endpoint_id, include_stopped=include_stopped
-                )
-            except PortainerAPIError as exc:
-                endpoint_warnings.append(
-                    f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
-                )
-                endpoint_containers = []
-            else:
-                if not isinstance(endpoint_containers, list):
+                try:
+                    endpoint_containers = client.list_containers_for_endpoint(
+                        endpoint_id, include_stopped=include_stopped
+                    )
+                except PortainerAPIError as exc:
+                    endpoint_warnings.append(
+                        f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
+                    )
                     endpoint_containers = []
+                else:
+                    if not isinstance(endpoint_containers, list):
+                        endpoint_containers = []
 
-            if include_resource_utilisation:
-                try:
-                    host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load host info for endpoint {endpoint_id}: {exc}"
-                    )
-                    host_info[endpoint_id] = {}
-                try:
-                    host_usage[endpoint_id] = client.get_endpoint_system_df(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load host usage for endpoint {endpoint_id}: {exc}"
-                    )
-                    host_usage[endpoint_id] = {}
-                try:
-                    volumes[endpoint_id] = client.list_volumes_for_endpoint(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load volumes for endpoint {endpoint_id}: {exc}"
-                    )
-                    volumes[endpoint_id] = []
-                try:
-                    images[endpoint_id] = client.list_images_for_endpoint(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load images for endpoint {endpoint_id}: {exc}"
-                    )
-                    images[endpoint_id] = []
-            else:
-                host_info.setdefault(endpoint_id, {})
-                host_usage.setdefault(endpoint_id, {})
-                volumes.setdefault(endpoint_id, [])
-                images.setdefault(endpoint_id, [])
-
-            if include_container_details:
-                inspections.setdefault(endpoint_id, {})
-                stats.setdefault(endpoint_id, {})
-                for container in endpoint_containers:
-                    container_id = (
-                        container.get("Id")
-                        or container.get("ID")
-                        or container.get("id")
-                    )
-                    if not isinstance(container_id, str) or not container_id:
-                        continue
+                if include_resource_utilisation:
                     try:
-                        inspections[endpoint_id][container_id] = client.inspect_container(
-                            endpoint_id, container_id
-                        )
+                        host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
                     except PortainerAPIError as exc:
                         warnings.append(
-                            f"[{environment.name}] Failed to inspect container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            f"[{environment.name}] Failed to load host info for endpoint {endpoint_id}: {exc}"
                         )
+                        host_info[endpoint_id] = {}
                     try:
-                        stats[endpoint_id][container_id] = client.get_container_stats(
-                            endpoint_id, container_id
-                        )
+                        host_usage[endpoint_id] = client.get_endpoint_system_df(endpoint_id)
                     except PortainerAPIError as exc:
                         warnings.append(
-                            f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            f"[{environment.name}] Failed to load host usage for endpoint {endpoint_id}: {exc}"
                         )
+                        host_usage[endpoint_id] = {}
+                    try:
+                        volumes[endpoint_id] = client.list_volumes_for_endpoint(endpoint_id)
+                    except PortainerAPIError as exc:
+                        warnings.append(
+                            f"[{environment.name}] Failed to load volumes for endpoint {endpoint_id}: {exc}"
+                        )
+                        volumes[endpoint_id] = []
+                    try:
+                        images[endpoint_id] = client.list_images_for_endpoint(endpoint_id)
+                    except PortainerAPIError as exc:
+                        warnings.append(
+                            f"[{environment.name}] Failed to load images for endpoint {endpoint_id}: {exc}"
+                        )
+                        images[endpoint_id] = []
+                else:
+                    host_info.setdefault(endpoint_id, {})
+                    host_usage.setdefault(endpoint_id, {})
+                    volumes.setdefault(endpoint_id, [])
+                    images.setdefault(endpoint_id, [])
 
-            return endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings
+                if include_container_details:
+                    inspections.setdefault(endpoint_id, {})
+                    stats.setdefault(endpoint_id, {})
+                    for container in endpoint_containers:
+                        container_id = (
+                            container.get("Id")
+                            or container.get("ID")
+                            or container.get("id")
+                        )
+                        if not isinstance(container_id, str) or not container_id:
+                            continue
+                        try:
+                            inspections[endpoint_id][container_id] = client.inspect_container(
+                                endpoint_id, container_id
+                            )
+                        except PortainerAPIError as exc:
+                            warnings.append(
+                                f"[{environment.name}] Failed to inspect container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            )
+                        try:
+                            stats[endpoint_id][container_id] = client.get_container_stats(
+                                endpoint_id, container_id
+                            )
+                        except PortainerAPIError as exc:
+                            warnings.append(
+                                f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            )
 
-        for endpoint in endpoints:
-            endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings = _load_endpoint_payload(
-                endpoint
+                return endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings
+
+            for endpoint in endpoints:
+                endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings = _load_endpoint_payload(
+                    endpoint
+                )
+                stacks[endpoint_id] = endpoint_stacks
+                containers[endpoint_id] = endpoint_containers
+                if endpoint_warnings:
+                    warnings.extend(endpoint_warnings)
+
+            stack_df = normalise_endpoint_stacks(endpoints, stacks)
+            stack_df["environment_name"] = environment.name
+            stack_frames.append(stack_df)
+
+            container_df = normalise_endpoint_containers(endpoints, containers)
+            container_df["environment_name"] = environment.name
+            container_frames.append(container_df)
+
+            endpoint_df = normalise_endpoint_metadata(endpoints)
+            endpoint_df["environment_name"] = environment.name
+            endpoint_frames.append(endpoint_df)
+
+            container_details_df = normalise_container_details(
+                endpoints, containers, inspections, stats
             )
-            stacks[endpoint_id] = endpoint_stacks
-            containers[endpoint_id] = endpoint_containers
-            if endpoint_warnings:
-                warnings.extend(endpoint_warnings)
+            container_details_df["environment_name"] = environment.name
+            container_detail_frames.append(container_details_df)
 
-        stack_df = normalise_endpoint_stacks(endpoints, stacks)
-        stack_df["environment_name"] = environment.name
-        stack_frames.append(stack_df)
+            host_df = normalise_endpoint_host_metrics(endpoints, host_info, host_usage)
+            host_df["environment_name"] = environment.name
+            host_frames.append(host_df)
 
-        container_df = normalise_endpoint_containers(endpoints, containers)
-        container_df["environment_name"] = environment.name
-        container_frames.append(container_df)
+            volume_df = normalise_endpoint_volumes(endpoints, volumes)
+            volume_df["environment_name"] = environment.name
+            volume_frames.append(volume_df)
 
-        endpoint_df = normalise_endpoint_metadata(endpoints)
-        endpoint_df["environment_name"] = environment.name
-        endpoint_frames.append(endpoint_df)
-
-        container_details_df = normalise_container_details(
-            endpoints, containers, inspections, stats
-        )
-        container_details_df["environment_name"] = environment.name
-        container_detail_frames.append(container_details_df)
-
-        host_df = normalise_endpoint_host_metrics(endpoints, host_info, host_usage)
-        host_df["environment_name"] = environment.name
-        host_frames.append(host_df)
-
-        volume_df = normalise_endpoint_volumes(endpoints, volumes)
-        volume_df["environment_name"] = environment.name
-        volume_frames.append(volume_df)
-
-        image_df = normalise_endpoint_images(endpoints, images)
-        image_df["environment_name"] = environment.name
-        image_frames.append(image_df)
+            image_df = normalise_endpoint_images(endpoints, images)
+            image_df["environment_name"] = environment.name
+            image_frames.append(image_df)
 
     if stack_frames:
         stack_data = pd.concat(stack_frames, ignore_index=True)
@@ -559,6 +628,7 @@ def _fetch_portainer_payload(
 
 
 def _start_background_refresh(
+    config: Config,
     cache_key: str,
     environments: tuple[PortainerEnvironment, ...],
     *,
@@ -596,7 +666,7 @@ def _start_background_refresh(
                 image_data,
                 warnings,
             )
-            store_portainer_cache_entry(cache_key, payload)
+            store_portainer_cache_entry(config.cache, cache_key, payload)
         except Exception:  # pragma: no cover - defensive guard for background thread
             LOGGER.warning(
                 "Background refresh for cache key %s failed", cache_key, exc_info=True
@@ -631,6 +701,7 @@ def _start_background_refresh(
 
 @st.cache_data(show_spinner=False)
 def fetch_portainer_data(
+    config: Config,
     environments: tuple[PortainerEnvironment, ...],
     *,
     include_stopped: bool = False,
@@ -664,7 +735,7 @@ def fetch_portainer_data(
         include_container_details=include_container_details,
         include_resource_utilisation=include_resource_utilisation,
     )
-    cache_entry = load_portainer_cache_entry(cache_key)
+    cache_entry = load_portainer_cache_entry(config.cache, cache_key)
 
     if cache_entry:
         cached = _deserialise_cache_entry(cache_entry)
@@ -683,6 +754,7 @@ def fetch_portainer_data(
             is_refreshing = False
             if cache_entry.is_expired:
                 is_refreshing = _start_background_refresh(
+                    config,
                     cache_key,
                     environments,
                     include_stopped=include_stopped,
@@ -720,6 +792,7 @@ def fetch_portainer_data(
         include_resource_utilisation=include_resource_utilisation,
     )
     refreshed_timestamp = store_portainer_cache_entry(
+        config.cache,
         cache_key,
         _build_cached_payload(
             stack_data,
@@ -778,6 +851,7 @@ def render_data_refresh_notice(result: PortainerDataResult) -> None:
 
 
 def load_portainer_data(
+    config: Config,
     environments: tuple[PortainerEnvironment, ...],
     *,
     include_stopped: bool = False,
@@ -794,6 +868,7 @@ def load_portainer_data(
     message = progress_message or "🔄 Fetching the latest data from Portainer…"
     with st.spinner(message):
         return fetch_portainer_data(
+            config,
             environments,
             include_stopped=include_stopped,
             include_container_details=include_container_details,
@@ -904,6 +979,7 @@ def _render_sidebar_refresh_status(status: PortainerDataResult) -> None:
 
 
 def render_sidebar_filters(
+    config: Config,
     stack_data: pd.DataFrame,
     container_data: pd.DataFrame,
     *,
@@ -929,7 +1005,7 @@ def render_sidebar_filters(
             help="Clear cached Portainer responses and fetch the latest data immediately.",
         )
         if refresh_now:
-            clear_cached_data()
+            clear_cached_data(config)
             trigger_rerun()
 
         refresh_options = [0, 15, 30, 60, 120, 300]
@@ -963,7 +1039,7 @@ def render_sidebar_filters(
             previous_count = st.session_state.get(SESSION_AUTO_REFRESH_COUNT)
             st.session_state[SESSION_AUTO_REFRESH_COUNT] = refresh_count
             if previous_count is not None and refresh_count != previous_count:
-                clear_cached_data()
+                clear_cached_data(config)
                 trigger_rerun()
         else:
             st.session_state.pop(SESSION_AUTO_REFRESH_COUNT, None)
@@ -977,7 +1053,7 @@ def render_sidebar_filters(
             current_name = get_selected_environment_name()
             if current_name not in env_names:
                 current_name = env_names[0]
-                set_active_environment(current_name)
+                set_active_environment(config, current_name)
             selection = st.selectbox(
                 "Active environment",
                 env_names,
@@ -985,7 +1061,7 @@ def render_sidebar_filters(
                 help="Choose which saved Portainer environment should drive this session.",
             )
             if selection != current_name:
-                set_active_environment(selection)
+                set_active_environment(config, selection)
                 trigger_rerun()
         else:
             st.info("No saved environments. Use the Settings page to add one.")

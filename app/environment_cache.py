@@ -4,7 +4,6 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -16,18 +15,14 @@ try:  # pragma: no cover - import shim for Streamlit runtime
 except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when executed as a script
     from file_locking import FileLock, Timeout  # type: ignore[no-redef]
 
+from .config import CacheConfig
+
 try:  # pragma: no cover - import shim for Streamlit runtime
     from .settings import PortainerEnvironment  # type: ignore[import-not-found]
 except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when executed as a script
     from settings import PortainerEnvironment  # type: ignore[no-redef]
 
 LOGGER = logging.getLogger(__name__)
-
-_CACHE_ENABLED_ENV_VAR = "PORTAINER_CACHE_ENABLED"
-_CACHE_TTL_ENV_VAR = "PORTAINER_CACHE_TTL_SECONDS"
-_CACHE_DIR_ENV_VAR = "PORTAINER_CACHE_DIR"
-_DEFAULT_CACHE_TTL_SECONDS = 900
-_FALSEY_VALUES = {"0", "false", "no", "off"}
 _CACHE_FILE_SUFFIX = ".json"
 _CACHE_LOCK_SUFFIX = ".lock"
 _CACHE_KEY_DERIVATION_SALT = b"portainer-environment-cache"
@@ -61,52 +56,25 @@ class CacheEntry:
         if self.expires_at is None:
             return False
         return self.expires_at <= time.time()
-
-
-def _parse_bool(value: str | None, *, default: bool = True) -> bool:
-    if value is None:
-        return default
-    cleaned = value.strip()
-    if not cleaned:
-        return default
-    return cleaned.lower() not in _FALSEY_VALUES
-
-
-def is_cache_enabled() -> bool:
+def is_cache_enabled(config: CacheConfig) -> bool:
     """Return ``True`` when persistent caching is enabled."""
 
-    return _parse_bool(os.getenv(_CACHE_ENABLED_ENV_VAR), default=True)
+    return config.enabled
 
 
-def cache_ttl_seconds() -> int:
+def cache_ttl_seconds(config: CacheConfig) -> int:
     """Return the configured cache TTL in seconds."""
 
-    raw_value = os.getenv(_CACHE_TTL_ENV_VAR)
-    if raw_value is None or not raw_value.strip():
-        return _DEFAULT_CACHE_TTL_SECONDS
-    try:
-        ttl = int(raw_value)
-    except ValueError:
-        LOGGER.warning(
-            "Invalid value for %s: %s. Falling back to default TTL (%s seconds).",
-            _CACHE_TTL_ENV_VAR,
-            raw_value,
-            _DEFAULT_CACHE_TTL_SECONDS,
-        )
-        return _DEFAULT_CACHE_TTL_SECONDS
-    return ttl
+    return config.ttl_seconds
 
 
-def _cache_directory() -> Path:
-    override = os.getenv(_CACHE_DIR_ENV_VAR)
-    if override:
-        return Path(override).expanduser()
-    return Path(__file__).resolve().parent.parent / ".streamlit" / "cache"
+def _cache_directory(config: CacheConfig) -> Path:
+    return config.directory
 
 
-def _cache_path(key: str) -> Path:
+def _cache_path(config: CacheConfig, key: str) -> Path:
     safe_key = f"{key}{_CACHE_FILE_SUFFIX}"
-    return _cache_directory() / safe_key
+    return _cache_directory(config) / safe_key
 
 
 def _cache_lock_path(path: Path) -> Path:
@@ -136,6 +104,8 @@ def _acquire_cache_lock(path: Path) -> Iterator[None]:
 
 def _ensure_cache_directory() -> Path:
     directory = _cache_directory()
+def _ensure_cache_directory(config: CacheConfig) -> Path:
+    directory = _cache_directory(config)
     try:
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as exc:  # pragma: no cover - defensive
@@ -206,12 +176,12 @@ def _read_payload(path: Path) -> CacheEntry | None:
     return CacheEntry(payload=payload, refreshed_at=refreshed_at, expires_at=expires_at)
 
 
-def load_cache_entry(key: str) -> CacheEntry | None:
+def load_cache_entry(config: CacheConfig, key: str) -> CacheEntry | None:
     """Load a cached payload for ``key`` when available."""
 
-    if not is_cache_enabled():
+    if not is_cache_enabled(config):
         return None
-    path = _cache_path(key)
+    path = _cache_path(config, key)
     try:
         if not path.exists():
             return None
@@ -225,7 +195,9 @@ def load_cache_entry(key: str) -> CacheEntry | None:
         return None
 
 
-def store_cache_entry(key: str, payload: dict[str, Any]) -> float | None:
+def store_cache_entry(
+    config: CacheConfig, key: str, payload: dict[str, Any]
+) -> float | None:
     """Persist ``payload`` under ``key`` respecting the configured TTL.
 
     Returns
@@ -235,13 +207,13 @@ def store_cache_entry(key: str, payload: dict[str, Any]) -> float | None:
         ``None`` when caching is disabled or persistence fails.
     """
 
-    if not is_cache_enabled():
+    if not is_cache_enabled(config):
         return None
     try:
-        _ensure_cache_directory()
+        _ensure_cache_directory(config)
     except OSError:
         return None
-    ttl = cache_ttl_seconds()
+    ttl = cache_ttl_seconds(config)
     expires_at: float | None
     if ttl <= 0:
         expires_at = None
@@ -253,7 +225,7 @@ def store_cache_entry(key: str, payload: dict[str, Any]) -> float | None:
         "refreshed_at": refreshed_at,
         "payload": payload,
     }
-    path = _cache_path(key)
+    path = _cache_path(config, key)
     try:
         with _acquire_cache_lock(path):
             path.write_text(json.dumps(data), "utf-8")
@@ -266,18 +238,18 @@ def store_cache_entry(key: str, payload: dict[str, Any]) -> float | None:
     return refreshed_at
 
 
-def clear_cache(key: str | None = None) -> None:
+def clear_cache(config: CacheConfig, key: str | None = None) -> None:
     """Remove cached payloads."""
 
     if key is not None:
-        path = _cache_path(key)
+        path = _cache_path(config, key)
         try:
             path.unlink()
         except OSError:
             pass
         return
 
-    directory = _cache_directory()
+    directory = _cache_directory(config)
     try:
         if not directory.exists():
             return
