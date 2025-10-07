@@ -4,6 +4,8 @@ from __future__ import annotations
 import base64
 import hashlib
 import html
+import importlib
+import importlib.util
 import json
 import math
 import os
@@ -14,10 +16,32 @@ from secrets import token_urlsafe
 from typing import Any, Dict, Optional
 from urllib.parse import urlencode
 
-import jwt
 import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+
+try:
+    _jwt_spec = importlib.util.find_spec("jwt")
+except ValueError:  # pragma: no cover - occurs with dynamically installed stubs
+    _jwt_spec = None
+if _jwt_spec is not None:  # pragma: no cover - exercised in production
+    jwt = importlib.import_module("jwt")
+    JWTError = getattr(jwt, "InvalidTokenError")
+else:  # pragma: no cover - covered when dependency missing
+    jwt = None  # type: ignore[assignment]
+
+    class JWTError(Exception):
+        """Raised when token validation is attempted without PyJWT installed."""
+
+
+def _require_jwt():
+    """Return the PyJWT module or raise a helpful error when unavailable."""
+
+    if jwt is None:
+        raise RuntimeError(
+            "PyJWT is required for authentication features. Install the 'PyJWT' package to enable token validation."
+        )
+    return jwt
 
 USERNAME_ENV_VAR = "DASHBOARD_USERNAME"
 KEY_ENV_VAR = "DASHBOARD_KEY"
@@ -247,16 +271,18 @@ def _verify_id_token(settings: _OIDCSettings, id_token: str) -> dict[str, Any]:
     metadata = _load_oidc_provider_metadata(settings.discovery_url)
     jwks = _fetch_oidc_jwks(metadata.jwks_uri)
 
+    jwt_module = _require_jwt()
+
     try:
-        header = jwt.get_unverified_header(id_token)
-    except jwt.InvalidTokenError as exc:
+        header = jwt_module.get_unverified_header(id_token)
+    except JWTError as exc:
         raise ValueError("Unable to parse ID token header.") from exc
 
     algorithm_name = header.get("alg")
     if not isinstance(algorithm_name, str):
         raise ValueError("ID token is missing the signing algorithm.")
 
-    algorithms = jwt.algorithms.get_default_algorithms()
+    algorithms = jwt_module.algorithms.get_default_algorithms()
     algorithm = algorithms.get(algorithm_name)
     if algorithm is None:
         raise ValueError(f"Unsupported ID token signing algorithm: {algorithm_name}.")
@@ -267,7 +293,7 @@ def _verify_id_token(settings: _OIDCSettings, id_token: str) -> dict[str, Any]:
     audience = settings.audience or settings.client_id
 
     try:
-        return jwt.decode(
+        return jwt_module.decode(
             id_token,
             key,
             algorithms=[algorithm_name],
@@ -275,7 +301,7 @@ def _verify_id_token(settings: _OIDCSettings, id_token: str) -> dict[str, Any]:
             issuer=settings.issuer,
             options={"require": ["sub", "iss", "aud", "exp", "iat"]},
         )
-    except jwt.InvalidTokenError as exc:
+    except JWTError as exc:
         raise ValueError("The ID token from the provider could not be validated.") from exc
 
 

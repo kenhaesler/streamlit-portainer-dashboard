@@ -11,7 +11,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-from filelock import FileLock, Timeout
+try:  # pragma: no cover - import shim for Streamlit runtime
+    from .file_locking import FileLock, Timeout  # type: ignore[import-not-found]
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when executed as a script
+    from file_locking import FileLock, Timeout  # type: ignore[no-redef]
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from .settings import PortainerEnvironment  # type: ignore[import-not-found]
