@@ -870,9 +870,16 @@ def render_sidebar_filters(
     """Render common sidebar controls and return the applied filters."""
 
     with st.sidebar:
+        st.markdown("### 🧭 Dashboard controls")
         if data_status is not None:
             _render_sidebar_refresh_status(data_status)
-        if st.button("🔄 Refresh data", width="stretch"):
+
+        refresh_now = st.button(
+            "🔄 Refresh data",
+            use_container_width=True,
+            help="Clear cached Portainer responses and fetch the latest data immediately.",
+        )
+        if refresh_now:
             clear_cached_data()
             trigger_rerun()
 
@@ -881,13 +888,22 @@ def render_sidebar_filters(
         if refresh_interval not in refresh_options:
             refresh_interval = 0
 
-        refresh_interval = st.select_slider(
-            "Auto-refresh interval",
-            options=refresh_options,
-            value=refresh_interval,
-            help="Automatically refresh Portainer data. Set to 0 to disable auto-refresh.",
-            format_func=lambda value: "Off" if value == 0 else f"Every {value} seconds",
-        )
+        with st.expander(
+            "Auto-refresh settings",
+            expanded=bool(refresh_interval),
+        ):
+            st.caption(
+                "Keep long-running dashboards in sync without manual refreshes."
+            )
+            refresh_interval = st.select_slider(
+                "Auto-refresh interval",
+                options=refresh_options,
+                value=refresh_interval,
+                help="Automatically refresh Portainer data. Set to Off to disable.",
+                format_func=lambda value: "Off"
+                if value == 0
+                else f"Every {value} seconds",
+            )
         st.session_state[SESSION_AUTO_REFRESH_INTERVAL] = refresh_interval
 
         if refresh_interval > 0:
@@ -903,6 +919,9 @@ def render_sidebar_filters(
         else:
             st.session_state.pop(SESSION_AUTO_REFRESH_COUNT, None)
 
+        st.divider()
+        st.markdown("### 🌐 Environment scope")
+
         saved_envs = get_saved_environments()
         env_names = [env.get("name", "") for env in saved_envs if env.get("name")]
         if env_names:
@@ -914,14 +933,13 @@ def render_sidebar_filters(
                 "Active environment",
                 env_names,
                 index=env_names.index(current_name),
+                help="Choose which saved Portainer environment should drive this session.",
             )
             if selection != current_name:
                 set_active_environment(selection)
                 trigger_rerun()
         else:
             st.info("No saved environments. Use the Settings page to add one.")
-
-        st.divider()
 
         environment_options = sorted(
             pd.concat(
@@ -935,6 +953,11 @@ def render_sidebar_filters(
             .tolist()
         )
 
+        if environment_options:
+            st.caption(
+                "Filter the visible data by any combination of saved environments and edge agents."
+            )
+
         selected_envs = _ensure_session_list(
             SESSION_FILTER_ENVIRONMENTS, environment_options
         )
@@ -943,6 +966,7 @@ def render_sidebar_filters(
             options=environment_options,
             default=selected_envs,
             key=SESSION_FILTER_ENVIRONMENTS,
+            placeholder="Show all environments" if environment_options else None,
         )
 
         if selected_environments:
@@ -958,7 +982,12 @@ def render_sidebar_filters(
                 ignore_index=True,
             )
         else:
-            endpoint_source = pd.Series(dtype="object")
+            endpoint_source = pd.concat(
+                [
+                    stack_data.get("endpoint_name", pd.Series(dtype="object")),
+                    container_data.get("endpoint_name", pd.Series(dtype="object")),
+                ]
+            )
 
         endpoint_options = sorted(endpoint_source.dropna().unique().tolist())
         selected_endpoint_defaults = _ensure_session_list(
@@ -969,21 +998,43 @@ def render_sidebar_filters(
             options=endpoint_options,
             default=selected_endpoint_defaults,
             key=SESSION_FILTER_ENDPOINTS,
+            placeholder="Show all edge agents" if endpoint_options else None,
         )
 
-        stack_search = ""
-        if show_stack_search:
-            stack_search = st.text_input(
-                "Search stack name",
-                key=SESSION_FILTER_STACK_SEARCH,
-            )
+        st.divider()
+        st.markdown("### 🎯 Search & refine")
 
+        stack_search = ""
         container_search = ""
-        if show_container_search:
-            container_search = st.text_input(
-                "Search container or image",
-                key=SESSION_FILTER_CONTAINER_SEARCH,
+        expand_search = False
+        if show_stack_search:
+            stack_search_default = str(
+                st.session_state.get(SESSION_FILTER_STACK_SEARCH, "")
             )
+            expand_search = expand_search or bool(stack_search_default)
+        if show_container_search:
+            container_search_default = str(
+                st.session_state.get(SESSION_FILTER_CONTAINER_SEARCH, "")
+            )
+            expand_search = expand_search or bool(container_search_default)
+
+        with st.expander("Text search", expanded=expand_search):
+            if show_stack_search:
+                stack_search = st.text_input(
+                    "Search stack name",
+                    key=SESSION_FILTER_STACK_SEARCH,
+                    placeholder="Filter by stack name",
+                )
+            if show_container_search:
+                container_search = st.text_input(
+                    "Search container or image",
+                    key=SESSION_FILTER_CONTAINER_SEARCH,
+                    placeholder="Filter by container name or image",
+                )
+        if not show_stack_search:
+            stack_search = ""
+        if not show_container_search:
+            container_search = ""
 
     stack_filtered = _humanise_stack_dataframe(stack_data)
     if selected_environments:
