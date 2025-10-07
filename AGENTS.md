@@ -1,5 +1,7 @@
 # Agent Guidelines
 
+> Stick to Python best practices whenever possible. For additional guidance, refer to [this best practices guide](https://gist.github.com/ruimaranhao/4e18cbe3dad6f68040c32ed6709090a3).
+
 Welcome! This repository powers the Streamlit Portainer dashboard. Follow these tips when working inside this project:
 
 ## Project layout
