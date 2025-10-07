@@ -56,7 +56,7 @@ def test_get_active_session_count_supports_sessions_without_timeout(monkeypatch)
     assert auth.get_active_session_count(now=now) == 1
 
 
-def test_update_session_activity_synchronises_query_param(monkeypatch):
+def test_update_session_activity_refreshes_cookie(monkeypatch):
     store = _setup_session_store(monkeypatch)
     token = "token-value"
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
@@ -71,7 +71,6 @@ def test_update_session_activity_synchronises_query_param(monkeypatch):
     class DummyStreamlit:
         def __init__(self) -> None:
             self.session_state = {"_session_token": token}
-            self.query_params: dict[str, str] = {}
             self.cookie_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
         def experimental_set_cookie(self, *args, **kwargs) -> None:  # pragma: no cover - data capture only
@@ -82,7 +81,11 @@ def test_update_session_activity_synchronises_query_param(monkeypatch):
 
     auth._update_persistent_session_activity(now, timedelta(minutes=30))
 
-    assert dummy_streamlit.query_params["session_token"] == token
+    assert dummy_streamlit.cookie_calls, "Expected cookie to be refreshed"
+    args, kwargs = dummy_streamlit.cookie_calls[-1]
+    assert args[0] == auth.SESSION_COOKIE_NAME
+    assert args[1] == token
+    assert kwargs["path"] == "/"
 
 
 def test_store_session_prunes_expired_entries(monkeypatch):
@@ -105,7 +108,6 @@ def test_store_session_prunes_expired_entries(monkeypatch):
 
     dummy_streamlit = DummyStreamlit()
     monkeypatch.setattr(auth, "st", dummy_streamlit)
-    monkeypatch.setattr(auth, "_ensure_session_query_param", lambda *_: None)
     monkeypatch.setattr(auth, "token_urlsafe", lambda *_: "new-token")
 
     auth._store_persistent_session("alice", now, timedelta(minutes=30))

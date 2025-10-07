@@ -121,35 +121,6 @@ def _format_remaining_minutes(delta: timedelta) -> str:
     return f"{total_minutes:d}m"
 
 
-def _get_session_token_from_query_params() -> Optional[str]:
-    """Return the persistent session token from the query parameters, if any."""
-    token_value = st.query_params.get("session_token")
-    if isinstance(token_value, list):
-        token_value = token_value[0] if token_value else None
-
-    if not token_value:
-        return None
-    return token_value
-
-
-def _ensure_session_query_param(token: Optional[str]) -> None:
-    """Synchronise the ``session_token`` query parameter with the provided token."""
-
-    params = st.query_params
-    current_token = params.get("session_token")
-    if isinstance(current_token, list):
-        current_token = current_token[0] if current_token else None
-
-    if token == current_token:
-        return
-
-    if token is None:
-        if "session_token" in params:
-            del params["session_token"]
-    else:
-        params["session_token"] = token
-
-
 def _get_session_token_from_cookie() -> Optional[str]:
     """Return the persistent session token from the browser cookie, if any."""
 
@@ -191,7 +162,7 @@ def _delete_session_cookie() -> None:
         return
 
 
-def _clear_persistent_session(remove_query_param: bool = True) -> None:
+def _clear_persistent_session() -> None:
     """Forget any persisted session token for the active user."""
 
     token = st.session_state.pop("_session_token", None)
@@ -199,9 +170,6 @@ def _clear_persistent_session(remove_query_param: bool = True) -> None:
         _get_persistent_sessions().pop(token, None)
 
     _delete_session_cookie()
-
-    if remove_query_param:
-        _ensure_session_query_param(None)
 
 
 def _store_persistent_session(
@@ -218,7 +186,6 @@ def _store_persistent_session(
         session_timeout=session_timeout,
     )
     st.session_state["_session_token"] = token
-    _ensure_session_query_param(token)
     _set_session_cookie(token, now=now, session_timeout=session_timeout)
 
 
@@ -237,7 +204,6 @@ def _update_persistent_session_activity(
 
     session.last_active = now
     session.session_timeout = session_timeout
-    _ensure_session_query_param(token)
     _set_session_cookie(token, now=now, session_timeout=session_timeout)
 
 
@@ -247,53 +213,35 @@ def _restore_persistent_session(
     """Restore an authenticated session based on the persisted token, if present."""
 
     _prune_expired_sessions(now=now)
-    tokens_to_check = []
-    token_from_query = _get_session_token_from_query_params()
-    if token_from_query:
-        tokens_to_check.append(("query", token_from_query))
-
-    token_from_cookie = _get_session_token_from_cookie()
-    if token_from_cookie and token_from_cookie != token_from_query:
-        tokens_to_check.append(("cookie", token_from_cookie))
-
-    if not tokens_to_check:
+    token = _get_session_token_from_cookie()
+    if not token:
         return
 
     sessions = _get_persistent_sessions()
-
-    for source, token in tokens_to_check:
-        session = sessions.get(token)
-        if session is None or session.username != expected_username:
-            sessions.pop(token, None)
-            if source == "query":
-                _ensure_session_query_param(None)
-            else:
-                _delete_session_cookie()
-            continue
-
-        # Ensure we use the most up-to-date timeout configuration.
-        session.session_timeout = session_timeout
-
-        if session.is_expired(now):
-            sessions.pop(token, None)
-            if source == "query":
-                _ensure_session_query_param(None)
-            else:
-                _delete_session_cookie()
-            st.session_state.pop("authenticated", None)
-            st.session_state.pop("authenticated_at", None)
-            st.session_state.pop("last_active", None)
-            st.session_state["auth_error"] = "Session expired due to inactivity."
-            return
-
-        st.session_state["authenticated"] = True
-        st.session_state["authenticated_at"] = session.authenticated_at
-        st.session_state["last_active"] = now
-        st.session_state["_session_token"] = token
-        _ensure_session_query_param(token)
-        _set_session_cookie(token, now=now, session_timeout=session_timeout)
-        session.last_active = now
+    session = sessions.get(token)
+    if session is None or session.username != expected_username:
+        sessions.pop(token, None)
+        _delete_session_cookie()
         return
+
+    # Ensure we use the most up-to-date timeout configuration.
+    session.session_timeout = session_timeout
+
+    if session.is_expired(now):
+        sessions.pop(token, None)
+        _delete_session_cookie()
+        st.session_state.pop("authenticated", None)
+        st.session_state.pop("authenticated_at", None)
+        st.session_state.pop("last_active", None)
+        st.session_state["auth_error"] = "Session expired due to inactivity."
+        return
+
+    st.session_state["authenticated"] = True
+    st.session_state["authenticated_at"] = session.authenticated_at
+    st.session_state["last_active"] = now
+    st.session_state["_session_token"] = token
+    _set_session_cookie(token, now=now, session_timeout=session_timeout)
+    session.last_active = now
 
 
 def require_authentication() -> None:
