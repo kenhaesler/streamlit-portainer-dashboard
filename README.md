@@ -5,6 +5,12 @@
 
 A streamlit application that pulls information from the Portainer API and visualizes everything.
 
+## Architecture & contributor docs
+
+- [Module boundaries and ownership](docs/module_boundaries.md) – high-level architecture, module responsibilities, and guidance on where to place new functionality.
+- [LLM context management](docs/llm_context_management.md) – explains how prompt construction and trimming works inside the assistant.
+- [Portainer data audit](docs/portainer_data_audit.md) – details the telemetry surfaced for compliance reviews.
+
 ## Configuration
 
 The application is configured via environment variables:
