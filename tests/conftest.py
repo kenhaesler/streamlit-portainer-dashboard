@@ -28,6 +28,7 @@ if importlib.util.find_spec("jwt") is None:
         raise RuntimeError("Unable to load JWT stub for tests")
 
     module = importlib.util.module_from_spec(spec)
+    sys.modules["jwt"] = module
     spec.loader.exec_module(module)
 
 try:  # pragma: no cover - exercised indirectly when dependency is present
