@@ -124,7 +124,11 @@ def _hash_api_key(value: str) -> str:
 
 
 def build_cache_key(
-    environments: Iterable[PortainerEnvironment], *, include_stopped: bool
+    environments: Iterable[PortainerEnvironment],
+    *,
+    include_stopped: bool,
+    include_container_details: bool,
+    include_resource_utilisation: bool,
 ) -> str:
     """Build a deterministic cache key for the provided environments."""
 
@@ -142,6 +146,8 @@ def build_cache_key(
         )
     payload = {
         "include_stopped": include_stopped,
+        "include_container_details": include_container_details,
+        "include_resource_utilisation": include_resource_utilisation,
         "environments": signature,
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":"))

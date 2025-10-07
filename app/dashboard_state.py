@@ -329,7 +329,11 @@ def _deserialise_cache_entry(
 
 
 def _fetch_portainer_payload(
-    environments: tuple[PortainerEnvironment, ...], *, include_stopped: bool
+    environments: tuple[PortainerEnvironment, ...],
+    *,
+    include_stopped: bool,
+    include_container_details: bool,
+    include_resource_utilisation: bool,
 ) -> tuple[
     pd.DataFrame,
     pd.DataFrame,
@@ -395,61 +399,68 @@ def _fetch_portainer_payload(
                 if not isinstance(endpoint_containers, list):
                     endpoint_containers = []
 
-            try:
-                host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
-            except PortainerAPIError as exc:
-                warnings.append(
-                    f"[{environment.name}] Failed to load host info for endpoint {endpoint_id}: {exc}"
-                )
-                host_info[endpoint_id] = {}
-            try:
-                host_usage[endpoint_id] = client.get_endpoint_system_df(endpoint_id)
-            except PortainerAPIError as exc:
-                warnings.append(
-                    f"[{environment.name}] Failed to load host usage for endpoint {endpoint_id}: {exc}"
-                )
-                host_usage[endpoint_id] = {}
-            try:
-                volumes[endpoint_id] = client.list_volumes_for_endpoint(endpoint_id)
-            except PortainerAPIError as exc:
-                warnings.append(
-                    f"[{environment.name}] Failed to load volumes for endpoint {endpoint_id}: {exc}"
-                )
-                volumes[endpoint_id] = []
-            try:
-                images[endpoint_id] = client.list_images_for_endpoint(endpoint_id)
-            except PortainerAPIError as exc:
-                warnings.append(
-                    f"[{environment.name}] Failed to load images for endpoint {endpoint_id}: {exc}"
-                )
-                images[endpoint_id] = []
+            if include_resource_utilisation:
+                try:
+                    host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
+                except PortainerAPIError as exc:
+                    warnings.append(
+                        f"[{environment.name}] Failed to load host info for endpoint {endpoint_id}: {exc}"
+                    )
+                    host_info[endpoint_id] = {}
+                try:
+                    host_usage[endpoint_id] = client.get_endpoint_system_df(endpoint_id)
+                except PortainerAPIError as exc:
+                    warnings.append(
+                        f"[{environment.name}] Failed to load host usage for endpoint {endpoint_id}: {exc}"
+                    )
+                    host_usage[endpoint_id] = {}
+                try:
+                    volumes[endpoint_id] = client.list_volumes_for_endpoint(endpoint_id)
+                except PortainerAPIError as exc:
+                    warnings.append(
+                        f"[{environment.name}] Failed to load volumes for endpoint {endpoint_id}: {exc}"
+                    )
+                    volumes[endpoint_id] = []
+                try:
+                    images[endpoint_id] = client.list_images_for_endpoint(endpoint_id)
+                except PortainerAPIError as exc:
+                    warnings.append(
+                        f"[{environment.name}] Failed to load images for endpoint {endpoint_id}: {exc}"
+                    )
+                    images[endpoint_id] = []
+            else:
+                host_info.setdefault(endpoint_id, {})
+                host_usage.setdefault(endpoint_id, {})
+                volumes.setdefault(endpoint_id, [])
+                images.setdefault(endpoint_id, [])
 
-            inspections.setdefault(endpoint_id, {})
-            stats.setdefault(endpoint_id, {})
-            for container in endpoint_containers:
-                container_id = (
-                    container.get("Id")
-                    or container.get("ID")
-                    or container.get("id")
-                )
-                if not isinstance(container_id, str) or not container_id:
-                    continue
-                try:
-                    inspections[endpoint_id][container_id] = client.inspect_container(
-                        endpoint_id, container_id
+            if include_container_details:
+                inspections.setdefault(endpoint_id, {})
+                stats.setdefault(endpoint_id, {})
+                for container in endpoint_containers:
+                    container_id = (
+                        container.get("Id")
+                        or container.get("ID")
+                        or container.get("id")
                     )
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to inspect container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
-                    )
-                try:
-                    stats[endpoint_id][container_id] = client.get_container_stats(
-                        endpoint_id, container_id
-                    )
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
-                    )
+                    if not isinstance(container_id, str) or not container_id:
+                        continue
+                    try:
+                        inspections[endpoint_id][container_id] = client.inspect_container(
+                            endpoint_id, container_id
+                        )
+                    except PortainerAPIError as exc:
+                        warnings.append(
+                            f"[{environment.name}] Failed to inspect container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                        )
+                    try:
+                        stats[endpoint_id][container_id] = client.get_container_stats(
+                            endpoint_id, container_id
+                        )
+                    except PortainerAPIError as exc:
+                        warnings.append(
+                            f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                        )
 
             return endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings
 
@@ -551,6 +562,8 @@ def _start_background_refresh(
     environments: tuple[PortainerEnvironment, ...],
     *,
     include_stopped: bool,
+    include_container_details: bool,
+    include_resource_utilisation: bool,
 ) -> bool:
     if not environments:
         return False
@@ -567,7 +580,10 @@ def _start_background_refresh(
                 image_data,
                 warnings,
             ) = _fetch_portainer_payload(
-                environments, include_stopped=include_stopped
+                environments,
+                include_stopped=include_stopped,
+                include_container_details=include_container_details,
+                include_resource_utilisation=include_resource_utilisation,
             )
             payload = _build_cached_payload(
                 stack_data,
@@ -617,6 +633,8 @@ def fetch_portainer_data(
     environments: tuple[PortainerEnvironment, ...],
     *,
     include_stopped: bool = False,
+    include_container_details: bool = False,
+    include_resource_utilisation: bool = False,
 ) -> PortainerDataResult:
     """Fetch data for the provided environments, caching the result.
 
@@ -628,9 +646,23 @@ def fetch_portainer_data(
         When ``True`` the Docker API is queried with ``all=1`` so stopped
         containers are included in the response. Defaults to ``False`` to keep
         compatibility with dashboards that focus on running workloads.
+    include_container_details:
+        When ``True`` the API fetches per-container inspect and stats
+        payloads. These are comparatively heavy requests so the default is
+        ``False`` to avoid overwhelming Portainer unless detailed metrics are
+        explicitly required.
+    include_resource_utilisation:
+        When ``True`` load host metrics, volume inventories, and image
+        metadata for each endpoint. These requests are also optional and can
+        be disabled to minimise API usage on busy installations.
     """
 
-    cache_key = build_portainer_cache_key(environments, include_stopped=include_stopped)
+    cache_key = build_portainer_cache_key(
+        environments,
+        include_stopped=include_stopped,
+        include_container_details=include_container_details,
+        include_resource_utilisation=include_resource_utilisation,
+    )
     cache_entry = load_portainer_cache_entry(cache_key)
 
     if cache_entry:
@@ -650,7 +682,11 @@ def fetch_portainer_data(
             is_refreshing = False
             if cache_entry.is_expired:
                 is_refreshing = _start_background_refresh(
-                    cache_key, environments, include_stopped=include_stopped
+                    cache_key,
+                    environments,
+                    include_stopped=include_stopped,
+                    include_container_details=include_container_details,
+                    include_resource_utilisation=include_resource_utilisation,
                 )
             if is_refreshing or not cache_entry.is_expired:
                 return PortainerDataResult(
@@ -677,7 +713,10 @@ def fetch_portainer_data(
         image_data,
         warnings,
     ) = _fetch_portainer_payload(
-        environments, include_stopped=include_stopped
+        environments,
+        include_stopped=include_stopped,
+        include_container_details=include_container_details,
+        include_resource_utilisation=include_resource_utilisation,
     )
     refreshed_timestamp = store_portainer_cache_entry(
         cache_key,
@@ -741,14 +780,23 @@ def load_portainer_data(
     environments: tuple[PortainerEnvironment, ...],
     *,
     include_stopped: bool = False,
+    include_container_details: bool = False,
+    include_resource_utilisation: bool = False,
     progress_message: str | None = None,
 ) -> PortainerDataResult:
-    """Fetch Portainer data while surfacing progress feedback to the user."""
+    """Fetch Portainer data while surfacing progress feedback to the user.
+
+    Parameters mirror :func:`fetch_portainer_data` while emitting a spinner so
+    the Streamlit UI communicates progress to the user.
+    """
 
     message = progress_message or "🔄 Fetching the latest data from Portainer…"
     with st.spinner(message):
         return fetch_portainer_data(
-            environments, include_stopped=include_stopped
+            environments,
+            include_stopped=include_stopped,
+            include_container_details=include_container_details,
+            include_resource_utilisation=include_resource_utilisation,
         )
 
 
