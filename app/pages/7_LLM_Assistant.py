@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable
-from typing import Mapping
+from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
+from typing import Any
 
 import pandas as pd
 import streamlit as st
@@ -73,6 +74,19 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     from ui_helpers import ExportableDataFrame, render_page_header  # type: ignore[no-redef]
 
 
+@dataclass(frozen=True)
+class ContextPackage:
+    """Lightweight container for the context prepared for the LLM."""
+
+    frames: dict[str, pd.DataFrame]
+    payload: dict[str, object]
+    summary: dict[str, object]
+    token_count: int
+    notices: list[str]
+    json_pretty: str
+    json_compact: str
+
+
 def _prepare_dataframe(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=list(columns))
@@ -81,6 +95,229 @@ def _prepare_dataframe(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame
         return pd.DataFrame(columns=list(columns))
     subset = df.loc[:, available_columns].copy()
     return subset.fillna("")
+
+
+def _build_context_catalog(frames: Mapping[str, pd.DataFrame]) -> dict[str, object]:
+    """Return a compact description of the tables available for context."""
+
+    catalog: dict[str, object] = {}
+    for name, df in frames.items():
+        if df.empty:
+            continue
+        catalog[name] = {
+            "rows": int(len(df)),
+            "columns": list(df.columns),
+            "sample": serialise_records(df.head(2)),
+        }
+    return catalog
+
+
+def _extract_first_json_object(text: str) -> Mapping[str, Any] | None:
+    """Return the first JSON object found in *text*, if any."""
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start == -1 or end == -1 or end <= start:
+        return None
+    candidate = text[start : end + 1]
+    try:
+        parsed = json.loads(candidate)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, Mapping):
+        return parsed
+    return None
+
+
+def _filter_dataframe(df: pd.DataFrame, filters: Mapping[str, Any]) -> pd.DataFrame:
+    """Apply equality filters from *filters* to *df*."""
+
+    filtered = df
+    for column, value in filters.items():
+        if column not in filtered.columns:
+            continue
+        if isinstance(value, Mapping):
+            # Nested structures are not supported; skip gracefully.
+            continue
+        if isinstance(value, str) or not isinstance(value, Iterable):
+            candidates = [value]
+        else:
+            candidates = [item for item in value if not isinstance(item, Mapping)]
+        normalised = {
+            str(candidate).strip()
+            for candidate in candidates
+            if str(candidate).strip()
+        }
+        if not normalised:
+            continue
+        filtered = filtered[filtered[column].astype(str).isin(normalised)]
+        if filtered.empty:
+            break
+    return filtered
+
+
+def _initial_trim(
+    frames: Mapping[str, pd.DataFrame],
+    *,
+    max_container_rows: int,
+) -> tuple[dict[str, pd.DataFrame], list[str]]:
+    """Return context frames trimmed according to UI limits."""
+
+    trimmed: dict[str, pd.DataFrame] = {}
+    notices: list[str] = []
+    container_notice_added = False
+    for name, df in frames.items():
+        if df.empty:
+            continue
+        if name in {"containers", "container_health"} and max_container_rows > 0:
+            if len(df) > max_container_rows and not container_notice_added:
+                notices.append(
+                    "Only the first %s containers and their detailed health metrics are included "
+                    "in the LLM context to keep the prompt concise." % max_container_rows
+                )
+                container_notice_added = True
+            trimmed[name] = df.head(max_container_rows).copy()
+        elif name in {"stacks", "endpoints", "hosts", "volumes", "images"}:
+            trimmed[name] = df.head(50).copy()
+        else:
+            trimmed[name] = df.copy()
+    return trimmed, notices
+
+
+def _apply_dynamic_selection(
+    frames: Mapping[str, pd.DataFrame],
+    selection: Mapping[str, Any],
+    *,
+    max_container_rows: int,
+) -> tuple[dict[str, pd.DataFrame], list[str], bool]:
+    """Return frames requested by the LLM along with notices and summary preference."""
+
+    tables = selection.get("tables")
+    include_summary = bool(selection.get("include_summary", True))
+    if not isinstance(tables, Iterable):
+        return {}, [
+            "Model response did not include a `tables` list; falling back to default context.",
+        ], include_summary
+
+    selected: dict[str, pd.DataFrame] = {}
+    notices: list[str] = []
+    for raw_entry in tables:
+        if not isinstance(raw_entry, Mapping):
+            continue
+        name_raw = raw_entry.get("name")
+        if not isinstance(name_raw, str):
+            continue
+        name = name_raw.strip()
+        if not name or name not in frames:
+            notices.append(f"Model requested unknown context table '{name}'.")
+            continue
+        df = frames[name]
+        if df.empty:
+            continue
+        filtered = df
+        filters = raw_entry.get("filters")
+        if isinstance(filters, Mapping):
+            filtered = _filter_dataframe(filtered, filters)
+        if filtered.empty:
+            continue
+        limit_raw = raw_entry.get("limit")
+        default_limits = {
+            "containers": max_container_rows,
+            "container_health": max_container_rows,
+            "stacks": 100,
+            "endpoints": 100,
+            "hosts": 100,
+            "volumes": 100,
+            "images": 100,
+        }
+        limit = default_limits.get(name, 50)
+        if isinstance(limit_raw, (int, float)):
+            limit_candidate = int(limit_raw)
+            if limit_candidate > 0:
+                limit = min(max(limit_candidate, 1), limit)
+        over_limit = len(filtered) > limit
+        limited = filtered.head(limit).copy()
+        if limited.empty:
+            continue
+        selected[name] = limited
+        notices.append(
+            "Model selected %s row%s from '%s' context."
+            % (len(limited), "s" if len(limited) != 1 else "", name)
+        )
+        if over_limit:
+            notices.append(
+                "Only the first %s row%s from '%s' were shared to respect safety limits."
+                % (limit, "s" if limit != 1 else "", name)
+            )
+
+    return selected, notices, include_summary
+
+
+def _build_context_package(
+    frames: Mapping[str, pd.DataFrame],
+    warnings: Iterable[str],
+    *,
+    max_tokens: int,
+    include_summary: bool = True,
+) -> ContextPackage:
+    """Construct the payload that will be shared with the LLM."""
+
+    frame_copies: dict[str, pd.DataFrame] = {
+        key: df.copy() for key, df in frames.items() if not df.empty
+    }
+    payload: dict[str, object] = {
+        key: serialise_records(df) for key, df in frame_copies.items()
+    }
+    if warnings:
+        payload["warnings"] = list(warnings)
+
+    (
+        adjusted_payload,
+        adjusted_frames,
+        budget_notices,
+        token_count,
+    ) = enforce_context_budget(payload, frame_copies, max_tokens)
+
+    containers_df = adjusted_frames.get("containers", pd.DataFrame())
+    details_df = adjusted_frames.get("container_health", pd.DataFrame())
+    stacks_df = adjusted_frames.get("stacks", pd.DataFrame())
+    hosts_df = adjusted_frames.get("hosts", pd.DataFrame())
+    summary: dict[str, object] = {}
+    if include_summary:
+        summary = build_context_summary(
+            containers_df,
+            details_df,
+            stacks_df,
+            hosts_df,
+        )
+        if summary:
+            adjusted_payload["summary"] = summary
+            compact_with_summary = json.dumps(
+                adjusted_payload, ensure_ascii=False, separators=(",", ":")
+            )
+            token_count = estimate_token_count(compact_with_summary)
+            if max_tokens > 0 and token_count > max_tokens:
+                adjusted_payload.pop("summary", None)
+                summary = {}
+                compact_with_summary = json.dumps(
+                    adjusted_payload, ensure_ascii=False, separators=(",", ":")
+                )
+                token_count = estimate_token_count(compact_with_summary)
+
+    compact_json = json.dumps(
+        adjusted_payload, ensure_ascii=False, separators=(",", ":")
+    )
+    pretty_json = json.dumps(adjusted_payload, indent=2, ensure_ascii=False)
+
+    return ContextPackage(
+        frames=adjusted_frames,
+        payload=adjusted_payload,
+        summary=summary,
+        token_count=token_count,
+        notices=list(budget_notices),
+        json_pretty=pretty_json,
+        json_compact=compact_json,
+    )
 
 
 require_authentication()
@@ -95,8 +332,9 @@ render_page_header(
 )
 
 st.info(
-    "Provide the API endpoint and token for your OpenWebUI deployment. The assistant sends a concise "
-    "summary of the filtered Portainer containers and stacks as context for each question.",
+    "Provide the API endpoint and token for your OpenWebUI deployment. The assistant shares a concise "
+    "snapshot of the filtered Portainer data with each question and can ask the model which tables it "
+    "needs when the dynamic strategy is enabled.",
     icon="💡",
 )
 
@@ -179,15 +417,23 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
     api_endpoint_default = SYSTEM_API_ENDPOINT or st.session_state.get(
         "llm_api_endpoint", DEFAULT_ENDPOINT
     )
-    api_endpoint = st.text_input(
-        "OpenWebUI/Ollama API endpoint",
-        value=api_endpoint_default,
-        help=(
-            "Provide the full chat completion endpoint, for example "
-            "`https://llm.example.com/v1/chat/completions`."
-        ),
-        disabled=SYSTEM_CREDENTIALS_LOCKED,
-    )
+    endpoint_col, model_col = st.columns((2, 1))
+    with endpoint_col:
+        api_endpoint = st.text_input(
+            "LLM API endpoint",
+            value=api_endpoint_default,
+            help=(
+                "Full URL to the chat completions endpoint exposed by OpenWebUI or your Ollama proxy."
+            ),
+            disabled=SYSTEM_CREDENTIALS_LOCKED,
+        )
+    with model_col:
+        model_name = st.text_input(
+            "Model",
+            value=st.session_state.get("llm_model", "gpt-oss:latest"),
+            help="Model identifier as configured in OpenWebUI (for example `gpt-oss:latest`).",
+        )
+
     auth_mode_options = [
         "Bearer token",
         "Username/password (Basic)",
@@ -196,13 +442,11 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
     if SYSTEM_CREDENTIALS_LOCKED:
         auth_mode = auth_mode_options[0]
         st.selectbox(
-            "Authentication method",
+            "Authentication",
             options=auth_mode_options,
             index=0,
             disabled=True,
-            help=(
-                "Authentication is managed by the deployment via environment variables."
-            ),
+            help="Authentication is managed by the deployment via environment variables.",
         )
         bearer_token = SYSTEM_BEARER_TOKEN or ""
         basic_username = ""
@@ -215,14 +459,10 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
         if auth_mode_default not in auth_mode_options:
             auth_mode_default = auth_mode_options[0]
         auth_mode = st.selectbox(
-            "Authentication method",
+            "Authentication",
             options=auth_mode_options,
             index=auth_mode_options.index(auth_mode_default),
-            help=(
-                "Select how to authenticate with the ParisNeo Ollama proxy server or OpenWebUI "
-                "deployment. Bearer tokens are sent using the `Authorization: Bearer` header and "
-                "username/password credentials use HTTP Basic auth."
-            ),
+            help="Choose how to sign requests sent to your LLM endpoint.",
         )
         if "llm_bearer_token" in st.session_state:
             bearer_token_default = str(st.session_state.get("llm_bearer_token", ""))
@@ -238,133 +478,132 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
                 "Bearer token",
                 value=bearer_token_default,
                 type="password",
-                help="Provide the access token issued by your Ollama proxy or OpenWebUI deployment.",
+                help="Token issued by your OpenWebUI or Ollama proxy deployment.",
             )
         elif auth_mode == "Username/password (Basic)":
             basic_username = st.text_input(
                 "Username",
                 value=basic_username,
-                help="Username for HTTP basic authentication.",
+                help="HTTP basic authentication username.",
             )
             basic_password = st.text_input(
                 "Password",
                 value=basic_password,
                 type="password",
-                help="Password for HTTP basic authentication.",
+                help="HTTP basic authentication password.",
             )
-    model_name = st.text_input(
-        "Model",
-        value=st.session_state.get("llm_model", "gpt-oss"),
-        help="Name of the model to query via OpenWebUI (e.g. `gpt-oss`).",
-    )
-    temperature = st.slider(
-        "Temperature",
-        min_value=0.0,
-        max_value=2.0,
-        value=float(st.session_state.get("llm_temperature", 0.3)),
-        step=0.1,
-        help="Higher values increase creativity; lower values make responses more deterministic.",
-    )
-    max_tokens = st.slider(
-        "Max tokens",
-        min_value=64,
-        max_value=2048,
-        value=int(st.session_state.get("llm_max_tokens", 512)),
-        step=64,
-        help="Maximum number of tokens to generate per response.",
-    )
-    verify_ssl = st.toggle(
-        "Verify TLS certificates",
-        value=bool(st.session_state.get("llm_verify_ssl", True)),
-        help="Disable this only when your OpenWebUI deployment uses a self-signed certificate.",
-    )
-    max_context_rows = st.slider(
-        "Max containers in context",
-        min_value=5,
-        max_value=200,
-        value=int(st.session_state.get("llm_max_context_rows", 50)),
-        step=5,
-        help="Limit the number of container rows shared with the LLM to keep prompts concise.",
-    )
-    max_context_default = int(st.session_state.get("llm_max_context_tokens", 3000))
-    if max_context_default < 500:
-        max_context_default = 500
-    max_context_tokens = st.number_input(
-        "Max context tokens",
-        min_value=500,
-        value=max_context_default,
-        step=250,
-        help=(
-            "Upper bound for the approximate number of tokens allowed in the LLM context payload. "
-            "Enter larger values when using models with extended context windows; the assistant will "
-            "trim or omit low-priority tables when this limit is exceeded."
-        ),
-    )
-    strategy_options: dict[str, QueryStrategy] = {
-        "Direct (single prompt)": QueryStrategy.DIRECT,
-        "Carry summary + recent turns": QueryStrategy.SUMMARY,
-        "Two-step (plan then answer)": QueryStrategy.STAGED,
-    }
-    strategy_default_value = str(
-        st.session_state.get("llm_query_strategy", QueryStrategy.SUMMARY.value)
-    )
-    strategy_labels = list(strategy_options)
-    try:
-        default_index = strategy_labels.index(
-            next(
-                label
-                for label, option in strategy_options.items()
-                if option.value == strategy_default_value
+
+    with st.expander("Advanced options", expanded=False):
+        st.markdown("**Response controls**")
+        temperature = st.slider(
+            "Creativity (temperature)",
+            min_value=0.0,
+            max_value=1.5,
+            value=float(st.session_state.get("llm_temperature", 0.2)),
+            step=0.05,
+            help="Lower values keep answers focused. Increase slightly if responses feel too strict.",
+        )
+        max_tokens = st.slider(
+            "Maximum answer length",
+            min_value=256,
+            max_value=2048,
+            value=int(st.session_state.get("llm_max_tokens", 1024)),
+            step=64,
+            help="Caps how long the model's answer can be. Higher values produce longer explanations.",
+        )
+        verify_ssl = st.toggle(
+            "Require valid HTTPS certificates",
+            value=bool(st.session_state.get("llm_verify_ssl", True)),
+            help="Turn this off only when connecting to a trusted server with a self-signed certificate.",
+        )
+
+        st.markdown("**Portainer context**")
+        max_context_rows = st.slider(
+            "Containers shared with the model",
+            min_value=20,
+            max_value=250,
+            value=int(st.session_state.get("llm_max_context_rows", 150)),
+            step=10,
+            help="Upper bound for container and health rows provided in the context payload.",
+        )
+        max_context_default = int(st.session_state.get("llm_max_context_tokens", 6000))
+        if max_context_default < 2000:
+            max_context_default = 2000
+        max_context_tokens = st.number_input(
+            "Context token budget",
+            min_value=2000,
+            value=max_context_default,
+            step=500,
+            help=(
+                "Approximate ceiling for the shared Portainer data. The assistant trims lower-priority "
+                "tables when this limit is exceeded."
+            ),
+        )
+
+        st.markdown("**Conversation memory**")
+        strategy_options: dict[str, QueryStrategy] = {
+            "Direct answer": QueryStrategy.DIRECT,
+            "Carry recent history": QueryStrategy.SUMMARY,
+            "Plan then answer": QueryStrategy.STAGED,
+            "Dynamic context selection": QueryStrategy.DYNAMIC,
+        }
+        strategy_default_value = str(
+            st.session_state.get("llm_query_strategy", QueryStrategy.SUMMARY.value)
+        )
+        strategy_labels = list(strategy_options)
+        try:
+            default_index = strategy_labels.index(
+                next(
+                    label
+                    for label, option in strategy_options.items()
+                    if option.value == strategy_default_value
+                )
+            )
+        except StopIteration:
+            default_index = 0
+        query_strategy_label = st.selectbox(
+            "Orchestration strategy",
+            options=strategy_labels,
+            index=default_index,
+            help=(
+                "Decide how the assistant manages follow-ups. Dynamic selection lets the model request "
+                "only the data it needs."
+            ),
+        )
+        query_strategy = strategy_options[query_strategy_label]
+
+        history_turns_default = int(
+            st.session_state.get("llm_history_turns", conversation_history.max_turns)
+        )
+        history_turns = st.slider(
+            "Recent exchanges to replay",
+            min_value=1,
+            max_value=6,
+            value=history_turns_default,
+            help="How many question/answer pairs to resend alongside each request.",
+        )
+        summary_budget_default = int(
+            st.session_state.get(
+                "llm_history_summary_tokens", conversation_history.summary_token_budget
             )
         )
-    except StopIteration:
-        default_index = 0
-    query_strategy_label = st.selectbox(
-        "Query orchestration strategy",
-        options=strategy_labels,
-        index=default_index,
-        help=(
-            "Control how the assistant manages follow-up turns. Append a rolling summary, or "
-            "run a lightweight planning call before issuing the final request to the LLM."
-        ),
-    )
-    query_strategy = strategy_options[query_strategy_label]
-    history_turns_default = int(
-        st.session_state.get("llm_history_turns", conversation_history.max_turns)
-    )
-    history_turns = st.slider(
-        "Conversation turns to retain",
-        min_value=1,
-        max_value=6,
-        value=history_turns_default,
-        help=(
-            "How many recent question/answer pairs should be resent to the model on each call. "
-            "Older turns are summarised to keep the prompt within budget."
-        ),
-    )
-    summary_budget_default = int(
-        st.session_state.get(
-            "llm_history_summary_tokens", conversation_history.summary_token_budget
+        summary_token_budget = st.slider(
+            "Summary space (tokens)",
+            min_value=0,
+            max_value=1200,
+            value=summary_budget_default,
+            step=50,
+            help="Controls how much room the rolling conversation summary can use.",
         )
-    )
-    summary_token_budget = st.slider(
-        "Summary token budget",
-        min_value=0,
-        max_value=1200,
-        value=summary_budget_default,
-        step=50,
-        help=(
-            "Approximate number of tokens reserved for the rolling conversation summary."
-            " Lower values keep prompts shorter; higher values preserve more nuance."
-        ),
-    )
+
     question = st.text_area(
-        "Ask the LLM",
+        "Ask the assistant",
         value=st.session_state.get(
             "llm_last_question",
             "Are there any containers reporting issues and what are the likely causes?",
         ),
         height=160,
+        help="Describe the operational question you want help with in plain language.",
     )
     submitted = st.form_submit_button("Ask the LLM", use_container_width=True)
 
@@ -464,122 +703,67 @@ image_columns = (
     "dangling",
 )
 
-container_context = _prepare_dataframe(containers_filtered, container_columns)
-stack_context = _prepare_dataframe(stack_filtered, stack_columns)
-endpoint_context = _prepare_dataframe(endpoint_filtered, endpoint_columns)
-host_context = _prepare_dataframe(host_filtered, host_columns)
-container_detail_context = _prepare_dataframe(
+container_context_full = _prepare_dataframe(containers_filtered, container_columns)
+stack_context_full = _prepare_dataframe(stack_filtered, stack_columns)
+endpoint_context_full = _prepare_dataframe(endpoint_filtered, endpoint_columns)
+host_context_full = _prepare_dataframe(host_filtered, host_columns)
+container_detail_full = _prepare_dataframe(
     container_details_filtered, container_detail_columns
 )
-volume_context = _prepare_dataframe(volume_filtered, volume_columns)
-image_context = _prepare_dataframe(image_filtered, image_columns)
+volume_context_full = _prepare_dataframe(volume_filtered, volume_columns)
+image_context_full = _prepare_dataframe(image_filtered, image_columns)
 
-container_context_template = container_context.iloc[0:0]
-stack_context_template = stack_context.iloc[0:0]
-endpoint_context_template = endpoint_context.iloc[0:0]
-host_context_template = host_context.iloc[0:0]
-container_detail_template = container_detail_context.iloc[0:0]
-volume_context_template = volume_context.iloc[0:0]
-image_context_template = image_context.iloc[0:0]
+container_context_template = container_context_full.iloc[0:0]
+stack_context_template = stack_context_full.iloc[0:0]
+endpoint_context_template = endpoint_context_full.iloc[0:0]
+host_context_template = host_context_full.iloc[0:0]
+container_detail_template = container_detail_full.iloc[0:0]
+volume_context_template = volume_context_full.iloc[0:0]
+image_context_template = image_context_full.iloc[0:0]
 
-context_notices: list[str] = []
+full_context_frames: dict[str, pd.DataFrame] = {}
+if not container_context_full.empty:
+    full_context_frames["containers"] = container_context_full
+if not stack_context_full.empty:
+    full_context_frames["stacks"] = stack_context_full
+if not endpoint_context_full.empty:
+    full_context_frames["endpoints"] = endpoint_context_full
+if not host_context_full.empty:
+    full_context_frames["hosts"] = host_context_full
+if not container_detail_full.empty:
+    full_context_frames["container_health"] = container_detail_full
+if not volume_context_full.empty:
+    full_context_frames["volumes"] = volume_context_full
+if not image_context_full.empty:
+    full_context_frames["images"] = image_context_full
+
+trimmed_frames, initial_trim_notices = _initial_trim(
+    full_context_frames, max_container_rows=max_context_rows
+)
+
+context_package = _build_context_package(
+    trimmed_frames,
+    warnings,
+    max_tokens=max_context_tokens,
+)
+base_context_notices = list(initial_trim_notices)
+context_notices = list(base_context_notices)
+context_notices.extend(context_package.notices)
 prompt_notices: list[str] = []
-truncation_notice = (
-    "Only the first %s containers and their detailed health metrics are included in the LLM context "
-    "to keep the prompt concise."
-    % max_context_rows
-)
-if len(container_context) > max_context_rows:
-    container_context = container_context.head(max_context_rows)
-    context_notices.append(truncation_notice)
-if len(container_detail_context) > max_context_rows:
-    container_detail_context = container_detail_context.head(max_context_rows)
-    if truncation_notice not in context_notices:
-        context_notices.append(truncation_notice)
 
-if not stack_context.empty:
-    stack_context = stack_context.head(50)
-if not endpoint_context.empty:
-    endpoint_context = endpoint_context.head(50)
-if not host_context.empty:
-    host_context = host_context.head(50)
-if not volume_context.empty:
-    volume_context = volume_context.head(50)
-if not image_context.empty:
-    image_context = image_context.head(50)
-
-context_frames: dict[str, pd.DataFrame] = {}
-if not container_context.empty:
-    context_frames["containers"] = container_context
-if not stack_context.empty:
-    context_frames["stacks"] = stack_context
-if not endpoint_context.empty:
-    context_frames["endpoints"] = endpoint_context
-if not host_context.empty:
-    context_frames["hosts"] = host_context
-if not container_detail_context.empty:
-    context_frames["container_health"] = container_detail_context
-if not volume_context.empty:
-    context_frames["volumes"] = volume_context
-if not image_context.empty:
-    context_frames["images"] = image_context
-
-context_payload: dict[str, object] = {
-    key: serialise_records(df) for key, df in context_frames.items()
-}
-if warnings:
-    context_payload["warnings"] = list(warnings)
-
-context_summary = build_context_summary(
-    containers_filtered,
-    container_details_filtered,
-    stack_filtered,
-    host_filtered,
-)
-if context_summary:
-    context_payload["summary"] = context_summary
-
-(
-    context_payload,
-    context_frames,
-    budget_notices,
-    context_token_count,
-) = enforce_context_budget(context_payload, context_frames, max_context_tokens)
-context_notices.extend(budget_notices)
-
-container_context = context_frames.get("containers", container_context_template)
-stack_context = context_frames.get("stacks", stack_context_template)
-endpoint_context = context_frames.get("endpoints", endpoint_context_template)
-host_context = context_frames.get("hosts", host_context_template)
-container_detail_context = context_frames.get(
-    "container_health", container_detail_template
-)
-volume_context = context_frames.get("volumes", volume_context_template)
-image_context = context_frames.get("images", image_context_template)
-
-if "summary" in context_payload:
-    context_summary = context_payload["summary"]  # type: ignore[assignment]
-else:
-    context_summary = {}
-
+context_frames = context_package.frames
+context_payload = context_package.payload
+context_summary = context_package.summary
+context_json_pretty = context_package.json_pretty
+context_json_compact = context_package.json_compact
+context_token_count = context_package.token_count
 context_notices = list(dict.fromkeys(context_notices))
-
-if context_payload:
-    context_json_pretty = json.dumps(context_payload, indent=2, ensure_ascii=False)
-    context_json_compact = json.dumps(
-        context_payload, ensure_ascii=False, separators=(",", ":")
-    )
-    context_token_count = estimate_token_count(context_json_compact)
-else:
-    context_json_pretty = "{}"
-    context_json_compact = "{}"
-    context_token_count = 0
-
-has_context_to_send = (
-    bool(context_frames)
-    or bool(context_summary)
-    or bool(context_payload.get("warnings"))
+context_catalog = _build_context_catalog(full_context_frames)
+catalog_json_compact = json.dumps(
+    context_catalog, ensure_ascii=False, separators=(",", ":")
 )
+
+has_context_to_send = bool(context_payload)
 
 # The context notice is rendered after the response section to keep feedback near the form.
 response_container = st.container()
@@ -611,6 +795,91 @@ if submitted:
     elif auth_error:
         st.error(auth_error)
     else:
+        context_package_for_request = context_package
+        context_notices_for_request = list(base_context_notices)
+        include_summary = True
+
+        system_prompt = (
+            "You are a helpful assistant that analyses Portainer container telemetry to help operators "
+            "understand their Docker environments. Base your answer strictly on the provided context."
+        )
+        client = LLMClient(
+            base_url=endpoint_clean,
+            token=token_to_send,
+            model=model_name.strip() or "gpt-oss:latest",
+            verify_ssl=verify_ssl,
+        )
+
+        if (
+            has_context_to_send
+            and query_strategy == QueryStrategy.DYNAMIC
+            and context_catalog
+        ):
+            selection_messages = conversation_history.build_catalog_messages(
+                system_prompt=system_prompt,
+                question=question_clean,
+                catalog_json=catalog_json_compact,
+            )
+            with st.spinner("Asking the model which Portainer tables it needs..."):
+                try:
+                    selection_reply = client.chat(
+                        selection_messages,
+                        temperature=0.0,
+                        max_tokens=min(400, max_tokens),
+                    )
+                except LLMClientError as exc:
+                    st.error(f"LLM context selection failed: {exc}")
+                    context_notices_for_request.append(
+                        "Dynamic context selection failed; using the default tables."
+                    )
+                else:
+                    selection_json = _extract_first_json_object(selection_reply)
+                    if selection_json:
+                        (
+                            selected_frames,
+                            selection_notices,
+                            include_summary,
+                        ) = _apply_dynamic_selection(
+                            full_context_frames,
+                            selection_json,
+                            max_container_rows=max_context_rows,
+                        )
+                        if selected_frames:
+                            context_package_for_request = _build_context_package(
+                                selected_frames,
+                                warnings,
+                                max_tokens=max_context_tokens,
+                                include_summary=include_summary,
+                            )
+                            context_notices_for_request.extend(selection_notices)
+                            if not include_summary:
+                                context_notices_for_request.append(
+                                    "Model opted to skip the high-level summary for this turn."
+                                )
+                            prompt_notices.append(
+                                "Let the model choose which Portainer tables to load before answering."
+                            )
+                        else:
+                            context_notices_for_request.append(
+                                "Model did not request any tables; using the default context."
+                            )
+                    else:
+                        context_notices_for_request.append(
+                            "Model response did not contain valid JSON instructions; using default context."
+                        )
+
+        context_package = context_package_for_request
+        context_frames = context_package.frames
+        context_payload = context_package.payload
+        context_summary = context_package.summary
+        context_json_pretty = context_package.json_pretty
+        context_json_compact = context_package.json_compact
+        context_token_count = context_package.token_count
+        context_notices = list(
+            dict.fromkeys(context_notices_for_request + context_package.notices)
+        )
+        has_context_to_send = bool(context_payload)
+
         if has_context_to_send:
             # Send the compact JSON payload to the model so the transmitted prompt
             # matches the representation used for the token budget estimate.
@@ -622,16 +891,6 @@ if submitted:
                 icon="ℹ️",
             )
             context_json = "{}"
-        system_prompt = (
-            "You are a helpful assistant that analyses Portainer container telemetry to help operators "
-            "understand their Docker environments. Base your answer strictly on the provided context."
-        )
-        client = LLMClient(
-            base_url=endpoint_clean,
-            token=token_to_send,
-            model=model_name.strip() or "gpt-oss",
-            verify_ssl=verify_ssl,
-        )
         analysis_plan: str | None = None
         planning_failed = False
         if query_strategy == QueryStrategy.STAGED:
@@ -735,6 +994,16 @@ show_context = st.toggle(
 st.session_state["llm_show_context"] = show_context
 
 if show_context:
+    container_context = context_frames.get("containers", container_context_template)
+    stack_context = context_frames.get("stacks", stack_context_template)
+    endpoint_context = context_frames.get("endpoints", endpoint_context_template)
+    host_context = context_frames.get("hosts", host_context_template)
+    container_detail_context = context_frames.get(
+        "container_health", container_detail_template
+    )
+    volume_context = context_frames.get("volumes", volume_context_template)
+    image_context = context_frames.get("images", image_context_template)
+
     if context_summary:
         st.subheader("Summary shared with the LLM")
         st.json(context_summary)
