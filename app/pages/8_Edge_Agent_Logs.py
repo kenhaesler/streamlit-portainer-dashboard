@@ -164,15 +164,8 @@ with st.form("kibana_log_filters"):
         "Edge agent",
         options=agent_display,
         index=agent_display.index(default_agent) if default_agent in agent_display else 0,
-        help="Select the edge agent (host.hostname) to query logs for.",
+        help="Select the edge agent to query logs for. This maps directly to the `host.hostname` value.",
     )
-    hostname = st.text_input(
-        "host.hostname filter",
-        value=selected_agent,
-        help=(
-            "Exact `host.hostname` value used by the logs. Override this if the Kibana hostname differs from the Portainer name."
-        ),
-    ).strip()
     container_filter = st.text_input(
         "Container name filter",
         value="",
@@ -199,6 +192,8 @@ with st.form("kibana_log_filters"):
 
 if not submitted:
     st.stop()
+
+hostname = selected_agent.strip()
 
 if not hostname:
     st.warning("Provide a hostname to query logs for.", icon="⚠️")
