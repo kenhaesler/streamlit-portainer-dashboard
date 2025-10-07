@@ -10,7 +10,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 if importlib.util.find_spec("jwt") is None:
-    from app._jwt_stub import install_jwt_stub
-
-    install_jwt_stub()
+    stub_path = Path(__file__).with_name("_jwt_stub.py")
+    spec = importlib.util.spec_from_file_location("jwt", stub_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("Unable to load JWT stub for tests")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["jwt"] = module
+    spec.loader.exec_module(module)
 
