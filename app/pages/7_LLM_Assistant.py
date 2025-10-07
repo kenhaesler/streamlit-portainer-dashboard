@@ -613,7 +613,7 @@ with assistant_tab:
                 st.session_state["llm_max_tokens"] = max_tokens
                 st.session_state["llm_verify_ssl"] = verify_ssl
                 st.session_state["llm_max_requests"] = max_requests
-                st.experimental_rerun()
+                st.rerun()
 
 with data_tab:
     st.markdown("### Tables available to the assistant")
