@@ -354,154 +354,154 @@ def _fetch_portainer_payload(
     warnings: list[str] = []
 
     for environment in environments:
-        client = PortainerClient(
+        with PortainerClient(
             base_url=environment.api_url,
             api_key=environment.api_key,
             verify_ssl=environment.verify_ssl,
-        )
-        endpoints = client.list_edge_endpoints()
-        stacks: dict[int, list[dict]] = {}
-        containers: dict[int, list[dict]] = {}
-        inspections: dict[int, dict[str, dict]] = {}
-        stats: dict[int, dict[str, dict]] = {}
-        host_info: dict[int, dict[str, object]] = {}
-        host_usage: dict[int, dict[str, object]] = {}
-        volumes: dict[int, list[dict]] = {}
-        images: dict[int, list[dict]] = {}
+        ) as client:
+            endpoints = client.list_edge_endpoints()
+            stacks: dict[int, list[dict]] = {}
+            containers: dict[int, list[dict]] = {}
+            inspections: dict[int, dict[str, dict]] = {}
+            stats: dict[int, dict[str, dict]] = {}
+            host_info: dict[int, dict[str, object]] = {}
+            host_usage: dict[int, dict[str, object]] = {}
+            volumes: dict[int, list[dict]] = {}
+            images: dict[int, list[dict]] = {}
 
-        def _load_endpoint_payload(
-            endpoint: dict[str, object]
-        ) -> tuple[int, list[dict], list[dict], list[str]]:
-            endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
-            endpoint_warnings: list[str] = []
+            def _load_endpoint_payload(
+                endpoint: dict[str, object]
+            ) -> tuple[int, list[dict], list[dict], list[str]]:
+                endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+                endpoint_warnings: list[str] = []
 
-            try:
-                endpoint_stacks = client.list_stacks_for_endpoint(endpoint_id)
-            except PortainerAPIError as exc:
-                endpoint_warnings.append(
-                    f"[{environment.name}] Failed to load stacks for endpoint {endpoint_id}: {exc}"
-                )
-                endpoint_stacks = []
-            else:
-                if not isinstance(endpoint_stacks, list):
+                try:
+                    endpoint_stacks = client.list_stacks_for_endpoint(endpoint_id)
+                except PortainerAPIError as exc:
+                    endpoint_warnings.append(
+                        f"[{environment.name}] Failed to load stacks for endpoint {endpoint_id}: {exc}"
+                    )
                     endpoint_stacks = []
+                else:
+                    if not isinstance(endpoint_stacks, list):
+                        endpoint_stacks = []
 
-            try:
-                endpoint_containers = client.list_containers_for_endpoint(
-                    endpoint_id, include_stopped=include_stopped
-                )
-            except PortainerAPIError as exc:
-                endpoint_warnings.append(
-                    f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
-                )
-                endpoint_containers = []
-            else:
-                if not isinstance(endpoint_containers, list):
+                try:
+                    endpoint_containers = client.list_containers_for_endpoint(
+                        endpoint_id, include_stopped=include_stopped
+                    )
+                except PortainerAPIError as exc:
+                    endpoint_warnings.append(
+                        f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
+                    )
                     endpoint_containers = []
+                else:
+                    if not isinstance(endpoint_containers, list):
+                        endpoint_containers = []
 
-            if include_resource_utilisation:
-                try:
-                    host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load host info for endpoint {endpoint_id}: {exc}"
-                    )
-                    host_info[endpoint_id] = {}
-                try:
-                    host_usage[endpoint_id] = client.get_endpoint_system_df(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load host usage for endpoint {endpoint_id}: {exc}"
-                    )
-                    host_usage[endpoint_id] = {}
-                try:
-                    volumes[endpoint_id] = client.list_volumes_for_endpoint(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load volumes for endpoint {endpoint_id}: {exc}"
-                    )
-                    volumes[endpoint_id] = []
-                try:
-                    images[endpoint_id] = client.list_images_for_endpoint(endpoint_id)
-                except PortainerAPIError as exc:
-                    warnings.append(
-                        f"[{environment.name}] Failed to load images for endpoint {endpoint_id}: {exc}"
-                    )
-                    images[endpoint_id] = []
-            else:
-                host_info.setdefault(endpoint_id, {})
-                host_usage.setdefault(endpoint_id, {})
-                volumes.setdefault(endpoint_id, [])
-                images.setdefault(endpoint_id, [])
-
-            if include_container_details:
-                inspections.setdefault(endpoint_id, {})
-                stats.setdefault(endpoint_id, {})
-                for container in endpoint_containers:
-                    container_id = (
-                        container.get("Id")
-                        or container.get("ID")
-                        or container.get("id")
-                    )
-                    if not isinstance(container_id, str) or not container_id:
-                        continue
+                if include_resource_utilisation:
                     try:
-                        inspections[endpoint_id][container_id] = client.inspect_container(
-                            endpoint_id, container_id
-                        )
+                        host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
                     except PortainerAPIError as exc:
                         warnings.append(
-                            f"[{environment.name}] Failed to inspect container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            f"[{environment.name}] Failed to load host info for endpoint {endpoint_id}: {exc}"
                         )
+                        host_info[endpoint_id] = {}
                     try:
-                        stats[endpoint_id][container_id] = client.get_container_stats(
-                            endpoint_id, container_id
-                        )
+                        host_usage[endpoint_id] = client.get_endpoint_system_df(endpoint_id)
                     except PortainerAPIError as exc:
                         warnings.append(
-                            f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            f"[{environment.name}] Failed to load host usage for endpoint {endpoint_id}: {exc}"
                         )
+                        host_usage[endpoint_id] = {}
+                    try:
+                        volumes[endpoint_id] = client.list_volumes_for_endpoint(endpoint_id)
+                    except PortainerAPIError as exc:
+                        warnings.append(
+                            f"[{environment.name}] Failed to load volumes for endpoint {endpoint_id}: {exc}"
+                        )
+                        volumes[endpoint_id] = []
+                    try:
+                        images[endpoint_id] = client.list_images_for_endpoint(endpoint_id)
+                    except PortainerAPIError as exc:
+                        warnings.append(
+                            f"[{environment.name}] Failed to load images for endpoint {endpoint_id}: {exc}"
+                        )
+                        images[endpoint_id] = []
+                else:
+                    host_info.setdefault(endpoint_id, {})
+                    host_usage.setdefault(endpoint_id, {})
+                    volumes.setdefault(endpoint_id, [])
+                    images.setdefault(endpoint_id, [])
 
-            return endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings
+                if include_container_details:
+                    inspections.setdefault(endpoint_id, {})
+                    stats.setdefault(endpoint_id, {})
+                    for container in endpoint_containers:
+                        container_id = (
+                            container.get("Id")
+                            or container.get("ID")
+                            or container.get("id")
+                        )
+                        if not isinstance(container_id, str) or not container_id:
+                            continue
+                        try:
+                            inspections[endpoint_id][container_id] = client.inspect_container(
+                                endpoint_id, container_id
+                            )
+                        except PortainerAPIError as exc:
+                            warnings.append(
+                                f"[{environment.name}] Failed to inspect container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            )
+                        try:
+                            stats[endpoint_id][container_id] = client.get_container_stats(
+                                endpoint_id, container_id
+                            )
+                        except PortainerAPIError as exc:
+                            warnings.append(
+                                f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                            )
 
-        for endpoint in endpoints:
-            endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings = _load_endpoint_payload(
-                endpoint
+                return endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings
+
+            for endpoint in endpoints:
+                endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings = _load_endpoint_payload(
+                    endpoint
+                )
+                stacks[endpoint_id] = endpoint_stacks
+                containers[endpoint_id] = endpoint_containers
+                if endpoint_warnings:
+                    warnings.extend(endpoint_warnings)
+
+            stack_df = normalise_endpoint_stacks(endpoints, stacks)
+            stack_df["environment_name"] = environment.name
+            stack_frames.append(stack_df)
+
+            container_df = normalise_endpoint_containers(endpoints, containers)
+            container_df["environment_name"] = environment.name
+            container_frames.append(container_df)
+
+            endpoint_df = normalise_endpoint_metadata(endpoints)
+            endpoint_df["environment_name"] = environment.name
+            endpoint_frames.append(endpoint_df)
+
+            container_details_df = normalise_container_details(
+                endpoints, containers, inspections, stats
             )
-            stacks[endpoint_id] = endpoint_stacks
-            containers[endpoint_id] = endpoint_containers
-            if endpoint_warnings:
-                warnings.extend(endpoint_warnings)
+            container_details_df["environment_name"] = environment.name
+            container_detail_frames.append(container_details_df)
 
-        stack_df = normalise_endpoint_stacks(endpoints, stacks)
-        stack_df["environment_name"] = environment.name
-        stack_frames.append(stack_df)
+            host_df = normalise_endpoint_host_metrics(endpoints, host_info, host_usage)
+            host_df["environment_name"] = environment.name
+            host_frames.append(host_df)
 
-        container_df = normalise_endpoint_containers(endpoints, containers)
-        container_df["environment_name"] = environment.name
-        container_frames.append(container_df)
+            volume_df = normalise_endpoint_volumes(endpoints, volumes)
+            volume_df["environment_name"] = environment.name
+            volume_frames.append(volume_df)
 
-        endpoint_df = normalise_endpoint_metadata(endpoints)
-        endpoint_df["environment_name"] = environment.name
-        endpoint_frames.append(endpoint_df)
-
-        container_details_df = normalise_container_details(
-            endpoints, containers, inspections, stats
-        )
-        container_details_df["environment_name"] = environment.name
-        container_detail_frames.append(container_details_df)
-
-        host_df = normalise_endpoint_host_metrics(endpoints, host_info, host_usage)
-        host_df["environment_name"] = environment.name
-        host_frames.append(host_df)
-
-        volume_df = normalise_endpoint_volumes(endpoints, volumes)
-        volume_df["environment_name"] = environment.name
-        volume_frames.append(volume_df)
-
-        image_df = normalise_endpoint_images(endpoints, images)
-        image_df["environment_name"] = environment.name
-        image_frames.append(image_df)
+            image_df = normalise_endpoint_images(endpoints, images)
+            image_df["environment_name"] = environment.name
+            image_frames.append(image_df)
 
     if stack_frames:
         stack_data = pd.concat(stack_frames, ignore_index=True)
