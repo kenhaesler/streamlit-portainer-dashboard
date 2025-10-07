@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime as _dt
+from functools import partial
 from pathlib import Path
 
 import streamlit as st
@@ -30,7 +31,11 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.dashboard_state import (  # type: ignore[import-not-found]
+        apply_selected_environment,
         clear_cached_data,
+        initialise_session_state,
+        set_active_environment,
+        set_saved_environments,
         trigger_rerun,
     )
     from app.managers.background_job_runner import (  # type: ignore[import-not-found]
@@ -41,7 +46,11 @@ try:  # pragma: no cover - import shim for Streamlit runtime
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
+        apply_selected_environment,
         clear_cached_data,
+        initialise_session_state,
+        set_active_environment,
+        set_saved_environments,
         trigger_rerun,
     )
     from managers.background_job_runner import (  # type: ignore[no-redef]
@@ -155,7 +164,8 @@ if pending_active := st.session_state.pop(pending_active_env_key, None):
 
 apply_selected_environment(CONFIG)
 environment_manager = EnvironmentManager(
-    st.session_state, clear_cache=clear_cached_data
+    st.session_state,
+    clear_cache=partial(clear_cached_data, CONFIG),
 )
 environments = environment_manager.initialise()
 BackgroundJobRunner().maybe_run_backups(environments)
