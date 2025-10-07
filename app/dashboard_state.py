@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
@@ -301,24 +302,63 @@ def _fetch_portainer_payload(
         stacks: dict[int, list[dict]] = {}
         containers: dict[int, list[dict]] = {}
 
-        for endpoint in endpoints:
+        def _load_endpoint_payload(endpoint: dict[str, object]) -> tuple[int, list[dict], list[dict], list[str]]:
             endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+            endpoint_warnings: list[str] = []
+
             try:
-                stacks[endpoint_id] = client.list_stacks_for_endpoint(endpoint_id)
+                endpoint_stacks = client.list_stacks_for_endpoint(endpoint_id)
             except PortainerAPIError as exc:
-                warnings.append(
+                endpoint_warnings.append(
                     f"[{environment.name}] Failed to load stacks for endpoint {endpoint_id}: {exc}"
                 )
-                stacks[endpoint_id] = []
+                endpoint_stacks = []
+
             try:
-                containers[endpoint_id] = client.list_containers_for_endpoint(
+                endpoint_containers = client.list_containers_for_endpoint(
                     endpoint_id, include_stopped=include_stopped
                 )
             except PortainerAPIError as exc:
-                warnings.append(
+                endpoint_warnings.append(
                     f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
                 )
-                containers[endpoint_id] = []
+                endpoint_containers = []
+
+            return endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings
+
+        endpoints_list = list(endpoints)
+        if endpoints_list:
+            max_workers = min(8, len(endpoints_list))
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                future_map = {
+                    executor.submit(_load_endpoint_payload, endpoint): endpoint
+                    for endpoint in endpoints_list
+                }
+                for future in as_completed(future_map):
+                    try:
+                        (
+                            endpoint_id,
+                            endpoint_stacks,
+                            endpoint_containers,
+                            endpoint_warnings,
+                        ) = future.result()
+                    except Exception as exc:  # pragma: no cover - defensive
+                        endpoint = future_map[future]
+                        endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+                        warnings.append(
+                            f"[{environment.name}] Unexpected error loading endpoint {endpoint_id}: {exc}"
+                        )
+                        stacks.setdefault(endpoint_id, [])
+                        containers.setdefault(endpoint_id, [])
+                        continue
+
+                    stacks[endpoint_id] = endpoint_stacks
+                    containers[endpoint_id] = endpoint_containers
+                    if endpoint_warnings:
+                        warnings.extend(endpoint_warnings)
+        else:
+            stacks = {}
+            containers = {}
 
         stack_df = normalise_endpoint_stacks(endpoints, stacks)
         stack_df["environment_name"] = environment.name
