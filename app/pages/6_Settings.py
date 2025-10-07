@@ -19,25 +19,25 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.dashboard_state import (  # type: ignore[import-not-found]
-        apply_selected_environment,
         clear_cached_data,
-        get_saved_environments,
-        get_selected_environment_name,
-        initialise_session_state,
-        set_active_environment,
-        set_saved_environments,
         trigger_rerun,
+    )
+    from app.managers.background_job_runner import (  # type: ignore[import-not-found]
+        BackgroundJobRunner,
+    )
+    from app.managers.environment_manager import (  # type: ignore[import-not-found]
+        EnvironmentManager,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
-        apply_selected_environment,
         clear_cached_data,
-        get_saved_environments,
-        get_selected_environment_name,
-        initialise_session_state,
-        set_active_environment,
-        set_saved_environments,
         trigger_rerun,
+    )
+    from managers.background_job_runner import (  # type: ignore[no-redef]
+        BackgroundJobRunner,
+    )
+    from managers.environment_manager import (  # type: ignore[no-redef]
+        EnvironmentManager,
     )
 
 try:  # pragma: no cover - import shim for Streamlit runtime
@@ -131,17 +131,19 @@ render_logout_button()
 
 st.title("Settings")
 
-initialise_session_state()
+environment_manager = EnvironmentManager(st.session_state)
+environments = environment_manager.initialise()
+BackgroundJobRunner().maybe_run_backups(environments)
 
 pending_active_env_key = "portainer_env_pending_active"
 if pending_active := st.session_state.pop(pending_active_env_key, None):
-    set_active_environment(pending_active)
+    environment_manager.set_active_environment(pending_active)
 
-apply_selected_environment()
+environment_manager.apply_selected_environment()
 
 st.header("Portainer environments")
 
-environments_state = get_saved_environments()
+environments_state = environment_manager.get_saved_environments()
 env_names = [env.get("name", "") for env in environments_state if env.get("name")]
 
 form_selection_key = "portainer_env_form_selection"
@@ -153,7 +155,7 @@ if pending_selection := st.session_state.pop(pending_selection_key, None):
     st.session_state[form_selection_key] = pending_selection
 
 if st.session_state.get(form_selection_key) not in options:
-    default_env = get_selected_environment_name() or "New environment"
+    default_env = environment_manager.get_selected_environment_name() or "New environment"
     st.session_state[form_selection_key] = (
         default_env if default_env in env_names else "New environment"
     )
@@ -263,8 +265,8 @@ if submitted:
             updated_envs.append(updated_env)
         else:
             updated_envs[edit_index] = updated_env
-        set_saved_environments(updated_envs)
-        set_active_environment(name_value)
+        environment_manager.set_saved_environments(updated_envs)
+        environment_manager.set_active_environment(name_value)
         st.session_state[pending_selection_key] = name_value
         st.session_state[prev_selection_key] = name_value
         clear_cached_data()
@@ -293,7 +295,7 @@ if test_connection_clicked and not submitted:
 
 if env_names:
     st.subheader("Active environment")
-    active_env = get_selected_environment_name()
+    active_env = environment_manager.get_selected_environment_name()
     choice = st.radio(
         "Choose which environment to use for dashboards",
         env_names,
@@ -301,7 +303,7 @@ if env_names:
         key="portainer_selected_env",
     )
     if choice != active_env:
-        set_active_environment(choice)
+        environment_manager.set_active_environment(choice)
         rerun_app()
 
 else:
@@ -490,8 +492,8 @@ for env in environments_state:
             updated_envs = [
                 existing for existing in environments_state if existing.get("name") != env_name
             ]
-            set_saved_environments(updated_envs)
-            if get_selected_environment_name() == env_name:
+            environment_manager.set_saved_environments(updated_envs)
+            if environment_manager.get_selected_environment_name() == env_name:
                 next_name = updated_envs[0]["name"] if updated_envs else ""
                 st.session_state[pending_active_env_key] = next_name
             clear_cached_data()

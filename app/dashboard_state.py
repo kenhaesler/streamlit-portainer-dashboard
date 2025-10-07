@@ -2,11 +2,10 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, Sequence
+from typing import Iterable, MutableMapping, Sequence
 
 import pandas as pd
 import streamlit as st
@@ -31,12 +30,17 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         load_cache_entry as load_portainer_cache_entry,
         store_cache_entry as store_portainer_cache_entry,
     )
-    from .services.backup_scheduler import maybe_run_scheduled_backups  # type: ignore[import-not-found]
     from .settings import (  # type: ignore[import-not-found]
         PortainerEnvironment,
         get_configured_environments,
         load_environments,
         save_environments,
+    )
+    from .managers.environment_manager import (  # type: ignore[import-not-found]
+        EnvironmentManager,
+    )
+    from .managers.background_job_runner import (  # type: ignore[import-not-found]
+        BackgroundJobRunner,
     )
 except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when executed as a script
     from portainer_client import (  # type: ignore[no-redef]
@@ -57,14 +61,17 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
         load_cache_entry as load_portainer_cache_entry,
         store_cache_entry as store_portainer_cache_entry,
     )
-    from services.backup_scheduler import (  # type: ignore[no-redef]
-        maybe_run_scheduled_backups,
-    )
     from settings import (  # type: ignore[no-redef]
         PortainerEnvironment,
         get_configured_environments,
         load_environments,
         save_environments,
+    )
+    from managers.environment_manager import (  # type: ignore[no-redef]
+        EnvironmentManager,
+    )
+    from managers.background_job_runner import (  # type: ignore[no-redef]
+        BackgroundJobRunner,
     )
 
 __all__ = [
@@ -102,9 +109,9 @@ class NoEnvironmentsConfiguredError(RuntimeError):
     """Raised when no Portainer environments are available."""
 
 
-SESSION_ENVIRONMENTS_KEY = "portainer_envs"
-SESSION_SELECTED_ENV_KEY = "portainer_selected_env"
-SESSION_APPLIED_ENV_KEY = "portainer_active_env_applied"
+SESSION_ENVIRONMENTS_KEY = EnvironmentManager.ENVIRONMENTS_KEY
+SESSION_SELECTED_ENV_KEY = EnvironmentManager.SELECTED_ENV_KEY
+SESSION_APPLIED_ENV_KEY = EnvironmentManager.APPLIED_ENV_KEY
 SESSION_FILTER_ENVIRONMENTS = "portainer_filter_selected_environments"
 SESSION_FILTER_ENDPOINTS = "portainer_filter_selected_endpoints"
 SESSION_FILTER_STACK_SEARCH = "portainer_filter_stack_search"
@@ -122,95 +129,89 @@ def trigger_rerun() -> None:
     rerun()
 
 
-def initialise_session_state() -> None:
+def _get_environment_manager(
+    state: MutableMapping[str, object] | None = None,
+    *,
+    environment_manager: EnvironmentManager | None = None,
+) -> EnvironmentManager:
+    mapping = state or st.session_state
+    if environment_manager is not None:
+        return environment_manager
+    return EnvironmentManager(
+        mapping,
+        clear_cache=clear_cached_data,
+        loader=load_environments,
+        saver=save_environments,
+    )
+
+
+def initialise_session_state(
+    *,
+    environment_manager: EnvironmentManager | None = None,
+    background_runner: BackgroundJobRunner | None = None,
+) -> None:
     """Ensure baseline session state is available for all pages."""
 
-    if SESSION_ENVIRONMENTS_KEY not in st.session_state:
-        st.session_state[SESSION_ENVIRONMENTS_KEY] = load_environments()
-
-    environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
-    try:
-        maybe_run_scheduled_backups(environments)
-    except Exception:  # pragma: no cover - defensive guard for Streamlit runtime
-        LOGGER.warning("Scheduled backup execution failed", exc_info=True)
-
-    if SESSION_SELECTED_ENV_KEY not in st.session_state:
-        environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
-        st.session_state[SESSION_SELECTED_ENV_KEY] = (
-            environments[0]["name"] if environments else ""
-        )
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    environments = manager.initialise()
+    runner = background_runner or BackgroundJobRunner()
+    runner.maybe_run_backups(environments)
 
 
-def get_saved_environments() -> list[dict[str, object]]:
+def get_saved_environments(
+    *, environment_manager: EnvironmentManager | None = None
+) -> list[dict[str, object]]:
     """Return all saved environments from the current session."""
 
-    return list(st.session_state.get(SESSION_ENVIRONMENTS_KEY, []))
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    return manager.get_saved_environments()
 
 
-def set_saved_environments(environments: Iterable[dict[str, object]]) -> None:
+def set_saved_environments(
+    environments: Iterable[dict[str, object]],
+    *,
+    environment_manager: EnvironmentManager | None = None,
+) -> None:
     """Persist and update the saved environments list."""
 
-    serialisable = list(environments)
-    st.session_state[SESSION_ENVIRONMENTS_KEY] = serialisable
-    save_environments(serialisable)
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager.set_saved_environments(environments)
 
 
-def get_selected_environment_name() -> str:
+def get_selected_environment_name(
+    *, environment_manager: EnvironmentManager | None = None
+) -> str:
     """Return the name of the currently selected environment."""
 
-    return str(st.session_state.get(SESSION_SELECTED_ENV_KEY, ""))
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    return manager.get_selected_environment_name()
 
 
-def _get_selected_environment() -> dict[str, object] | None:
-    selected_name = get_selected_environment_name()
-    for environment in get_saved_environments():
-        if environment.get("name") == selected_name:
-            return environment
-    return None
-
-
-def _set_environment_variables(environment: dict[str, object] | None) -> None:
-    """Apply environment variables for the selected Portainer environment."""
-
-    if environment is None:
-        return
-
-    os.environ["PORTAINER_API_URL"] = str(environment.get("api_url", ""))
-    os.environ["PORTAINER_API_KEY"] = str(environment.get("api_key", ""))
-    os.environ["PORTAINER_VERIFY_SSL"] = (
-        "true" if bool(environment.get("verify_ssl", True)) else "false"
-    )
-    if name := environment.get("name"):
-        os.environ["PORTAINER_ENVIRONMENT_NAME"] = str(name)
-
-
-def set_active_environment(name: str) -> None:
+def set_active_environment(
+    name: str,
+    *,
+    environment_manager: EnvironmentManager | None = None,
+) -> None:
     """Update the active environment selection."""
 
-    previous_selection = st.session_state.get(SESSION_SELECTED_ENV_KEY, "")
-    st.session_state[SESSION_SELECTED_ENV_KEY] = name
-    st.session_state.pop(SESSION_APPLIED_ENV_KEY, None)
-    clear_cached_data(persistent=bool(str(previous_selection).strip()))
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager.set_active_environment(name)
 
 
-def apply_selected_environment() -> None:
+def apply_selected_environment(
+    *, environment_manager: EnvironmentManager | None = None
+) -> None:
     """Apply the selected environment if it has changed since the last run."""
 
-    selected = get_selected_environment_name()
-    applied = st.session_state.get(SESSION_APPLIED_ENV_KEY)
-    if applied == selected:
-        return
-    environment = _get_selected_environment()
-    _set_environment_variables(environment)
-    st.session_state[SESSION_APPLIED_ENV_KEY] = selected
-    clear_cached_data(persistent=applied is not None)
+    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager.apply_selected_environment()
 
 
 def load_configured_environment_settings() -> tuple[PortainerEnvironment, ...]:
     """Load configured Portainer environments from environment variables."""
 
     try:
-        environments = tuple(get_configured_environments())
+        environments = EnvironmentManager.load_configured_environment_settings()
     except ValueError as exc:  # pragma: no cover - depends on runtime configuration
         raise ConfigurationError(str(exc)) from exc
     if not environments:

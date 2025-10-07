@@ -18,12 +18,16 @@ try:  # pragma: no cover - runtime imports resolved differently during tests
     from app.dashboard_state import (  # type: ignore[import-not-found]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
-        apply_selected_environment,
-        initialise_session_state,
         load_configured_environment_settings,
         load_portainer_data,
         render_data_refresh_notice,
         render_sidebar_filters,
+    )
+    from app.managers.background_job_runner import (  # type: ignore[import-not-found]
+        BackgroundJobRunner,
+    )
+    from app.managers.environment_manager import (  # type: ignore[import-not-found]
+        EnvironmentManager,
     )
     from app.portainer_client import PortainerAPIError  # type: ignore[import-not-found]
     from app.services.llm_client import (  # type: ignore[import-not-found]
@@ -46,12 +50,16 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for direct execution
     from dashboard_state import (  # type: ignore[no-redef]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
-        apply_selected_environment,
-        initialise_session_state,
         load_configured_environment_settings,
         load_portainer_data,
         render_data_refresh_notice,
         render_sidebar_filters,
+    )
+    from managers.background_job_runner import (  # type: ignore[no-redef]
+        BackgroundJobRunner,
+    )
+    from managers.environment_manager import (  # type: ignore[no-redef]
+        EnvironmentManager,
     )
     from portainer_client import PortainerAPIError  # type: ignore[no-redef]
     from services.llm_client import LLMClient, LLMClientError  # type: ignore[no-redef]
@@ -317,8 +325,10 @@ render_page_header(
     ),
 )
 
-initialise_session_state()
-apply_selected_environment()
+environment_manager = EnvironmentManager(st.session_state)
+environments = environment_manager.initialise()
+BackgroundJobRunner().maybe_run_backups(environments)
+environment_manager.apply_selected_environment()
 
 conversation: list[AssistantTurn] = st.session_state.setdefault("llm_assistant_turns", [])
 
