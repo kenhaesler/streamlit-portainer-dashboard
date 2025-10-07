@@ -126,6 +126,35 @@ def test_normalise_endpoint_stacks_keeps_zero_status():
     assert result.loc[0, "endpoint_status"] == 0
 
 
+def test_normalise_endpoint_stacks_handles_endpoint_scoped_payload():
+    """Stacks lacking endpoint metadata should still be associated."""
+
+    endpoints = [
+        {
+            "Id": 12,
+            "Name": "edge-a",
+            "Status": 1,
+        }
+    ]
+    stacks = {
+        12: [
+            {
+                "Id": 99,
+                "Name": "demo",
+                "Status": 1,
+                "Type": 2,
+            }
+        ]
+    }
+
+    result = normalise_endpoint_stacks(endpoints, stacks)
+
+    assert result.loc[0, "stack_id"] == 99
+    assert result.loc[0, "stack_name"] == "demo"
+    assert result.loc[0, "stack_status"] == 1
+    assert result.loc[0, "stack_type"] == 2
+
+
 def test_inspect_container_hits_expected_endpoint(monkeypatch):
     client = PortainerClient(base_url="https://portainer.example", api_key="token")
 

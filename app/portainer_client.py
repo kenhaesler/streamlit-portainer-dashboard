@@ -302,6 +302,13 @@ def normalise_endpoint_stacks(
 ) -> pd.DataFrame:
     """Return a normalised dataframe mapping endpoints to stacks."""
 
+    def _normalise_stack_list(value: Iterable[Dict[str, object]] | object) -> List[Dict[str, object]]:
+        if isinstance(value, dict):
+            return [value]
+        if isinstance(value, (list, tuple)):
+            return list(value)
+        return []
+
     records: List[Dict[str, object]] = []
     for endpoint in endpoints:
         endpoint_id = int(
@@ -309,14 +316,16 @@ def normalise_endpoint_stacks(
         )
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
         endpoint_status = _first_present(endpoint, "Status", "status")
-        stacks = stacks_by_endpoint.get(endpoint_id) or []
+        raw_stacks = _normalise_stack_list(stacks_by_endpoint.get(endpoint_id))
         targeted_stacks = [
             stack
-            for stack in stacks
+            for stack in raw_stacks
             if _stack_targets_endpoint(stack, endpoint_id)
         ]
-        if targeted_stacks:
-            for stack in targeted_stacks:
+        stacks = targeted_stacks or raw_stacks
+
+        if stacks:
+            for stack in stacks:
                 records.append(
                     {
                         "endpoint_id": endpoint_id,
