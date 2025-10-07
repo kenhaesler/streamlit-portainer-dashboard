@@ -1,0 +1,228 @@
+"""Minimal JWT test stub used when PyJWT is unavailable.
+
+This module mirrors the subset of the :mod:`PyJWT` API that our unit tests
+exercise. It intentionally keeps the implementation lightweight and is only
+loaded from :mod:`tests.conftest` when the real dependency cannot be imported.
+"""
+
+from __future__ import annotations
+
+import base64
+import binascii
+import hashlib
+import hmac
+import json
+import time
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping, Sequence
+
+__all__ = [
+    "InvalidTokenError",
+    "DecodeError",
+    "ExpiredSignatureError",
+    "InvalidSignatureError",
+    "InvalidAudienceError",
+    "InvalidIssuerError",
+    "MissingRequiredClaimError",
+    "algorithms",
+    "encode",
+    "decode",
+    "get_unverified_header",
+]
+
+
+class InvalidTokenError(Exception):
+    """Base exception raised when a JWT cannot be processed."""
+
+
+class DecodeError(InvalidTokenError):
+    """Raised when a token cannot be decoded."""
+
+
+class ExpiredSignatureError(InvalidTokenError):
+    """Raised when the token has expired."""
+
+
+class InvalidSignatureError(InvalidTokenError):
+    """Raised when the signature is invalid."""
+
+
+class InvalidAudienceError(InvalidTokenError):
+    """Raised when the audience claim does not match expectations."""
+
+
+class InvalidIssuerError(InvalidTokenError):
+    """Raised when the issuer claim does not match expectations."""
+
+
+class MissingRequiredClaimError(InvalidTokenError):
+    """Raised when required claims are missing from the token."""
+
+
+def _b64encode(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _b64decode(data: str) -> bytes:
+    padded = data + "=" * ((4 - len(data) % 4) % 4)
+    try:
+        return base64.urlsafe_b64decode(padded)
+    except (ValueError, binascii.Error) as exc:  # pragma: no cover - defensive
+        raise DecodeError("Token segment was not valid base64url") from exc
+
+
+def _json_load(data: str) -> Any:
+    try:
+        return json.loads(data)
+    except json.JSONDecodeError as exc:  # pragma: no cover - defensive
+        raise DecodeError("Token segment did not contain valid JSON") from exc
+
+
+def _to_bytes(value: bytes | str) -> bytes:
+    return value if isinstance(value, bytes) else value.encode("utf-8")
+
+
+def _sign(message: bytes, key: bytes, algorithm: str) -> bytes:
+    if algorithm != "HS256":
+        raise InvalidTokenError(f"Unsupported algorithm: {algorithm}")
+    return hmac.new(key, message, hashlib.sha256).digest()
+
+
+def _build_segments(payload: Mapping[str, Any], *, headers: Mapping[str, Any]) -> tuple[str, str, bytes]:
+    header = {"typ": "JWT", "alg": headers.get("alg", "HS256")}
+    header.update(headers)
+    header_segment = _b64encode(json.dumps(header, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    payload_segment = _b64encode(json.dumps(payload, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+    signing_input = f"{header_segment}.{payload_segment}".encode("ascii")
+    return header_segment, payload_segment, signing_input
+
+
+def encode(
+    payload: Mapping[str, Any],
+    key: str | bytes,
+    algorithm: str = "HS256",
+    *,
+    headers: Mapping[str, Any] | None = None,
+) -> str:
+    """Return a signed JWT token."""
+
+    headers = dict(headers or {})
+    headers.setdefault("alg", algorithm)
+    header_segment, payload_segment, signing_input = _build_segments(payload, headers=headers)
+    signature = _sign(signing_input, _to_bytes(key), headers["alg"])
+    return f"{header_segment}.{payload_segment}.{_b64encode(signature)}"
+
+
+def get_unverified_header(token: str) -> Mapping[str, Any]:
+    """Return the decoded JWT header without verifying the signature."""
+
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise DecodeError("Token structure is invalid")
+    return _json_load(_b64decode(parts[0]).decode("utf-8"))
+
+
+def _ensure_required_claims(payload: Mapping[str, Any], required: Iterable[str]) -> None:
+    missing = [claim for claim in required if claim not in payload]
+    if missing:
+        raise MissingRequiredClaimError(f"Missing required claims: {', '.join(sorted(missing))}")
+
+
+def _validate_audience(payload: Mapping[str, Any], audience: str | Sequence[str] | None) -> None:
+    if audience is None:
+        return
+    claim = payload.get("aud")
+    expected = {audience} if isinstance(audience, str) else set(audience)
+    if isinstance(claim, str):
+        claims = {claim}
+    elif isinstance(claim, Sequence):
+        claims = set(claim)
+    else:
+        raise InvalidAudienceError("Audience claim is not a string or sequence")
+    if not expected.intersection(claims):
+        raise InvalidAudienceError("Audience claim did not match expected value")
+
+
+def _validate_issuer(payload: Mapping[str, Any], issuer: str | None) -> None:
+    if issuer is None:
+        return
+    claim = payload.get("iss")
+    if claim != issuer:
+        raise InvalidIssuerError("Issuer claim did not match expected value")
+
+
+def _validate_expiration(payload: Mapping[str, Any]) -> None:
+    exp = payload.get("exp")
+    if exp is None:
+        return
+    try:
+        expiry = float(exp)
+    except (TypeError, ValueError) as exc:
+        raise DecodeError("Expiration claim was not a number") from exc
+    if expiry <= time.time():
+        raise ExpiredSignatureError("Token has expired")
+
+
+def decode(
+    token: str,
+    key: str | bytes,
+    algorithms: Sequence[str] | None = None,
+    *,
+    audience: str | Sequence[str] | None = None,
+    issuer: str | None = None,
+    options: Mapping[str, Any] | None = None,
+) -> Mapping[str, Any]:
+    """Verify a token signature and return the decoded payload."""
+
+    options = options or {}
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise DecodeError("Token structure is invalid")
+
+    header_segment, payload_segment, signature_segment = parts
+    header = _json_load(_b64decode(header_segment).decode("utf-8"))
+    payload = _json_load(_b64decode(payload_segment).decode("utf-8"))
+
+    algorithm = header.get("alg")
+    if not isinstance(algorithm, str):
+        raise DecodeError("Token did not specify an algorithm")
+    if algorithms is not None and algorithm not in algorithms:
+        raise InvalidTokenError("Token algorithm is not allowed")
+
+    signing_input = f"{header_segment}.{payload_segment}".encode("ascii")
+    signature = _b64decode(signature_segment)
+    expected = _sign(signing_input, _to_bytes(key), algorithm)
+    if not hmac.compare_digest(signature, expected):
+        raise InvalidSignatureError("Token signature mismatch")
+
+    _ensure_required_claims(payload, options.get("require", []))
+    _validate_audience(payload, audience)
+    _validate_issuer(payload, issuer)
+    _validate_expiration(payload)
+
+    return payload
+
+
+@dataclass
+class _HS256Algorithm:
+    """Minimal representation of the HS256 algorithm for compatibility."""
+
+    name: str = "HS256"
+
+    def from_jwk(self, jwk_json: str) -> bytes:
+        data = json.loads(jwk_json)
+        key = data.get("k")
+        if not isinstance(key, str):
+            raise DecodeError("JWK did not provide a symmetric key")
+        return _b64decode(key)
+
+
+class _AlgorithmRegistry:
+    def __init__(self) -> None:
+        self._algorithms = {"HS256": _HS256Algorithm()}
+
+    def get_default_algorithms(self) -> dict[str, _HS256Algorithm]:
+        return dict(self._algorithms)
+
+
+algorithms = _AlgorithmRegistry()

@@ -9,6 +9,17 @@ import plotly.express as px
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.config import (  # type: ignore[import-not-found]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from config import (  # type: ignore[no-redef]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
+
+try:  # pragma: no cover - import shim for Streamlit runtime
     from app.auth import (  # type: ignore[import-not-found]
         render_logout_button,
         require_authentication,
@@ -302,7 +313,13 @@ def load_stack_image_statuses(
     return status_df, warnings
 
 
-require_authentication()
+try:
+    CONFIG = get_config()
+except ConfigError as exc:
+    st.error(str(exc))
+    st.stop()
+
+require_authentication(CONFIG)
 render_logout_button()
 
 render_page_header(
@@ -311,13 +328,15 @@ render_page_header(
     description="Identify the images powering your workloads and where they are deployed.",
 )
 
+initialise_session_state(CONFIG)
+apply_selected_environment(CONFIG)
 environment_manager = EnvironmentManager(st.session_state)
 environments = environment_manager.initialise()
 BackgroundJobRunner().maybe_run_backups(environments)
 environment_manager.apply_selected_environment()
 
 try:
-    configured_environments = load_configured_environment_settings()
+    configured_environments = load_configured_environment_settings(CONFIG)
 except ConfigurationError as exc:
     st.error(str(exc))
     st.stop()
@@ -329,7 +348,10 @@ except NoEnvironmentsConfiguredError:
     st.stop()
 
 try:
-    data_result = load_portainer_data(configured_environments)
+    data_result = load_portainer_data(
+        CONFIG,
+        configured_environments,
+    )
 except PortainerAPIError as exc:
     st.error(f"Failed to load data from Portainer: {exc}")
     st.stop()
@@ -347,6 +369,7 @@ if stack_data.empty and container_data.empty:
     st.stop()
 
 filters = render_sidebar_filters(
+    CONFIG,
     stack_data,
     container_data,
     data_status=data_result,

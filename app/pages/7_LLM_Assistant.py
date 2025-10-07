@@ -11,6 +11,17 @@ import pandas as pd
 import streamlit as st
 
 try:  # pragma: no cover - runtime imports resolved differently during tests
+    from app.config import (  # type: ignore[import-not-found]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from config import (  # type: ignore[no-redef]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
+
+try:  # pragma: no cover - runtime imports resolved differently during tests
     from app.auth import (  # type: ignore[import-not-found]
         render_logout_button,
         require_authentication,
@@ -314,7 +325,13 @@ def _build_answer_prompt(
     return messages
 
 
-require_authentication()
+try:
+    CONFIG = get_config()
+except ConfigError as exc:
+    st.error(str(exc))
+    st.stop()
+
+require_authentication(CONFIG)
 render_logout_button()
 
 render_page_header(
@@ -325,6 +342,8 @@ render_page_header(
     ),
 )
 
+initialise_session_state(CONFIG)
+apply_selected_environment(CONFIG)
 environment_manager = EnvironmentManager(st.session_state)
 environments = environment_manager.initialise()
 BackgroundJobRunner().maybe_run_backups(environments)
@@ -333,7 +352,7 @@ environment_manager.apply_selected_environment()
 conversation: list[AssistantTurn] = st.session_state.setdefault("llm_assistant_turns", [])
 
 try:
-    configured_environments = load_configured_environment_settings()
+    configured_environments = load_configured_environment_settings(CONFIG)
 except ConfigurationError as exc:
     st.error(str(exc))
     st.stop()
@@ -346,6 +365,7 @@ except NoEnvironmentsConfiguredError:
 
 try:
     data_result = load_portainer_data(
+        CONFIG,
         configured_environments,
         include_stopped=True,
         include_container_details=True,
@@ -362,6 +382,7 @@ for warning in warnings:
     st.warning(warning, icon="⚠️")
 
 filters = render_sidebar_filters(
+    CONFIG,
     data_result.stack_data,
     data_result.container_data,
     endpoint_data=data_result.endpoint_data,
