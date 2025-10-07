@@ -76,6 +76,7 @@ __all__ = [
     "apply_selected_environment",
     "clear_cached_data",
     "fetch_portainer_data",
+    "load_portainer_data",
     "get_saved_environments",
     "get_selected_environment_name",
     "initialise_session_state",
@@ -734,6 +735,21 @@ def render_data_refresh_notice(result: PortainerDataResult) -> None:
         st.warning(message, icon="⚠️")
     elif timestamp_text:
         st.caption(f"Last synced with Portainer on {timestamp_text}.")
+
+
+def load_portainer_data(
+    environments: tuple[PortainerEnvironment, ...],
+    *,
+    include_stopped: bool = False,
+    progress_message: str | None = None,
+) -> PortainerDataResult:
+    """Fetch Portainer data while surfacing progress feedback to the user."""
+
+    message = progress_message or "🔄 Fetching the latest data from Portainer…"
+    with st.spinner(message):
+        return fetch_portainer_data(
+            environments, include_stopped=include_stopped
+        )
 
 
 def _humanise_value(value: object, mapping: dict[int, str]) -> object:

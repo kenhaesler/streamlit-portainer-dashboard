@@ -24,9 +24,9 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         ConfigurationError,
         NoEnvironmentsConfiguredError,
         apply_selected_environment,
-        fetch_portainer_data,
         initialise_session_state,
         load_configured_environment_settings,
+        load_portainer_data,
         render_data_refresh_notice,
         render_sidebar_filters,
     )
@@ -45,9 +45,9 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         ConfigurationError,
         NoEnvironmentsConfiguredError,
         apply_selected_environment,
-        fetch_portainer_data,
         initialise_session_state,
         load_configured_environment_settings,
+        load_portainer_data,
         render_data_refresh_notice,
         render_sidebar_filters,
     )
@@ -319,7 +319,7 @@ except NoEnvironmentsConfiguredError:
     st.stop()
 
 try:
-    data_result = fetch_portainer_data(configured_environments)
+    data_result = load_portainer_data(configured_environments)
 except PortainerAPIError as exc:
     st.error(f"Failed to load data from Portainer: {exc}")
     st.stop()
