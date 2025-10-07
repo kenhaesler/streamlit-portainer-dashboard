@@ -81,6 +81,39 @@ still allows you to download the data that was shared for auditing. With the con
 language questions—such as “are there any containers that have issues and why?”—and review the LLM response
 directly inside the dashboard.
 
+#### How the LLM workflow is orchestrated
+
+At a high level the assistant prepares the data hub and operational overview, asks the model for a research plan,
+executes the requested queries, and finally supplies the results for the answer stage. The following diagram
+captures the flow:
+
+```mermaid
+flowchart TD
+    A[User enters question + config] --> B[Build data hub & overview]
+    B --> C[_build_research_prompt()]
+    C --> D[LLMClient.chat (planning)]
+    D -->|plan JSON| E[parse_query_plan()]
+    E --> F{Any requests?}
+    F -- Yes --> G[Execute QueryRequests via LLMDataHub]
+    G --> H[serialise_results()]
+    F -- No --> H
+    H --> I[_build_answer_prompt()]
+    I --> J[LLMClient.chat (answer)]
+    J --> K[Display answer & plan\nStore in conversation]
+    K --> L[Expose datasets & payload for auditing]
+```
+
+**Planning stage** – `_build_research_prompt()` primes the LLM to return a JSON plan describing which tables or
+metrics it wants to inspect. `parse_query_plan()` extracts the structured instructions, skips malformed entries,
+and warns when the model requests more datasets than allowed.
+
+**Execution stage** – For each valid request the hub filters and serialises the relevant Portainer dataframes and
+captures a compact summary of what was shared with the model.
+
+**Answer stage** – `_build_answer_prompt()` restates the question, embeds the executed plan and results, and asks
+the LLM to provide a final answer that reuses the supplied JSON context. The response is displayed alongside the
+plan and downloadable datasets so operators can audit exactly what was sent.
+
 ### Edge agent log explorer
 
 The **Edge agent logs** page surfaces container logs collected in Kibana/Elasticsearch. Configure the
