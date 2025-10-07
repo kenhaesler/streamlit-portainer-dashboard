@@ -14,8 +14,16 @@ The application is configured via environment variables:
 - `PORTAINER_VERIFY_SSL` – Optional. Set to `false` to disable TLS certificate verification when using self-signed certificates.
 - `DASHBOARD_USERNAME` – Username required to sign in to the dashboard UI.
 - `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
+- `DASHBOARD_AUTH_PROVIDER` – Optional. Set to `oidc` to enable OpenID Connect single sign-on. Defaults to `static`, which uses the username/key form above.
 - `DASHBOARD_SESSION_TIMEOUT_MINUTES` – Optional. Expire authenticated sessions after the specified number of minutes of inactivity. Omit or set to a non-positive value to disable the timeout.
 - `DASHBOARD_LOG_LEVEL` – Optional. Overrides the log verbosity for the dashboard. Accepts standard Python levels (e.g. `INFO`, `DEBUG`, `ERROR`) plus `TRACE`/`VERBOSE`. Defaults to `INFO` when unset or invalid.
+- `DASHBOARD_OIDC_ISSUER` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. Base issuer URL advertised by your identity provider.
+- `DASHBOARD_OIDC_CLIENT_ID` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. OAuth client identifier registered with the provider.
+- `DASHBOARD_OIDC_CLIENT_SECRET` – Optional. Client secret issued by the provider. Omit for public clients using PKCE only.
+- `DASHBOARD_OIDC_REDIRECT_URI` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. Callback URL configured for the dashboard client (for example `https://dashboard.example.com/`).
+- `DASHBOARD_OIDC_SCOPES` – Optional. Space-separated list of scopes to request during login. Defaults to `openid profile email` and always ensures the mandatory `openid` scope is requested.
+- `DASHBOARD_OIDC_DISCOVERY_URL` – Optional. Overrides the OIDC discovery document URL. When unset the dashboard fetches `{issuer}/.well-known/openid-configuration` automatically.
+- `DASHBOARD_OIDC_AUDIENCE` – Optional. Audience value to enforce when validating ID tokens. Defaults to the configured client ID.
 - `PORTAINER_CACHE_ENABLED` – Optional. Defaults to `true`. Set to `false` to disable persistent caching of Portainer API responses between sessions.
 - `PORTAINER_CACHE_TTL_SECONDS` – Optional. Number of seconds before cached Portainer API responses are refreshed. Defaults to 900 seconds (15 minutes). Set to `0` or a negative value to keep cached data until it is manually invalidated.
 - `PORTAINER_CACHE_DIR` – Optional. Directory used to persist cached Portainer data. Defaults to `.streamlit/cache` inside the application directory.
@@ -27,8 +35,7 @@ The application is configured via environment variables:
 - `KIBANA_VERIFY_SSL` – Optional. Defaults to `true`. Set to `false` to skip TLS verification when connecting to Kibana with self-signed certificates.
 - `KIBANA_TIMEOUT_SECONDS` – Optional. Request timeout (in seconds) for Kibana log queries. Defaults to 30 seconds when unset or invalid.
 
-Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
-operators can fix the configuration before exposing the dashboard.
+When `DASHBOARD_AUTH_PROVIDER` is unset or set to `static`, both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be provided. The app blocks access and displays an error until those credentials are configured. When `DASHBOARD_AUTH_PROVIDER=oidc`, configure the matching `DASHBOARD_OIDC_*` variables instead—the dashboard redirects users through the standard authorization-code flow, discovers the provider endpoints via the well-known document, and validates ID tokens against the advertised JWKS before establishing a session.
 
 After signing in, operators can use the persistent **Log out** button in the sidebar to clear their authentication session when
 they step away from the dashboard. When a session timeout is configured, the remaining time is shown in the sidebar so
