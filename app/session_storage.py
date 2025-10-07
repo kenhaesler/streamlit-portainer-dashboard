@@ -13,8 +13,6 @@ from typing import Final, Optional, Protocol, cast
 SESSION_BACKEND_ENV_VAR = "DASHBOARD_SESSION_BACKEND"
 SQLITE_PATH_ENV_VAR = "DASHBOARD_SESSION_SQLITE_PATH"
 
-
-
 class _UnsetType:
     """Sentinel used to distinguish explicit ``None`` from omitted values."""
 
@@ -144,7 +142,9 @@ class SQLiteSessionStorage(SessionStorage):
             detect_types=sqlite3.PARSE_DECLTYPES,
             check_same_thread=False,
         )
-        # ``check_same_thread=False`` allows guarded multi-threaded access via ``self._lock``.
+        # Setting ``check_same_thread=False`` allows the SQLite connection to be used
+        # across multiple threads. Thread safety is ensured by guarding all access
+        # with ``self._lock``.
         connection.row_factory = sqlite3.Row
         return connection
 
