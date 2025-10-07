@@ -47,6 +47,11 @@ _SCHEDULER_THREAD_LOCK = threading.Lock()
 _SCHEDULER_THREAD: threading.Thread | None = None
 _SCHEDULER_STOP_EVENT = threading.Event()
 _SCHEDULER_WAKE_EVENT = threading.Event()
+_DEFAULT_NEXT_RUN_DELAY_SECONDS = 300.0
+_LOCK_CONTENTION_BACKOFF_SECONDS = 60.0
+_MIN_SCHEDULER_SLEEP_SECONDS = 1.0
+_MAX_SCHEDULER_SLEEP_SECONDS = 3600.0
+_SCHEDULER_CATCHUP_SLEEP_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -411,7 +416,7 @@ def update_schedule_interval(interval_seconds: int) -> ScheduleSnapshot:
 
 
 def maybe_run_scheduled_backups(
-    environments: Iterable[Mapping[str, object]] | None = None,
+    environments: Iterable[Mapping[str, object]],
 ) -> List[Path]:
     """Create backups when the configured schedule is due.
 
@@ -419,22 +424,11 @@ def maybe_run_scheduled_backups(
     ----------
     environments:
         Iterable of saved Portainer environment configurations. Backups are
-        attempted for each entry when the schedule triggers. When ``None`` the
-        persisted environments are loaded from disk.
+        attempted for each entry when the schedule triggers.
     """
 
     interval_seconds = configured_interval_seconds()
-    if environments is None:
-        try:
-            envs_list = list(load_environments())
-        except Exception as exc:  # pragma: no cover - defensive guard
-            LOGGER.warning(
-                "Unable to load environments for scheduled backups: %s", exc,
-                exc_info=True,
-            )
-            envs_list = []
-    else:
-        envs_list = list(environments)
+    envs_list = list(environments)
 
     schedule_updated = False
     result: List[Path] = []
@@ -583,7 +577,7 @@ def _seconds_until_next_run() -> float:
         with _acquire_schedule_lock():
             state = _load_schedule_unlocked()
             if state is None or state.next_run is None:
-                return 300.0
+                return _DEFAULT_NEXT_RUN_DELAY_SECONDS
             remaining = (state.next_run - _utcnow()).total_seconds()
             if remaining <= 0:
                 return 0.0
@@ -592,18 +586,31 @@ def _seconds_until_next_run() -> float:
         LOGGER.warning(
             "Unable to evaluate next scheduled backup time due to lock contention"
         )
-        return 60.0
+        return _LOCK_CONTENTION_BACKOFF_SECONDS
 
 
 def _scheduler_loop() -> None:
     LOGGER.info("Scheduled backup runner thread started")
     while not _SCHEDULER_STOP_EVENT.is_set():
         try:
-            maybe_run_scheduled_backups()
+            try:
+                environments = list(load_environments())
+            except Exception as exc:  # pragma: no cover - defensive guard
+                LOGGER.warning(
+                    "Unable to load environments for scheduled backups: %s",
+                    exc,
+                    exc_info=True,
+                )
+                environments = []
+            maybe_run_scheduled_backups(environments)
         except Exception:  # pragma: no cover - defensive guard
             LOGGER.exception("Scheduled backup runner encountered an unexpected error")
         delay = _seconds_until_next_run()
-        delay = max(1.0, min(delay, 3600.0)) if delay > 0 else 15.0
+        delay = (
+            max(_MIN_SCHEDULER_SLEEP_SECONDS, min(delay, _MAX_SCHEDULER_SLEEP_SECONDS))
+            if delay > 0
+            else _SCHEDULER_CATCHUP_SLEEP_SECONDS
+        )
         _SCHEDULER_WAKE_EVENT.clear()
         awakened = _SCHEDULER_WAKE_EVENT.wait(timeout=delay)
         if _SCHEDULER_STOP_EVENT.is_set():
