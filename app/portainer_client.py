@@ -4,12 +4,14 @@ from __future__ import annotations
 import logging
 import os
 import re
-from dataclasses import dataclass
-from typing import Dict, Iterable, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 import pandas as pd
 import requests
+from requests.adapters import HTTPAdapter
 from urllib3.exceptions import InsecureRequestWarning
+from urllib3.util.retry import Retry
 
 LOGGER = logging.getLogger(__name__)
 
@@ -123,6 +125,11 @@ class PortainerClient:
     api_key: str
     timeout: tuple[float, float] = (5.0, 30.0)
     verify_ssl: bool = True
+    session_factory: Callable[[], requests.Session] = field(
+        default=requests.Session,
+        repr=False,
+    )
+    _session: requests.Session = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -131,21 +138,58 @@ class PortainerClient:
         if not self.api_key:
             raise ValueError("Portainer API key is required")
         if not self.verify_ssl:
+            LOGGER.warning(
+                "SSL verification disabled for Portainer client targeting %s",
+                self.base_url,
+            )
             requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+        self._session = self.session_factory()
+        self._configure_session()
 
     @property
     def _headers(self) -> Dict[str, str]:
         return {"X-API-Key": self.api_key}
 
+    def _configure_session(self) -> None:
+        self._session.headers.update(self._headers)
+        self._session.verify = self.verify_ssl
+        adapter = HTTPAdapter(
+            max_retries=Retry(
+                total=3,
+                backoff_factor=0.5,
+                status_forcelist=(429, 500, 502, 503, 504),
+                allowed_methods=frozenset({"GET", "POST"}),
+            )
+        )
+        self._session.mount("https://", adapter)
+        self._session.mount("http://", adapter)
+
+    def close(self) -> None:
+        """Release the underlying HTTP session resources."""
+
+        try:
+            self._session.close()
+        except Exception:  # pragma: no cover - defensive cleanup
+            LOGGER.debug("Failed to close Portainer session", exc_info=True)
+
+    def __enter__(self) -> "PortainerClient":  # pragma: no cover - convenience
+        return self
+
+    def __exit__(
+        self,
+        exc_type,  # type: ignore[override]
+        exc: BaseException | None,
+        traceback,
+    ) -> None:
+        self.close()
+
     def _request(self, path: str, *, params: Optional[Dict[str, object]] = None) -> object:
         url = f"{self.base_url}{path}"
         try:
-            response = requests.get(
+            response = self._session.get(
                 url,
-                headers=self._headers,
                 params=params,
                 timeout=self.timeout,
-                verify=self.verify_ssl,
             )
             response.raise_for_status()
         except requests.RequestException as exc:  # pragma: no cover - defensive
@@ -163,12 +207,10 @@ class PortainerClient:
     ) -> requests.Response:
         url = f"{self.base_url}{path}"
         try:
-            response = requests.post(
+            response = self._session.post(
                 url,
-                headers=self._headers,
                 json=json,
                 timeout=self.timeout,
-                verify=self.verify_ssl,
             )
             response.raise_for_status()
         except requests.RequestException as exc:  # pragma: no cover - defensive
