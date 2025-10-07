@@ -7,14 +7,21 @@ from pathlib import Path
 import os
 import sqlite3
 from threading import RLock
-from typing import Optional, Protocol, cast
+from typing import Final, Optional, Protocol, cast
 
 
 SESSION_BACKEND_ENV_VAR = "DASHBOARD_SESSION_BACKEND"
 SQLITE_PATH_ENV_VAR = "DASHBOARD_SESSION_SQLITE_PATH"
 
 
-_UNSET = object()
+
+class _UnsetType:
+    """Sentinel used to distinguish explicit ``None`` from omitted values."""
+
+    __slots__ = ()
+
+
+_UNSET: Final = _UnsetType()
 
 
 @dataclass
@@ -32,7 +39,7 @@ class SessionRecord:
         self,
         now: datetime,
         *,
-        session_timeout: Optional[timedelta] | object = _UNSET,
+        session_timeout: Optional[timedelta] | _UnsetType = _UNSET,
     ) -> bool:
         """Return ``True`` if the record expired relative to ``now``.
 
@@ -132,7 +139,12 @@ class SQLiteSessionStorage(SessionStorage):
         self._initialise()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(self._database_path, detect_types=sqlite3.PARSE_DECLTYPES)
+        connection = sqlite3.connect(
+            self._database_path,
+            detect_types=sqlite3.PARSE_DECLTYPES,
+            check_same_thread=False,
+        )
+        # ``check_same_thread=False`` allows guarded multi-threaded access via ``self._lock``.
         connection.row_factory = sqlite3.Row
         return connection
 
@@ -262,21 +274,22 @@ class SQLiteSessionStorage(SessionStorage):
             connection.execute("DELETE FROM sessions WHERE token = ?", (token,))
             connection.commit()
 
+    def _delete_expired_sessions(
+        self, connection: sqlite3.Connection, now: datetime
+    ) -> None:
+        connection.execute(
+            "DELETE FROM sessions WHERE expiry_at IS NOT NULL AND expiry_at <= ?",
+            (self._encode_datetime(now),),
+        )
+        connection.commit()
+
     def purge_expired(self, now: datetime) -> None:
         with self._lock, self._connect() as connection:
-            connection.execute(
-                "DELETE FROM sessions WHERE expiry_at IS NOT NULL AND expiry_at <= ?",
-                (self._encode_datetime(now),),
-            )
-            connection.commit()
+            self._delete_expired_sessions(connection, now)
 
     def count(self, now: datetime) -> int:
         with self._lock, self._connect() as connection:
-            connection.execute(
-                "DELETE FROM sessions WHERE expiry_at IS NOT NULL AND expiry_at <= ?",
-                (self._encode_datetime(now),),
-            )
-            connection.commit()
+            self._delete_expired_sessions(connection, now)
             cursor = connection.execute("SELECT COUNT(*) FROM sessions")
             (count,) = cursor.fetchone()
             return int(count)
