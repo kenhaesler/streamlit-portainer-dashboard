@@ -128,14 +128,29 @@ for warning in warnings:
 
 stack_data = data_result.stack_data
 container_data = data_result.container_data
+endpoint_data = data_result.endpoint_data
+container_details_data = data_result.container_details
+host_data = data_result.host_data
+volume_data = data_result.volume_data
+image_data = data_result.image_data
 
 filters = render_sidebar_filters(
     stack_data,
     container_data,
+    endpoint_data=endpoint_data,
+    container_details=container_details_data,
+    host_data=host_data,
+    volume_data=volume_data,
+    image_data=image_data,
     data_status=data_result,
 )
 stack_filtered = filters.stack_data
 containers_filtered = filters.container_data
+endpoint_filtered = filters.endpoint_data
+container_details_filtered = filters.container_details
+host_filtered = filters.host_data
+volume_filtered = filters.volume_data
+image_filtered = filters.image_data
 
 if stack_filtered.empty and containers_filtered.empty:
     st.info("No Portainer data matched the current filters.", icon="ℹ️")
@@ -301,20 +316,94 @@ stack_columns = (
     "stack_status",
     "stack_type",
 )
+endpoint_columns = (
+    "environment_name",
+    "endpoint_name",
+    "agent_version",
+    "platform",
+    "operating_system",
+    "group_id",
+    "last_check_in",
+    "tags",
+)
+host_columns = (
+    "environment_name",
+    "endpoint_name",
+    "docker_version",
+    "architecture",
+    "operating_system",
+    "total_cpus",
+    "total_memory",
+    "containers_running",
+    "containers_stopped",
+    "volumes_total",
+    "images_total",
+)
+container_detail_columns = (
+    "environment_name",
+    "endpoint_name",
+    "container_name",
+    "health_status",
+    "last_exit_code",
+    "last_finished_at",
+    "cpu_percent",
+    "memory_percent",
+    "mounts",
+    "networks",
+    "labels",
+)
+volume_columns = (
+    "environment_name",
+    "endpoint_name",
+    "volume_name",
+    "driver",
+    "scope",
+    "mountpoint",
+    "labels",
+)
+image_columns = (
+    "environment_name",
+    "endpoint_name",
+    "reference",
+    "size",
+    "created_at",
+    "dangling",
+)
 
 container_context = _prepare_dataframe(containers_filtered, container_columns)
 stack_context = _prepare_dataframe(stack_filtered, stack_columns)
+endpoint_context = _prepare_dataframe(endpoint_filtered, endpoint_columns)
+host_context = _prepare_dataframe(host_filtered, host_columns)
+container_detail_context = _prepare_dataframe(
+    container_details_filtered, container_detail_columns
+)
+volume_context = _prepare_dataframe(volume_filtered, volume_columns)
+image_context = _prepare_dataframe(image_filtered, image_columns)
 
 context_notice = False
 if len(container_context) > max_context_rows:
     container_context = container_context.head(max_context_rows)
     context_notice = True
+if len(container_detail_context) > max_context_rows:
+    container_detail_context = container_detail_context.head(max_context_rows)
 
 context_payload: dict[str, object] = {}
 if not container_context.empty:
     context_payload["containers"] = _serialise_records(container_context)
 if not stack_context.empty:
     context_payload["stacks"] = _serialise_records(stack_context.head(50))
+if not endpoint_context.empty:
+    context_payload["endpoints"] = _serialise_records(endpoint_context.head(50))
+if not host_context.empty:
+    context_payload["hosts"] = _serialise_records(host_context.head(50))
+if not container_detail_context.empty:
+    context_payload["container_health"] = _serialise_records(
+        container_detail_context
+    )
+if not volume_context.empty:
+    context_payload["volumes"] = _serialise_records(volume_context.head(50))
+if not image_context.empty:
+    context_payload["images"] = _serialise_records(image_context.head(50))
 if warnings:
     context_payload["warnings"] = list(warnings)
 
@@ -402,7 +491,8 @@ if not displayed_response and (last_answer := st.session_state.get("llm_last_ans
 
 if context_notice:
     st.caption(
-        "Only the first %s containers are included in the LLM context to keep the prompt concise."
+        "Only the first %s containers and their detailed health metrics are included in the LLM "
+        "context to keep the prompt concise."
         % max_context_rows
     )
 
@@ -431,4 +521,51 @@ if show_context:
             "portainer_stack_context.csv",
         ).render_download_button()
         st.dataframe(stack_context, use_container_width=True, hide_index=True)
+
+    if not endpoint_context.empty:
+        st.subheader("Endpoint metadata shared with the LLM")
+        ExportableDataFrame(
+            "Download endpoint context",
+            endpoint_context,
+            "portainer_endpoint_context.csv",
+        ).render_download_button()
+        st.dataframe(endpoint_context, use_container_width=True, hide_index=True)
+
+    if not host_context.empty:
+        st.subheader("Host capacity shared with the LLM")
+        ExportableDataFrame(
+            "Download host metrics",
+            host_context,
+            "portainer_host_metrics.csv",
+        ).render_download_button()
+        st.dataframe(host_context, use_container_width=True, hide_index=True)
+
+    if not container_detail_context.empty:
+        st.subheader("Container health shared with the LLM")
+        ExportableDataFrame(
+            "Download container health",
+            container_detail_context,
+            "portainer_container_health.csv",
+        ).render_download_button()
+        st.dataframe(
+            container_detail_context, use_container_width=True, hide_index=True
+        )
+
+    if not volume_context.empty:
+        st.subheader("Volume inventory shared with the LLM")
+        ExportableDataFrame(
+            "Download volume context",
+            volume_context,
+            "portainer_volume_context.csv",
+        ).render_download_button()
+        st.dataframe(volume_context, use_container_width=True, hide_index=True)
+
+    if not image_context.empty:
+        st.subheader("Image inventory shared with the LLM")
+        ExportableDataFrame(
+            "Download image context",
+            image_context,
+            "portainer_image_context.csv",
+        ).render_download_button()
+        st.dataframe(image_context, use_container_width=True, hide_index=True)
 

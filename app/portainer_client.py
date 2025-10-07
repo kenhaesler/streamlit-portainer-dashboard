@@ -224,6 +224,69 @@ class PortainerClient:
             raise PortainerAPIError("Unexpected containers payload from Portainer")
         return data
 
+    def inspect_container(
+        self, endpoint_id: int, container_id: str
+    ) -> Dict[str, object]:
+        """Return the detailed inspect payload for a container."""
+
+        data = self._request(
+            f"/endpoints/{endpoint_id}/docker/containers/{container_id}/json"
+        )
+        if not isinstance(data, dict):
+            raise PortainerAPIError("Unexpected container inspect payload from Portainer")
+        return data
+
+    def get_container_stats(
+        self, endpoint_id: int, container_id: str
+    ) -> Dict[str, object]:
+        """Return a non-streaming stats snapshot for a container."""
+
+        data = self._request(
+            f"/endpoints/{endpoint_id}/docker/containers/{container_id}/stats",
+            params={"stream": "false"},
+        )
+        if not isinstance(data, dict):
+            raise PortainerAPIError("Unexpected container stats payload from Portainer")
+        return data
+
+    def get_endpoint_host_info(self, endpoint_id: int) -> Dict[str, object]:
+        """Return Docker host metadata for an endpoint."""
+
+        data = self._request(f"/endpoints/{endpoint_id}/docker/info")
+        if not isinstance(data, dict):
+            raise PortainerAPIError("Unexpected host info payload from Portainer")
+        return data
+
+    def get_endpoint_system_df(self, endpoint_id: int) -> Dict[str, object]:
+        """Return Docker disk usage statistics for an endpoint."""
+
+        data = self._request(f"/endpoints/{endpoint_id}/docker/system/df")
+        if not isinstance(data, dict):
+            raise PortainerAPIError("Unexpected system df payload from Portainer")
+        return data
+
+    def list_volumes_for_endpoint(self, endpoint_id: int) -> List[Dict[str, object]]:
+        """Return all Docker volumes defined on an endpoint."""
+
+        data = self._request(f"/endpoints/{endpoint_id}/docker/volumes")
+        if isinstance(data, dict):
+            volumes = data.get("Volumes")
+        else:
+            volumes = None
+        if volumes is None:
+            return []
+        if not isinstance(volumes, list):
+            raise PortainerAPIError("Unexpected volumes payload from Portainer")
+        return [item for item in volumes if isinstance(item, dict)]
+
+    def list_images_for_endpoint(self, endpoint_id: int) -> List[Dict[str, object]]:
+        """Return image metadata for an endpoint."""
+
+        data = self._request(f"/endpoints/{endpoint_id}/docker/images/json")
+        if not isinstance(data, list):
+            raise PortainerAPIError("Unexpected images payload from Portainer")
+        return [item for item in data if isinstance(item, dict)]
+
     def get_stack_image_status(self, stack_id: int) -> object:
         """Return the image status payload for the specified stack."""
 
@@ -287,6 +350,81 @@ def normalise_endpoint_stacks(
                 "stack_name",
                 "stack_status",
                 "stack_type",
+            ]
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def normalise_endpoint_metadata(
+    endpoints: Iterable[Dict[str, object]]
+) -> pd.DataFrame:
+    """Return a dataframe with enriched endpoint metadata."""
+
+    records: List[Dict[str, object]] = []
+    for endpoint in endpoints:
+        endpoint_id = int(_first_present(endpoint, "Id", "id") or 0)
+        endpoint_name = endpoint.get("Name") or endpoint.get("name")
+        endpoint_status = _first_present(endpoint, "Status", "status")
+        agent = endpoint.get("Agent") or endpoint.get("agent") or {}
+        if not isinstance(agent, dict):
+            agent = {}
+        agent_version = agent.get("Version") or agent.get("version")
+        platform = agent.get("Platform") or agent.get("platform")
+        os_name = agent.get("Os") or agent.get("OS") or agent.get("os")
+        group_id = _coerce_int(_first_present(endpoint, "GroupId", "GroupID", "groupId"))
+        tags = endpoint.get("Tags") or endpoint.get("tags")
+        if isinstance(tags, list):
+            tag_summary = ", ".join(str(tag) for tag in tags if tag is not None)
+        else:
+            tag_summary = str(tags) if tags not in (None, "") else None
+        last_check_in = (
+            _first_present(
+                endpoint,
+                "LastCheckInDate",
+                "EdgeCheckinInterval",
+                "EdgeLastCheckInDate",
+                "LastCheckIn",
+            )
+        )
+        last_check_iso: Optional[str]
+        last_check_iso = None
+        if isinstance(last_check_in, (int, float)):
+            try:
+                last_check_iso = pd.to_datetime(last_check_in, unit="s", utc=True).isoformat()
+            except (ValueError, OverflowError):
+                last_check_iso = None
+        elif isinstance(last_check_in, str) and last_check_in:
+            try:
+                last_check_iso = pd.to_datetime(last_check_in, utc=True).isoformat()
+            except (ValueError, TypeError):
+                last_check_iso = last_check_in
+        record = {
+            "endpoint_id": endpoint_id,
+            "endpoint_name": endpoint_name,
+            "endpoint_status": endpoint_status,
+            "agent_version": agent_version,
+            "platform": platform,
+            "operating_system": os_name,
+            "group_id": group_id,
+            "tags": tag_summary,
+            "last_check_in": last_check_iso,
+            "url": endpoint.get("URL") or endpoint.get("Url") or endpoint.get("url"),
+        }
+        records.append(record)
+    if not records:
+        return pd.DataFrame(
+            columns=
+            [
+                "endpoint_id",
+                "endpoint_name",
+                "endpoint_status",
+                "agent_version",
+                "platform",
+                "operating_system",
+                "group_id",
+                "tags",
+                "last_check_in",
+                "url",
             ]
         )
     return pd.DataFrame.from_records(records)
@@ -371,6 +509,358 @@ def normalise_endpoint_containers(
                 "restart_count",
                 "created_at",
                 "ports",
+            ]
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def normalise_container_details(
+    endpoints: Iterable[Dict[str, object]],
+    containers_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+    inspect_payloads: Dict[int, Dict[str, Dict[str, object]]],
+    stats_payloads: Dict[int, Dict[str, Dict[str, object]]],
+) -> pd.DataFrame:
+    """Return enriched container records including inspect/stats data."""
+
+    endpoint_lookup = {
+        int(_first_present(endpoint, "Id", "id") or 0): endpoint
+        for endpoint in endpoints
+    }
+    records: List[Dict[str, object]] = []
+    for endpoint_id, containers in containers_by_endpoint.items():
+        endpoint = endpoint_lookup.get(endpoint_id, {})
+        endpoint_name = endpoint.get("Name") or endpoint.get("name")
+        for container in containers:
+            container_id = (
+                container.get("Id")
+                or container.get("ID")
+                or container.get("id")
+            )
+            if not isinstance(container_id, str) or not container_id:
+                continue
+            names = container.get("Names") or []
+            if isinstance(names, list) and names:
+                container_name = str(names[0]).lstrip("/")
+            else:
+                container_name = container.get("Name") or container.get("name")
+            inspect_data = inspect_payloads.get(endpoint_id, {}).get(container_id, {})
+            stats_data = stats_payloads.get(endpoint_id, {}).get(container_id, {})
+            if not isinstance(inspect_data, dict):
+                inspect_data = {}
+            if not isinstance(stats_data, dict):
+                stats_data = {}
+            state = inspect_data.get("State") or {}
+            if not isinstance(state, dict):
+                state = {}
+            health = state.get("Health") or {}
+            if not isinstance(health, dict):
+                health = {}
+            health_status = health.get("Status")
+            last_exit_code = state.get("ExitCode")
+            finished_at = state.get("FinishedAt")
+            if isinstance(finished_at, str) and finished_at:
+                try:
+                    finished_at_iso = pd.to_datetime(finished_at, utc=True).isoformat()
+                except (ValueError, TypeError):
+                    finished_at_iso = finished_at
+            else:
+                finished_at_iso = None
+            mounts_raw = inspect_data.get("Mounts")
+            mounts_summary = None
+            if isinstance(mounts_raw, list):
+                mount_entries = []
+                for mount in mounts_raw:
+                    if not isinstance(mount, dict):
+                        continue
+                    destination = mount.get("Destination") or mount.get("Target")
+                    source = mount.get("Source")
+                    if destination and source:
+                        mount_entries.append(f"{destination} ← {source}")
+                    elif destination:
+                        mount_entries.append(str(destination))
+                    elif source:
+                        mount_entries.append(str(source))
+                if mount_entries:
+                    mounts_summary = ", ".join(mount_entries)
+            networks = inspect_data.get("NetworkSettings")
+            network_summary = None
+            if isinstance(networks, dict):
+                network_settings = networks.get("Networks")
+                if isinstance(network_settings, dict):
+                    network_summary = ", ".join(sorted(network_settings.keys())) or None
+            labels_raw = inspect_data.get("Config")
+            labels_summary = None
+            if isinstance(labels_raw, dict):
+                labels = labels_raw.get("Labels")
+                if isinstance(labels, dict):
+                    label_entries = [
+                        f"{key}={value}"
+                        for key, value in sorted(labels.items())
+                        if value is not None
+                    ]
+                    if label_entries:
+                        labels_summary = ", ".join(label_entries)
+            cpu_stats = stats_data.get("cpu_stats")
+            if not isinstance(cpu_stats, dict):
+                cpu_stats = {}
+            precpu_stats = stats_data.get("precpu_stats")
+            if not isinstance(precpu_stats, dict):
+                precpu_stats = {}
+            cpu_delta: Optional[float] = None
+            system_delta: Optional[float] = None
+            if cpu_stats and precpu_stats:
+                total_usage = cpu_stats.get("cpu_usage", {}).get("total_usage")
+                pre_total = precpu_stats.get("cpu_usage", {}).get("total_usage")
+                system_usage = cpu_stats.get("system_cpu_usage")
+                pre_system = precpu_stats.get("system_cpu_usage")
+                try:
+                    if total_usage is not None and pre_total is not None:
+                        cpu_delta = float(total_usage) - float(pre_total)
+                    if system_usage is not None and pre_system is not None:
+                        system_delta = float(system_usage) - float(pre_system)
+                except (TypeError, ValueError):
+                    cpu_delta = None
+                    system_delta = None
+            cpu_percentage: Optional[float] = None
+            if cpu_delta and system_delta and system_delta > 0:
+                percpu = cpu_stats.get("cpu_usage", {}).get("percpu_usage")
+                cpu_count = len(percpu) if isinstance(percpu, list) and percpu else 1
+                cpu_percentage = (cpu_delta / system_delta) * cpu_count * 100.0
+            memory_stats = stats_data.get("memory_stats")
+            if not isinstance(memory_stats, dict):
+                memory_stats = {}
+            memory_usage = memory_stats.get("usage")
+            memory_limit = memory_stats.get("limit")
+            memory_percent: Optional[float] = None
+            try:
+                if memory_usage is not None and memory_limit:
+                    memory_percent = (float(memory_usage) / float(memory_limit)) * 100.0
+            except (TypeError, ValueError, ZeroDivisionError):
+                memory_percent = None
+            records.append(
+                {
+                    "endpoint_id": endpoint_id,
+                    "endpoint_name": endpoint_name,
+                    "container_id": container_id,
+                    "container_name": container_name,
+                    "health_status": health_status,
+                    "last_exit_code": last_exit_code,
+                    "last_finished_at": finished_at_iso,
+                    "cpu_percent": cpu_percentage,
+                    "memory_usage": memory_usage,
+                    "memory_limit": memory_limit,
+                    "memory_percent": memory_percent,
+                    "mounts": mounts_summary,
+                    "networks": network_summary,
+                    "labels": labels_summary,
+                }
+            )
+    if not records:
+        return pd.DataFrame(
+            columns=
+            [
+                "endpoint_id",
+                "endpoint_name",
+                "container_id",
+                "container_name",
+                "health_status",
+                "last_exit_code",
+                "last_finished_at",
+                "cpu_percent",
+                "memory_usage",
+                "memory_limit",
+                "memory_percent",
+                "mounts",
+                "networks",
+                "labels",
+            ]
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def normalise_endpoint_host_metrics(
+    endpoints: Iterable[Dict[str, object]],
+    info_payloads: Dict[int, Dict[str, object]],
+    system_payloads: Dict[int, Dict[str, object]],
+) -> pd.DataFrame:
+    """Return host-level capacity information for endpoints."""
+
+    endpoint_lookup = {
+        int(_first_present(endpoint, "Id", "id") or 0): endpoint
+        for endpoint in endpoints
+    }
+    records: List[Dict[str, object]] = []
+    for endpoint_id, endpoint in endpoint_lookup.items():
+        endpoint_name = endpoint.get("Name") or endpoint.get("name")
+        info = info_payloads.get(endpoint_id, {})
+        system_df = system_payloads.get(endpoint_id, {})
+        if not isinstance(info, dict):
+            info = {}
+        if not isinstance(system_df, dict):
+            system_df = {}
+        containers_section = system_df.get("Containers")
+        if not isinstance(containers_section, dict):
+            containers_section = {}
+        volumes_section = system_df.get("Volumes")
+        if not isinstance(volumes_section, dict):
+            volumes_section = {}
+        builder = {
+            "endpoint_id": endpoint_id,
+            "endpoint_name": endpoint_name,
+            "docker_version": info.get("ServerVersion"),
+            "architecture": info.get("Architecture"),
+            "operating_system": info.get("OperatingSystem"),
+            "total_cpus": info.get("NCPU"),
+            "total_memory": info.get("MemTotal"),
+            "swarm_node": info.get("Swarm", {}).get("ControlAvailable")
+            if isinstance(info.get("Swarm"), dict)
+            else None,
+            "containers_total": containers_section.get("Total"),
+            "containers_running": containers_section.get("Running"),
+            "containers_stopped": containers_section.get("Stopped"),
+            "volumes_total": volumes_section.get("TotalCount")
+            if isinstance(volumes_section.get("TotalCount"), (int, float))
+            else volumes_section.get("Total"),
+            "images_total": system_df.get("ImagesTotal")
+            if "ImagesTotal" in system_df
+            else info.get("Images"),
+            "layers_size": system_df.get("LayersSize"),
+        }
+        records.append(builder)
+    if not records:
+        return pd.DataFrame(
+            columns=
+            [
+                "endpoint_id",
+                "endpoint_name",
+                "docker_version",
+                "architecture",
+                "operating_system",
+                "total_cpus",
+                "total_memory",
+                "swarm_node",
+                "containers_total",
+                "containers_running",
+                "containers_stopped",
+                "volumes_total",
+                "images_total",
+                "layers_size",
+            ]
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def normalise_endpoint_volumes(
+    endpoints: Iterable[Dict[str, object]],
+    volumes_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+) -> pd.DataFrame:
+    records: List[Dict[str, object]] = []
+    endpoint_lookup = {
+        int(_first_present(endpoint, "Id", "id") or 0): endpoint
+        for endpoint in endpoints
+    }
+    for endpoint_id, volumes in volumes_by_endpoint.items():
+        endpoint = endpoint_lookup.get(endpoint_id, {})
+        endpoint_name = endpoint.get("Name") or endpoint.get("name")
+        for volume in volumes:
+            if not isinstance(volume, dict):
+                continue
+            labels = volume.get("Labels")
+            label_summary = None
+            if isinstance(labels, dict):
+                label_entries = [
+                    f"{key}={value}"
+                    for key, value in sorted(labels.items())
+                    if value is not None
+                ]
+                if label_entries:
+                    label_summary = ", ".join(label_entries)
+            records.append(
+                {
+                    "endpoint_id": endpoint_id,
+                    "endpoint_name": endpoint_name,
+                    "volume_name": volume.get("Name") or volume.get("name"),
+                    "driver": volume.get("Driver"),
+                    "scope": volume.get("Scope"),
+                    "mountpoint": volume.get("Mountpoint"),
+                    "labels": label_summary,
+                }
+            )
+    if not records:
+        return pd.DataFrame(
+            columns=
+            [
+                "endpoint_id",
+                "endpoint_name",
+                "volume_name",
+                "driver",
+                "scope",
+                "mountpoint",
+                "labels",
+            ]
+        )
+    return pd.DataFrame.from_records(records)
+
+
+def normalise_endpoint_images(
+    endpoints: Iterable[Dict[str, object]],
+    images_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+) -> pd.DataFrame:
+    records: List[Dict[str, object]] = []
+    endpoint_lookup = {
+        int(_first_present(endpoint, "Id", "id") or 0): endpoint
+        for endpoint in endpoints
+    }
+    for endpoint_id, images in images_by_endpoint.items():
+        endpoint = endpoint_lookup.get(endpoint_id, {})
+        endpoint_name = endpoint.get("Name") or endpoint.get("name")
+        for image in images:
+            if not isinstance(image, dict):
+                continue
+            repo_tags = image.get("RepoTags")
+            if isinstance(repo_tags, list) and repo_tags:
+                reference = repo_tags[0]
+            else:
+                reference = image.get("RepoDigests")
+                if isinstance(reference, list) and reference:
+                    reference = reference[0]
+            if isinstance(reference, list):
+                reference = reference[0] if reference else None
+            created_raw = image.get("Created")
+            created_at = None
+            if isinstance(created_raw, (int, float)):
+                try:
+                    created_at = pd.to_datetime(created_raw, unit="s", utc=True).isoformat()
+                except (OverflowError, ValueError):
+                    created_at = None
+            elif isinstance(created_raw, str) and created_raw:
+                try:
+                    created_at = pd.to_datetime(created_raw, utc=True).isoformat()
+                except (ValueError, TypeError):
+                    created_at = created_raw
+            size = image.get("Size") or image.get("VirtualSize")
+            records.append(
+                {
+                    "endpoint_id": endpoint_id,
+                    "endpoint_name": endpoint_name,
+                    "image_id": image.get("Id") or image.get("ID"),
+                    "reference": reference,
+                    "size": size,
+                    "created_at": created_at,
+                    "dangling": image.get("Dangling"),
+                }
+            )
+    if not records:
+        return pd.DataFrame(
+            columns=
+            [
+                "endpoint_id",
+                "endpoint_name",
+                "image_id",
+                "reference",
+                "size",
+                "created_at",
+                "dangling",
             ]
         )
     return pd.DataFrame.from_records(records)

@@ -17,7 +17,12 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         PortainerAPIError,
         PortainerClient,
         normalise_endpoint_containers,
+        normalise_endpoint_images,
+        normalise_endpoint_metadata,
+        normalise_endpoint_host_metrics,
         normalise_endpoint_stacks,
+        normalise_endpoint_volumes,
+        normalise_container_details,
     )
     from .environment_cache import (  # type: ignore[import-not-found]
         CacheEntry,
@@ -38,7 +43,12 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
         PortainerAPIError,
         PortainerClient,
         normalise_endpoint_containers,
+        normalise_endpoint_images,
+        normalise_endpoint_metadata,
+        normalise_endpoint_host_metrics,
         normalise_endpoint_stacks,
+        normalise_endpoint_volumes,
+        normalise_container_details,
     )
     from environment_cache import (  # type: ignore[no-redef]
         CacheEntry,
@@ -256,22 +266,46 @@ def _timestamp_to_datetime(timestamp: float | None) -> datetime | None:
 def _build_cached_payload(
     stack_data: pd.DataFrame,
     container_data: pd.DataFrame,
+    endpoint_data: pd.DataFrame,
+    container_details: pd.DataFrame,
+    host_data: pd.DataFrame,
+    volume_data: pd.DataFrame,
+    image_data: pd.DataFrame,
     warnings: list[str],
 ) -> dict[str, object]:
     return {
         "stack_data": _serialise_dataframe(stack_data),
         "container_data": _serialise_dataframe(container_data),
+        "endpoint_data": _serialise_dataframe(endpoint_data),
+        "container_details": _serialise_dataframe(container_details),
+        "host_data": _serialise_dataframe(host_data),
+        "volume_data": _serialise_dataframe(volume_data),
+        "image_data": _serialise_dataframe(image_data),
         "warnings": warnings,
     }
 
 
 def _deserialise_cache_entry(
     entry: CacheEntry,
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]] | None:
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    list[str],
+] | None:
     payload = entry.payload
     try:
         stack_data = _deserialise_dataframe(payload.get("stack_data"))
         container_data = _deserialise_dataframe(payload.get("container_data"))
+        endpoint_data = _deserialise_dataframe(payload.get("endpoint_data"))
+        container_details = _deserialise_dataframe(payload.get("container_details"))
+        host_data = _deserialise_dataframe(payload.get("host_data"))
+        volume_data = _deserialise_dataframe(payload.get("volume_data"))
+        image_data = _deserialise_dataframe(payload.get("image_data"))
     except ValueError:
         return None
     warnings_raw = payload.get("warnings")
@@ -281,14 +315,37 @@ def _deserialise_cache_entry(
         warnings = list(warnings_raw)
     else:
         warnings = []
-    return stack_data, container_data, warnings
+    return (
+        stack_data,
+        container_data,
+        endpoint_data,
+        container_details,
+        host_data,
+        volume_data,
+        image_data,
+        warnings,
+    )
 
 
 def _fetch_portainer_payload(
     environments: tuple[PortainerEnvironment, ...], *, include_stopped: bool
-) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    pd.DataFrame,
+    list[str],
+]:
     stack_frames: list[pd.DataFrame] = []
     container_frames: list[pd.DataFrame] = []
+    endpoint_frames: list[pd.DataFrame] = []
+    container_detail_frames: list[pd.DataFrame] = []
+    host_frames: list[pd.DataFrame] = []
+    volume_frames: list[pd.DataFrame] = []
+    image_frames: list[pd.DataFrame] = []
     warnings: list[str] = []
 
     for environment in environments:
@@ -300,6 +357,12 @@ def _fetch_portainer_payload(
         endpoints = client.list_edge_endpoints()
         stacks: dict[int, list[dict]] = {}
         containers: dict[int, list[dict]] = {}
+        inspections: dict[int, dict[str, dict]] = {}
+        stats: dict[int, dict[str, dict]] = {}
+        host_info: dict[int, dict[str, object]] = {}
+        host_usage: dict[int, dict[str, object]] = {}
+        volumes: dict[int, list[dict]] = {}
+        images: dict[int, list[dict]] = {}
 
         for endpoint in endpoints:
             endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
@@ -319,6 +382,61 @@ def _fetch_portainer_payload(
                     f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
                 )
                 containers[endpoint_id] = []
+            try:
+                host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
+            except PortainerAPIError as exc:
+                warnings.append(
+                    f"[{environment.name}] Failed to load host info for endpoint {endpoint_id}: {exc}"
+                )
+                host_info[endpoint_id] = {}
+            try:
+                host_usage[endpoint_id] = client.get_endpoint_system_df(endpoint_id)
+            except PortainerAPIError as exc:
+                warnings.append(
+                    f"[{environment.name}] Failed to load host usage for endpoint {endpoint_id}: {exc}"
+                )
+                host_usage[endpoint_id] = {}
+            try:
+                volumes[endpoint_id] = client.list_volumes_for_endpoint(endpoint_id)
+            except PortainerAPIError as exc:
+                warnings.append(
+                    f"[{environment.name}] Failed to load volumes for endpoint {endpoint_id}: {exc}"
+                )
+                volumes[endpoint_id] = []
+            try:
+                images[endpoint_id] = client.list_images_for_endpoint(endpoint_id)
+            except PortainerAPIError as exc:
+                warnings.append(
+                    f"[{environment.name}] Failed to load images for endpoint {endpoint_id}: {exc}"
+                )
+                images[endpoint_id] = []
+
+            inspections.setdefault(endpoint_id, {})
+            stats.setdefault(endpoint_id, {})
+            for container in containers.get(endpoint_id, []):
+                container_id = (
+                    container.get("Id")
+                    or container.get("ID")
+                    or container.get("id")
+                )
+                if not isinstance(container_id, str) or not container_id:
+                    continue
+                try:
+                    inspections[endpoint_id][container_id] = client.inspect_container(
+                        endpoint_id, container_id
+                    )
+                except PortainerAPIError as exc:
+                    warnings.append(
+                        f"[{environment.name}] Failed to inspect container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                    )
+                try:
+                    stats[endpoint_id][container_id] = client.get_container_stats(
+                        endpoint_id, container_id
+                    )
+                except PortainerAPIError as exc:
+                    warnings.append(
+                        f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
+                    )
 
         stack_df = normalise_endpoint_stacks(endpoints, stacks)
         stack_df["environment_name"] = environment.name
@@ -327,6 +445,28 @@ def _fetch_portainer_payload(
         container_df = normalise_endpoint_containers(endpoints, containers)
         container_df["environment_name"] = environment.name
         container_frames.append(container_df)
+
+        endpoint_df = normalise_endpoint_metadata(endpoints)
+        endpoint_df["environment_name"] = environment.name
+        endpoint_frames.append(endpoint_df)
+
+        container_details_df = normalise_container_details(
+            endpoints, containers, inspections, stats
+        )
+        container_details_df["environment_name"] = environment.name
+        container_detail_frames.append(container_details_df)
+
+        host_df = normalise_endpoint_host_metrics(endpoints, host_info, host_usage)
+        host_df["environment_name"] = environment.name
+        host_frames.append(host_df)
+
+        volume_df = normalise_endpoint_volumes(endpoints, volumes)
+        volume_df["environment_name"] = environment.name
+        volume_frames.append(volume_df)
+
+        image_df = normalise_endpoint_images(endpoints, images)
+        image_df["environment_name"] = environment.name
+        image_frames.append(image_df)
 
     if stack_frames:
         stack_data = pd.concat(stack_frames, ignore_index=True)
@@ -340,7 +480,46 @@ def _fetch_portainer_payload(
         container_data = normalise_endpoint_containers([], {})
         container_data["environment_name"] = pd.Series(dtype="object")
 
-    return stack_data, container_data, warnings
+    if endpoint_frames:
+        endpoint_data = pd.concat(endpoint_frames, ignore_index=True)
+    else:
+        endpoint_data = normalise_endpoint_metadata([])
+        endpoint_data["environment_name"] = pd.Series(dtype="object")
+
+    if container_detail_frames:
+        container_detail_data = pd.concat(container_detail_frames, ignore_index=True)
+    else:
+        container_detail_data = normalise_container_details([], {}, {}, {})
+        container_detail_data["environment_name"] = pd.Series(dtype="object")
+
+    if host_frames:
+        host_data = pd.concat(host_frames, ignore_index=True)
+    else:
+        host_data = normalise_endpoint_host_metrics([], {}, {})
+        host_data["environment_name"] = pd.Series(dtype="object")
+
+    if volume_frames:
+        volume_data = pd.concat(volume_frames, ignore_index=True)
+    else:
+        volume_data = normalise_endpoint_volumes([], {})
+        volume_data["environment_name"] = pd.Series(dtype="object")
+
+    if image_frames:
+        image_data = pd.concat(image_frames, ignore_index=True)
+    else:
+        image_data = normalise_endpoint_images([], {})
+        image_data["environment_name"] = pd.Series(dtype="object")
+
+    return (
+        stack_data,
+        container_data,
+        endpoint_data,
+        container_detail_data,
+        host_data,
+        volume_data,
+        image_data,
+        warnings,
+    )
 
 
 def _start_background_refresh(
@@ -354,10 +533,28 @@ def _start_background_refresh(
 
     def _worker() -> None:
         try:
-            stack_data, container_data, warnings = _fetch_portainer_payload(
+            (
+                stack_data,
+                container_data,
+                endpoint_data,
+                container_details,
+                host_data,
+                volume_data,
+                image_data,
+                warnings,
+            ) = _fetch_portainer_payload(
                 environments, include_stopped=include_stopped
             )
-            payload = _build_cached_payload(stack_data, container_data, warnings)
+            payload = _build_cached_payload(
+                stack_data,
+                container_data,
+                endpoint_data,
+                container_details,
+                host_data,
+                volume_data,
+                image_data,
+                warnings,
+            )
             store_portainer_cache_entry(cache_key, payload)
         except Exception:  # pragma: no cover - defensive guard for background thread
             LOGGER.warning(
@@ -415,7 +612,16 @@ def fetch_portainer_data(
     if cache_entry:
         cached = _deserialise_cache_entry(cache_entry)
         if cached:
-            stack_data, container_data, warnings = cached
+            (
+                stack_data,
+                container_data,
+                endpoint_data,
+                container_details,
+                host_data,
+                volume_data,
+                image_data,
+                warnings,
+            ) = cached
             refreshed_at = _timestamp_to_datetime(cache_entry.refreshed_at)
             is_refreshing = False
             if cache_entry.is_expired:
@@ -426,17 +632,41 @@ def fetch_portainer_data(
                 return PortainerDataResult(
                     stack_data=stack_data,
                     container_data=container_data,
+                    endpoint_data=endpoint_data,
+                    container_details=container_details,
+                    host_data=host_data,
+                    volume_data=volume_data,
+                    image_data=image_data,
                     warnings=warnings,
                     refreshed_at=refreshed_at,
                     is_stale=cache_entry.is_expired,
                     is_refreshing=is_refreshing,
                 )
 
-    stack_data, container_data, warnings = _fetch_portainer_payload(
+    (
+        stack_data,
+        container_data,
+        endpoint_data,
+        container_details,
+        host_data,
+        volume_data,
+        image_data,
+        warnings,
+    ) = _fetch_portainer_payload(
         environments, include_stopped=include_stopped
     )
     refreshed_timestamp = store_portainer_cache_entry(
-        cache_key, _build_cached_payload(stack_data, container_data, warnings)
+        cache_key,
+        _build_cached_payload(
+            stack_data,
+            container_data,
+            endpoint_data,
+            container_details,
+            host_data,
+            volume_data,
+            image_data,
+            warnings,
+        ),
     )
     refreshed_at = _timestamp_to_datetime(refreshed_timestamp)
     if refreshed_at is None:
@@ -445,6 +675,11 @@ def fetch_portainer_data(
     return PortainerDataResult(
         stack_data=stack_data,
         container_data=container_data,
+        endpoint_data=endpoint_data,
+        container_details=container_details,
+        host_data=host_data,
+        volume_data=volume_data,
+        image_data=image_data,
         warnings=warnings,
         refreshed_at=refreshed_at,
         is_stale=False,
@@ -522,12 +757,22 @@ class FilterResult:
     container_search: str
     stack_data: pd.DataFrame
     container_data: pd.DataFrame
+    endpoint_data: pd.DataFrame
+    container_details: pd.DataFrame
+    host_data: pd.DataFrame
+    volume_data: pd.DataFrame
+    image_data: pd.DataFrame
 
 
 @dataclass
 class PortainerDataResult:
     stack_data: pd.DataFrame
     container_data: pd.DataFrame
+    endpoint_data: pd.DataFrame
+    container_details: pd.DataFrame
+    host_data: pd.DataFrame
+    volume_data: pd.DataFrame
+    image_data: pd.DataFrame
     warnings: list[str]
     refreshed_at: datetime | None
     is_stale: bool
@@ -560,6 +805,11 @@ def render_sidebar_filters(
     stack_data: pd.DataFrame,
     container_data: pd.DataFrame,
     *,
+    endpoint_data: pd.DataFrame | None = None,
+    container_details: pd.DataFrame | None = None,
+    host_data: pd.DataFrame | None = None,
+    volume_data: pd.DataFrame | None = None,
+    image_data: pd.DataFrame | None = None,
     data_status: PortainerDataResult | None = None,
     show_stack_search: bool = True,
     show_container_search: bool = True,
@@ -716,6 +966,49 @@ def render_sidebar_filters(
         )
         containers_filtered = containers_filtered[search_mask]
 
+    def _ensure_dataframe(value: pd.DataFrame | None) -> pd.DataFrame:
+        if value is None:
+            return pd.DataFrame()
+        return value
+
+    endpoint_source = _ensure_dataframe(endpoint_data)
+    host_source = _ensure_dataframe(host_data)
+    volume_source = _ensure_dataframe(volume_data)
+    image_source = _ensure_dataframe(image_data)
+    container_detail_source = _ensure_dataframe(container_details)
+
+    def _filter_scope(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty:
+            return df
+        filtered = df
+        if selected_environments:
+            if "environment_name" in filtered.columns:
+                filtered = filtered[
+                    filtered["environment_name"].isin(selected_environments)
+                ]
+        if selected_endpoints and "endpoint_name" in filtered.columns:
+            filtered = filtered[
+                filtered["endpoint_name"].isin(selected_endpoints)
+            ]
+        return filtered
+
+    endpoint_filtered = _filter_scope(endpoint_source)
+    host_filtered = _filter_scope(host_source)
+    volume_filtered = _filter_scope(volume_source)
+    image_filtered = _filter_scope(image_source)
+    container_details_filtered = _filter_scope(container_detail_source)
+
+    if not containers_filtered.empty and not container_details_filtered.empty:
+        visible_ids = {
+            str(identifier)
+            for identifier in containers_filtered["container_id"].fillna("")
+            if str(identifier)
+        }
+        if visible_ids and "container_id" in container_details_filtered.columns:
+            container_details_filtered = container_details_filtered[
+                container_details_filtered["container_id"].astype(str).isin(visible_ids)
+            ]
+
     return FilterResult(
         selected_environments=selected_environments,
         selected_endpoints=selected_endpoints,
@@ -723,4 +1016,9 @@ def render_sidebar_filters(
         container_search=container_search,
         stack_data=stack_filtered,
         container_data=containers_filtered,
+        endpoint_data=endpoint_filtered,
+        container_details=container_details_filtered,
+        host_data=host_filtered,
+        volume_data=volume_filtered,
+        image_data=image_filtered,
     )
