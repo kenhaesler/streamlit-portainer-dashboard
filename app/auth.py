@@ -236,6 +236,7 @@ def _update_persistent_session_activity(
 
     session.last_active = now
     session.session_timeout = session_timeout
+    _ensure_session_query_param(token)
     _set_session_cookie(token, now=now, session_timeout=session_timeout)
 
 
