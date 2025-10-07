@@ -143,8 +143,10 @@ class SQLiteSessionStorage(SessionStorage):
             check_same_thread=False,
         )
         # Setting ``check_same_thread=False`` allows the SQLite connection to be used
-        # across multiple threads. Thread safety is ensured by guarding all access
-        # with ``self._lock``.
+        # across multiple threads. Note: each method creates a new connection via
+        # ``self._connect()``, so connections are not shared between operations.
+        # Thread safety is ensured by guarding all access with ``self._lock``, which
+        # protects concurrent access to the database file, not connection sharing.
         connection.row_factory = sqlite3.Row
         return connection
 
