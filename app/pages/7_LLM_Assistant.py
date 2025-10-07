@@ -35,6 +35,10 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         estimate_token_count,
         serialise_records,
     )
+    from app.services.llm_workflow import (  # type: ignore[import-not-found]
+        ConversationHistory,
+        QueryStrategy,
+    )
     from app.ui_helpers import (  # type: ignore[import-not-found]
         ExportableDataFrame,
         render_page_header,
@@ -61,6 +65,10 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         enforce_context_budget,
         estimate_token_count,
         serialise_records,
+    )
+    from services.llm_workflow import (  # type: ignore[no-redef]
+        ConversationHistory,
+        QueryStrategy,
     )
     from ui_helpers import ExportableDataFrame, render_page_header  # type: ignore[no-redef]
 
@@ -94,6 +102,17 @@ st.info(
 
 initialise_session_state()
 apply_selected_environment()
+
+conversation_state_raw = st.session_state.get("llm_conversation_history")
+if isinstance(conversation_state_raw, ConversationHistory):
+    conversation_history = conversation_state_raw
+else:
+    mapping_state: Mapping[str, object] | None
+    if isinstance(conversation_state_raw, Mapping):
+        mapping_state = conversation_state_raw
+    else:
+        mapping_state = None
+    conversation_history = ConversationHistory.from_state(mapping_state)
 
 try:
     configured_environments = load_configured_environment_settings()
@@ -278,6 +297,64 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
             "The assistant will trim or omit low-priority tables when this limit is exceeded."
         ),
     )
+    strategy_options: dict[str, QueryStrategy] = {
+        "Direct (single prompt)": QueryStrategy.DIRECT,
+        "Carry summary + recent turns": QueryStrategy.SUMMARY,
+        "Two-step (plan then answer)": QueryStrategy.STAGED,
+    }
+    strategy_default_value = str(
+        st.session_state.get("llm_query_strategy", QueryStrategy.SUMMARY.value)
+    )
+    strategy_labels = list(strategy_options)
+    try:
+        default_index = strategy_labels.index(
+            next(
+                label
+                for label, option in strategy_options.items()
+                if option.value == strategy_default_value
+            )
+        )
+    except StopIteration:
+        default_index = 0
+    query_strategy_label = st.selectbox(
+        "Query orchestration strategy",
+        options=strategy_labels,
+        index=default_index,
+        help=(
+            "Control how the assistant manages follow-up turns. Append a rolling summary, or "
+            "run a lightweight planning call before issuing the final request to the LLM."
+        ),
+    )
+    query_strategy = strategy_options[query_strategy_label]
+    history_turns_default = int(
+        st.session_state.get("llm_history_turns", conversation_history.max_turns)
+    )
+    history_turns = st.slider(
+        "Conversation turns to retain",
+        min_value=1,
+        max_value=6,
+        value=history_turns_default,
+        help=(
+            "How many recent question/answer pairs should be resent to the model on each call. "
+            "Older turns are summarised to keep the prompt within budget."
+        ),
+    )
+    summary_budget_default = int(
+        st.session_state.get(
+            "llm_history_summary_tokens", conversation_history.summary_token_budget
+        )
+    )
+    summary_token_budget = st.slider(
+        "Summary token budget",
+        min_value=0,
+        max_value=1200,
+        value=summary_budget_default,
+        step=50,
+        help=(
+            "Approximate number of tokens reserved for the rolling conversation summary."
+            " Lower values keep prompts shorter; higher values preserve more nuance."
+        ),
+    )
     question = st.text_area(
         "Ask the LLM",
         value=st.session_state.get(
@@ -299,6 +376,13 @@ st.session_state["llm_max_tokens"] = max_tokens
 st.session_state["llm_verify_ssl"] = verify_ssl
 st.session_state["llm_max_context_rows"] = max_context_rows
 st.session_state["llm_max_context_tokens"] = max_context_tokens
+st.session_state["llm_query_strategy"] = query_strategy.value
+st.session_state["llm_history_turns"] = history_turns
+st.session_state["llm_history_summary_tokens"] = summary_token_budget
+conversation_history.configure(
+    max_turns=history_turns, summary_token_budget=summary_token_budget
+)
+st.session_state["llm_conversation_history"] = conversation_history.to_state()
 
 if SYSTEM_CREDENTIALS_LOCKED and SYSTEM_API_ENDPOINT:
     st.info(
@@ -396,6 +480,7 @@ volume_context_template = volume_context.iloc[0:0]
 image_context_template = image_context.iloc[0:0]
 
 context_notices: list[str] = []
+prompt_notices: list[str] = []
 truncation_notice = (
     "Only the first %s containers and their detailed health metrics are included in the LLM context "
     "to keep the prompt concise."
@@ -538,42 +623,94 @@ if submitted:
             "You are a helpful assistant that analyses Portainer container telemetry to help operators "
             "understand their Docker environments. Base your answer strictly on the provided context."
         )
-        messages: list[Mapping[str, object]] = [
-            {"role": "system", "content": system_prompt},
-            {
-                "role": "user",
-                "content": (
-                    f"Question: {question_clean}\n\n"
-                    "Context (JSON):\n"
-                    f"{context_json}"
-                ),
-            },
-        ]
         client = LLMClient(
             base_url=endpoint_clean,
             token=token_to_send,
             model=model_name.strip() or "gpt-oss",
             verify_ssl=verify_ssl,
         )
-        with st.spinner("Querying the LLM..."):
-            try:
-                answer = client.chat(
-                    messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                )
-            except LLMClientError as exc:
-                st.error(f"LLM request failed: {exc}")
-            else:
-                st.session_state["llm_last_question"] = question_clean
-                st.session_state["llm_last_answer"] = answer
-                with response_container:
-                    st.markdown("### LLM response")
-                    st.markdown(answer)
-                displayed_response = True
+        analysis_plan: str | None = None
+        planning_failed = False
+        if query_strategy == QueryStrategy.STAGED:
+            plan_messages = conversation_history.build_plan_messages(
+                system_prompt=system_prompt,
+                question=question_clean,
+                context_json=context_json,
+            )
+            with st.spinner("Generating analysis plan..."):
+                try:
+                    analysis_plan = client.chat(
+                        plan_messages,
+                        temperature=min(temperature, 0.5),
+                        max_tokens=min(256, max_tokens),
+                    )
+                except LLMClientError as exc:
+                    st.error(f"LLM planning request failed: {exc}")
+                    planning_failed = True
+                else:
+                    if analysis_plan:
+                        analysis_plan = analysis_plan.strip()
+                        prompt_notices.append(
+                            "Generated a lightweight plan before the final answer."
+                        )
+        if planning_failed:
+            st.session_state["llm_last_plan"] = analysis_plan or ""
+        else:
+            answer_messages, answer_notices = conversation_history.build_answer_messages(
+                strategy=query_strategy,
+                system_prompt=system_prompt,
+                question=question_clean,
+                context_json=context_json,
+                plan=analysis_plan if query_strategy == QueryStrategy.STAGED else None,
+            )
+            prompt_notices.extend(answer_notices)
+            spinner_label = (
+                "Generating final answer..."
+                if query_strategy == QueryStrategy.STAGED
+                else "Querying the LLM..."
+            )
+            with st.spinner(spinner_label):
+                try:
+                    answer = client.chat(
+                        answer_messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                    )
+                except LLMClientError as exc:
+                    st.error(f"LLM request failed: {exc}")
+                    st.session_state["llm_last_plan"] = analysis_plan or ""
+                else:
+                    st.session_state["llm_last_question"] = question_clean
+                    st.session_state["llm_last_answer"] = answer
+                    if query_strategy == QueryStrategy.STAGED:
+                        st.session_state["llm_last_plan"] = analysis_plan or ""
+                    else:
+                        st.session_state["llm_last_plan"] = ""
+                    conversation_history.record_exchange(
+                        question_clean,
+                        answer,
+                        plan=analysis_plan if query_strategy == QueryStrategy.STAGED else None,
+                    )
+                    st.session_state["llm_conversation_history"] = (
+                        conversation_history.to_state()
+                    )
+                    with response_container:
+                        if analysis_plan and query_strategy == QueryStrategy.STAGED:
+                            st.markdown("#### Analysis plan")
+                            st.markdown(analysis_plan)
+                        st.markdown("### LLM response")
+                        st.markdown(answer)
+                    displayed_response = True
+
+if not submitted:
+    st.session_state.setdefault("llm_last_plan", "")
 
 if not displayed_response and (last_answer := st.session_state.get("llm_last_answer")):
     with response_container:
+        last_plan = st.session_state.get("llm_last_plan", "")
+        if last_plan:
+            st.markdown("#### Analysis plan")
+            st.markdown(last_plan)
         st.markdown("### Most recent response")
         st.markdown(last_answer)
 
@@ -582,6 +719,8 @@ st.caption(
     % (context_token_count, max_context_tokens)
 )
 for notice in context_notices:
+    st.caption(notice)
+for notice in prompt_notices:
     st.caption(notice)
 
 show_context_default = bool(st.session_state.get("llm_show_context", True))
