@@ -227,15 +227,28 @@ class PortainerClient:
             ("/stacks", {"endpointId": endpoint_id}),
             ("/edge/stacks", {"endpointId": endpoint_id}),
         )
+        results: list[dict[str, object]] = []
+        seen_stack_ids: set[int] = set()
+
         for path, params in paths:
             try:
                 data = self._request(path, params=params)
             except PortainerAPIError as exc:
                 LOGGER.debug("Failed fetching %s for endpoint %s: %s", path, endpoint_id, exc)
                 continue
-            if isinstance(data, list):
-                return data
-        return []
+            if not isinstance(data, list):
+                continue
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                raw_id = item.get("Id") or item.get("ID") or item.get("id")
+                stack_id = _coerce_int(raw_id)
+                if stack_id is not None and stack_id in seen_stack_ids:
+                    continue
+                if stack_id is not None:
+                    seen_stack_ids.add(stack_id)
+                results.append(item)
+        return results
 
     def list_containers_for_endpoint(
         self,
