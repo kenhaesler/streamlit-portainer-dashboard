@@ -9,15 +9,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from app import auth
+from app.session_storage import InMemorySessionStorage, SessionRecord
 
 
 def _setup_session_store(monkeypatch):
-    store: dict[str, auth._PersistentSession] = {}
+    store = InMemorySessionStorage()
 
-    def _get_store() -> dict[str, auth._PersistentSession]:
+    def _get_storage() -> InMemorySessionStorage:
         return store
 
-    monkeypatch.setattr(auth, "_get_persistent_sessions", _get_store)
+    monkeypatch.setattr(auth, "_get_session_storage", _get_storage)
     return store
 
 
@@ -25,32 +26,44 @@ def test_get_active_session_count_filters_expired_sessions(monkeypatch):
     store = _setup_session_store(monkeypatch)
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    store["active"] = auth._PersistentSession(
-        username="alice",
-        authenticated_at=now - timedelta(minutes=10),
-        last_active=now - timedelta(minutes=1),
-        session_timeout=timedelta(minutes=30),
+    store.create(
+        SessionRecord(
+            token="active",
+            username="alice",
+            authenticated_at=now - timedelta(minutes=10),
+            last_active=now - timedelta(minutes=1),
+            session_timeout=timedelta(minutes=30),
+            auth_method="static",
+        )
     )
-    store["expired"] = auth._PersistentSession(
-        username="bob",
-        authenticated_at=now - timedelta(hours=2),
-        last_active=now - timedelta(hours=2),
-        session_timeout=timedelta(minutes=30),
+    store.create(
+        SessionRecord(
+            token="expired",
+            username="bob",
+            authenticated_at=now - timedelta(hours=2),
+            last_active=now - timedelta(hours=2),
+            session_timeout=timedelta(minutes=30),
+            auth_method="static",
+        )
     )
 
     assert auth.get_active_session_count(now=now) == 1
-    assert "expired" not in store
+    assert store.retrieve("expired") is None
 
 
 def test_get_active_session_count_supports_sessions_without_timeout(monkeypatch):
     store = _setup_session_store(monkeypatch)
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    store["persistent"] = auth._PersistentSession(
-        username="carol",
-        authenticated_at=now - timedelta(days=1),
-        last_active=now - timedelta(hours=1),
-        session_timeout=None,
+    store.create(
+        SessionRecord(
+            token="persistent",
+            username="carol",
+            authenticated_at=now - timedelta(days=1),
+            last_active=now - timedelta(hours=1),
+            session_timeout=None,
+            auth_method="static",
+        )
     )
 
     assert auth.get_active_session_count(now=now) == 1
@@ -61,11 +74,15 @@ def test_update_session_activity_refreshes_cookie(monkeypatch):
     token = "token-value"
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    store[token] = auth._PersistentSession(
-        username="alice",
-        authenticated_at=now - timedelta(minutes=5),
-        last_active=now - timedelta(minutes=1),
-        session_timeout=timedelta(minutes=30),
+    store.create(
+        SessionRecord(
+            token=token,
+            username="alice",
+            authenticated_at=now - timedelta(minutes=5),
+            last_active=now - timedelta(minutes=1),
+            session_timeout=timedelta(minutes=30),
+            auth_method="static",
+        )
     )
 
     class DummyStreamlit:
@@ -92,11 +109,15 @@ def test_store_session_prunes_expired_entries(monkeypatch):
     store = _setup_session_store(monkeypatch)
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
 
-    store["expired"] = auth._PersistentSession(
-        username="dave",
-        authenticated_at=now - timedelta(hours=2),
-        last_active=now - timedelta(hours=2),
-        session_timeout=timedelta(minutes=30),
+    store.create(
+        SessionRecord(
+            token="expired",
+            username="dave",
+            authenticated_at=now - timedelta(hours=2),
+            last_active=now - timedelta(hours=2),
+            session_timeout=timedelta(minutes=30),
+            auth_method="static",
+        )
     )
 
     class DummyStreamlit:
@@ -112,6 +133,7 @@ def test_store_session_prunes_expired_entries(monkeypatch):
 
     auth._store_persistent_session("alice", now, timedelta(minutes=30))
 
-    assert "expired" not in store
-    assert "new-token" in store
-    assert store["new-token"].username == "alice"
+    assert store.retrieve("expired") is None
+    created = store.retrieve("new-token")
+    assert created is not None
+    assert created.username == "alice"
