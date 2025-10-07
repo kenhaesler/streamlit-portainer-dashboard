@@ -18,6 +18,7 @@ class QueryStrategy(str, Enum):
     DIRECT = "direct"
     SUMMARY = "summary"
     STAGED = "staged"
+    DYNAMIC = "dynamic"
 
 
 @dataclass(slots=True)
@@ -105,7 +106,11 @@ class ConversationHistory:
                 }
             )
 
-        if strategy in (QueryStrategy.SUMMARY, QueryStrategy.STAGED):
+        if strategy in (
+            QueryStrategy.SUMMARY,
+            QueryStrategy.STAGED,
+            QueryStrategy.DYNAMIC,
+        ):
             if self.summary:
                 messages.append(
                     {
@@ -204,6 +209,59 @@ class ConversationHistory:
                 ),
             }
         )
+        return messages
+
+    def build_catalog_messages(
+        self,
+        *,
+        system_prompt: str,
+        question: str,
+        catalog_json: str,
+    ) -> list[Mapping[str, str]]:
+        """Create a prompt asking which context tables the model needs."""
+
+        messages: list[Mapping[str, str]] = [
+            {
+                "role": "system",
+                "content": (
+                    "You are a planning assistant that chooses the smallest Portainer context needed "
+                    "for another assistant to answer the operator's question."
+                ),
+            },
+            {"role": "system", "content": system_prompt},
+        ]
+        if self.summary:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": (
+                        "Conversation summary so far:\n"
+                        f"{self.summary.strip()}"
+                    ),
+                }
+            )
+        for exchange in self.exchanges:
+            messages.extend(
+                [
+                    {
+                        "role": "user",
+                        "content": f"Earlier question: {exchange.question.strip()}",
+                    },
+                    {
+                        "role": "assistant",
+                        "content": f"Earlier answer: {exchange.answer.strip()}",
+                    },
+                ]
+            )
+        user_content = (
+            f"Question: {question.strip()}\n\nAvailable context catalog (JSON):\n{catalog_json}\n\n"
+            "Respond with compact JSON in this shape: "
+            "{{\"tables\": [{{\"name\": \"containers\", \"limit\": 40, \"filters\": {{\"environment_name\": [\"prod\"]}}}}], "
+            "\"include_summary\": true}}. Pick table names from the catalog only, prefer narrow filters "
+            "(environment, stack, status), and keep limits small so the prompt stays short. If no tables are "
+            "required reply with {{\"tables\": []}}."
+        )
+        messages.append({"role": "user", "content": user_content})
         return messages
 
     def to_state(self) -> dict[str, object]:
