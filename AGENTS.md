@@ -19,6 +19,7 @@ Welcome! This repository powers the Streamlit Portainer dashboard. Follow these 
 
 ## Testing expectations
 - Always run the available automated checks when modifying code. At a minimum execute `pytest -q` before submitting a change, and run any targeted tests that cover the modules you touched.
+- Do not commit changes while any required automated tests are failing.
 - When you adjust UI flows or authentication, pair the unit tests with a manual smoke test via `scripts/check_app_starts.sh` to confirm the app still boots and the login flow works as expected.
 
 ## Environment & configuration
