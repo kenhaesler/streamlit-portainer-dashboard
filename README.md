@@ -16,6 +16,8 @@ The application is configured via environment variables:
 - `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
 - `DASHBOARD_AUTH_PROVIDER` – Optional. Set to `oidc` to enable OpenID Connect single sign-on. Defaults to `static`, which uses the username/key form above.
 - `DASHBOARD_SESSION_TIMEOUT_MINUTES` – Optional. Expire authenticated sessions after the specified number of minutes of inactivity. Omit or set to a non-positive value to disable the timeout.
+- `DASHBOARD_SESSION_BACKEND` – Optional. Selects where authenticated session metadata is stored. Defaults to `memory`, which keeps sessions in-process. Set to `sqlite` to persist sessions in a shared SQLite database (recommended for multi-container deployments).
+- `DASHBOARD_SESSION_SQLITE_PATH` – Optional. When using the SQLite session backend, override the database path. Defaults to `.streamlit/sessions.db` inside the application directory.
 - `DASHBOARD_LOG_LEVEL` – Optional. Overrides the log verbosity for the dashboard. Accepts standard Python levels (e.g. `INFO`, `DEBUG`, `ERROR`) plus `TRACE`/`VERBOSE`. Defaults to `INFO` when unset or invalid.
 - `DASHBOARD_OIDC_ISSUER` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. Base issuer URL advertised by your identity provider.
 - `DASHBOARD_OIDC_CLIENT_ID` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. OAuth client identifier registered with the provider.
@@ -42,6 +44,10 @@ they step away from the dashboard. When a session timeout is configured, the rem
 operators can always see how much longer the session will stay active. The dashboard automatically refreshes idle sessions every
 second to keep the countdown up to date. During the final 30 seconds a warning banner appears with a **Keep me logged in**
 button; clicking it immediately refreshes the activity timestamp and prevents the session from expiring.
+
+When OpenID Connect is enabled the dashboard still issues an application session so Streamlit components can operate without
+re-running the full OIDC flow on every page load. The backing store for those sessions is controlled through the environment
+variables above, ensuring both static and OIDC deployments benefit from the shared persistence layer.
 
 ### Theme
 
