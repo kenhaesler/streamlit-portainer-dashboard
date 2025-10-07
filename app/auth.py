@@ -6,7 +6,6 @@ import hashlib
 import html
 import json
 import math
-import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
@@ -19,32 +18,29 @@ import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
 
-USERNAME_ENV_VAR = "DASHBOARD_USERNAME"
-KEY_ENV_VAR = "DASHBOARD_KEY"
-SESSION_TIMEOUT_ENV_VAR = "DASHBOARD_SESSION_TIMEOUT_MINUTES"
-AUTH_PROVIDER_ENV_VAR = "DASHBOARD_AUTH_PROVIDER"
-OIDC_ISSUER_ENV_VAR = "DASHBOARD_OIDC_ISSUER"
-OIDC_CLIENT_ID_ENV_VAR = "DASHBOARD_OIDC_CLIENT_ID"
-OIDC_CLIENT_SECRET_ENV_VAR = "DASHBOARD_OIDC_CLIENT_SECRET"
-OIDC_REDIRECT_URI_ENV_VAR = "DASHBOARD_OIDC_REDIRECT_URI"
-OIDC_SCOPES_ENV_VAR = "DASHBOARD_OIDC_SCOPES"
-OIDC_DISCOVERY_URL_ENV_VAR = "DASHBOARD_OIDC_DISCOVERY_URL"
-OIDC_AUDIENCE_ENV_VAR = "DASHBOARD_OIDC_AUDIENCE"
+from .config import (
+    AUTH_PROVIDER_ENV_VAR,
+    Config,
+    ConfigurationError,
+    KEY_ENV_VAR,
+    OIDCConfig,
+    OIDC_AUDIENCE_ENV_VAR,
+    OIDC_CLIENT_ID_ENV_VAR,
+    OIDC_CLIENT_SECRET_ENV_VAR,
+    OIDC_DISCOVERY_URL_ENV_VAR,
+    OIDC_ISSUER_ENV_VAR,
+    OIDC_REDIRECT_URI_ENV_VAR,
+    OIDC_SCOPES_ENV_VAR,
+    USERNAME_ENV_VAR,
+    reload_config,
+)
+from .config import (
+    _build_well_known_url as _config_build_well_known_url,
+    _load_oidc_config as _config_load_oidc_config,
+)
+
 SESSION_COOKIE_NAME = "dashboard_session_token"
 DEFAULT_SESSION_COOKIE_DURATION = timedelta(days=30)
-
-
-@dataclass(frozen=True)
-class _OIDCSettings:
-    """Configuration required to initiate the OIDC authorisation flow."""
-
-    issuer: str
-    client_id: str
-    client_secret: Optional[str]
-    redirect_uri: str
-    scopes: tuple[str, ...]
-    audience: Optional[str]
-    discovery_url: str
 
 
 @dataclass(frozen=True)
@@ -75,6 +71,9 @@ class _PersistentSession:
         return now - self.last_active >= self.session_timeout
 
 
+_OIDCSettings = OIDCConfig
+
+
 @st.cache_resource(show_spinner=False)
 def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
     """Return a process-wide store of persistent session metadata."""
@@ -82,20 +81,19 @@ def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
     return {}
 
 
-def _get_auth_provider() -> str:
-    """Return the configured authentication provider identifier."""
-
-    provider = os.getenv(AUTH_PROVIDER_ENV_VAR, "static").strip().lower()
-    if not provider:
-        return "static"
-    return provider
-
-
 def _build_well_known_url(issuer: str) -> str:
     """Return the OIDC discovery document URL for the given issuer."""
 
-    cleaned = issuer.rstrip("/")
-    return f"{cleaned}/.well-known/openid-configuration"
+    return _config_build_well_known_url(issuer)
+
+
+def _get_oidc_settings() -> OIDCConfig:
+    """Load the configured OIDC settings from the environment."""
+
+    try:
+        return _config_load_oidc_config()
+    except ConfigurationError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 @lru_cache(maxsize=8)
@@ -154,72 +152,6 @@ def _fetch_oidc_jwks(jwks_uri: str) -> dict[str, Any]:
     return payload
 
 
-def _normalise_scopes(raw_scopes: str | None) -> tuple[str, ...]:
-    """Return a normalised list of scopes ensuring ``openid`` is included."""
-
-    if not raw_scopes:
-        scopes: list[str] = ["openid", "profile", "email"]
-    else:
-        scopes = [scope for scope in raw_scopes.replace(",", " ").split() if scope]
-        if "openid" not in scopes:
-            scopes.insert(0, "openid")
-
-    seen: set[str] = set()
-    deduped: list[str] = []
-    for scope in scopes:
-        if scope in seen:
-            continue
-        seen.add(scope)
-        deduped.append(scope)
-    return tuple(deduped)
-
-
-def _get_oidc_settings() -> _OIDCSettings:
-    """Load the configured OIDC settings from the environment."""
-
-    issuer = os.getenv(OIDC_ISSUER_ENV_VAR, "").strip()
-    if not issuer:
-        raise ValueError(
-            "OIDC authentication is enabled but the issuer URL is missing. "
-            f"Set `{OIDC_ISSUER_ENV_VAR}` to your identity provider issuer."
-        )
-
-    client_id = os.getenv(OIDC_CLIENT_ID_ENV_VAR, "").strip()
-    if not client_id:
-        raise ValueError(
-            "OIDC authentication is enabled but the client ID is missing. "
-            f"Set `{OIDC_CLIENT_ID_ENV_VAR}` to your registered client ID."
-        )
-
-    redirect_uri = os.getenv(OIDC_REDIRECT_URI_ENV_VAR, "").strip()
-    if not redirect_uri:
-        raise ValueError(
-            "OIDC authentication requires a redirect URI. Set "
-            f"`{OIDC_REDIRECT_URI_ENV_VAR}` to the callback URL configured in your identity provider."
-        )
-
-    discovery_url = os.getenv(OIDC_DISCOVERY_URL_ENV_VAR, "").strip()
-    if not discovery_url:
-        discovery_url = _build_well_known_url(issuer)
-
-    client_secret = os.getenv(OIDC_CLIENT_SECRET_ENV_VAR)
-    if client_secret is not None:
-        client_secret = client_secret.strip() or None
-
-    scopes = _normalise_scopes(os.getenv(OIDC_SCOPES_ENV_VAR))
-    audience = os.getenv(OIDC_AUDIENCE_ENV_VAR, "").strip() or None
-
-    return _OIDCSettings(
-        issuer=issuer.rstrip("/"),
-        client_id=client_id,
-        client_secret=client_secret,
-        redirect_uri=redirect_uri,
-        scopes=scopes,
-        audience=audience,
-        discovery_url=discovery_url,
-    )
-
-
 def _select_jwk(jwks: dict[str, Any], *, kid: Optional[str]) -> dict[str, Any]:
     """Return the signing key matching ``kid`` from the JWKS payload."""
 
@@ -241,7 +173,7 @@ def _select_jwk(jwks: dict[str, Any], *, kid: Optional[str]) -> dict[str, Any]:
     raise ValueError("Unable to find a signing key that matches the ID token.")
 
 
-def _verify_id_token(settings: _OIDCSettings, id_token: str) -> dict[str, Any]:
+def _verify_id_token(settings: OIDCConfig, id_token: str) -> dict[str, Any]:
     """Validate the ID token signature and required claims."""
 
     metadata = _load_oidc_provider_metadata(settings.discovery_url)
@@ -281,7 +213,7 @@ def _verify_id_token(settings: _OIDCSettings, id_token: str) -> dict[str, Any]:
 
 def _build_authorization_url(
     metadata: _OIDCProviderMetadata,
-    settings: _OIDCSettings,
+    settings: OIDCConfig,
     *,
     state: str,
     code_challenge: Optional[str],
@@ -363,7 +295,7 @@ def _redirect_to_authorization(url: str) -> None:
 
 def _exchange_code_for_tokens(
     metadata: _OIDCProviderMetadata,
-    settings: _OIDCSettings,
+    settings: OIDCConfig,
     *,
     code: str,
     code_verifier: Optional[str],
@@ -414,7 +346,7 @@ def _extract_display_name(claims: dict[str, Any]) -> str:
 
 
 def _handle_oidc_callback(
-    settings: _OIDCSettings,
+    settings: OIDCConfig,
     session_timeout: Optional[timedelta],
     now: datetime,
 ) -> None:
@@ -504,7 +436,7 @@ def _handle_oidc_callback(
     _trigger_rerun()
 
 
-def _render_oidc_login(settings: _OIDCSettings) -> None:
+def _render_oidc_login(settings: OIDCConfig) -> None:
     """Render the OIDC login button and initiate the flow when clicked."""
 
     st.markdown("### 🔐 Sign in to the Portainer dashboard")
@@ -569,27 +501,6 @@ def _trigger_rerun() -> None:
         st.experimental_rerun()
     except AttributeError:  # pragma: no cover - Streamlit >= 1.27
         st.rerun()  # type: ignore[attr-defined]
-
-
-@lru_cache(maxsize=1)
-def _get_session_timeout() -> Optional[timedelta]:
-    """Return the configured session timeout, if any."""
-    timeout_value = os.getenv(SESSION_TIMEOUT_ENV_VAR)
-    if timeout_value is None or not timeout_value.strip():
-        return None
-
-    try:
-        minutes = int(timeout_value)
-    except ValueError as exc:  # pragma: no cover - defensive programming
-        raise ValueError(
-            "Invalid session timeout. Set "
-            f"`{SESSION_TIMEOUT_ENV_VAR}` to an integer number of minutes."
-        ) from exc
-
-    if minutes <= 0:
-        return None
-
-    return timedelta(minutes=minutes)
 
 
 def _format_remaining_time(delta: timedelta) -> str:
@@ -753,10 +664,10 @@ def _restore_persistent_session(
     session.last_active = now
 
 
-def require_authentication() -> None:
+def require_authentication(config: Config) -> None:
     """Prompt the user for credentials and block execution until authenticated."""
 
-    provider = _get_auth_provider()
+    provider = config.auth.provider
     if provider not in {"static", "oidc"}:
         st.error(
             "Unsupported authentication provider configured. Set "
@@ -764,32 +675,26 @@ def require_authentication() -> None:
         )
         st.stop()
 
-    try:
-        session_timeout = _get_session_timeout()
-    except ValueError as exc:
-        st.error(str(exc))
-        st.stop()
+    session_timeout = config.auth.session_timeout
 
     now = datetime.now(timezone.utc)
     session_timer_placeholder = st.sidebar.empty()
     auto_refresh_triggered = False
 
-    oidc_settings: Optional[_OIDCSettings] = None
-    expected_username: Optional[str] = None
-    expected_key: Optional[str] = None
-
     if provider == "oidc":
-        try:
-            oidc_settings = _get_oidc_settings()
-        except ValueError as exc:
-            st.error(str(exc))
+        oidc_settings = config.auth.oidc
+        if oidc_settings is None:
+            st.error(
+                "OIDC authentication is enabled but configuration is incomplete. "
+                "Verify the OIDC environment variables before starting the app."
+            )
             st.stop()
 
         _restore_persistent_session(None, session_timeout, now)
         _handle_oidc_callback(oidc_settings, session_timeout, now)
     else:
-        expected_username = os.getenv(USERNAME_ENV_VAR)
-        expected_key = os.getenv(KEY_ENV_VAR)
+        expected_username = config.auth.static.username
+        expected_key = config.auth.static.key
 
         if not expected_username or not expected_key:
             st.error(

@@ -6,6 +6,10 @@ import plotly.express as px
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.config import (  # type: ignore[import-not-found]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
     from app.auth import (  # type: ignore[import-not-found]
         render_logout_button,
         require_authentication,
@@ -28,6 +32,10 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         style_plotly_figure,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from config import (  # type: ignore[no-redef]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
     from auth import (  # type: ignore[no-redef]
         render_logout_button,
         require_authentication,
@@ -50,7 +58,13 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         style_plotly_figure,
     )
 
-require_authentication()
+try:
+    CONFIG = get_config()
+except ConfigError as exc:
+    st.error(str(exc))
+    st.stop()
+
+require_authentication(CONFIG)
 render_logout_button()
 
 render_page_header(
@@ -61,11 +75,11 @@ render_page_header(
     ),
 )
 
-initialise_session_state()
-apply_selected_environment()
+initialise_session_state(CONFIG)
+apply_selected_environment(CONFIG)
 
 try:
-    configured_environments = load_configured_environment_settings()
+    configured_environments = load_configured_environment_settings(CONFIG)
 except ConfigurationError as exc:
     st.error(str(exc))
     st.stop()
@@ -77,7 +91,10 @@ except NoEnvironmentsConfiguredError:
     st.stop()
 
 try:
-    data_result = load_portainer_data(configured_environments)
+    data_result = load_portainer_data(
+        CONFIG,
+        configured_environments,
+    )
 except PortainerAPIError as exc:
     st.error(f"Failed to load data from Portainer: {exc}")
     st.stop()
@@ -95,6 +112,7 @@ if stack_data.empty and container_data.empty:
     st.stop()
 
 filters = render_sidebar_filters(
+    CONFIG,
     stack_data,
     container_data,
     data_status=data_result,

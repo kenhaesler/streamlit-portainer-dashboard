@@ -7,6 +7,17 @@ from pathlib import Path
 import streamlit as st
 
 try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.config import (  # type: ignore[import-not-found]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from config import (  # type: ignore[no-redef]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
+
+try:  # pragma: no cover - import shim for Streamlit runtime
     from app.auth import (  # type: ignore[import-not-found]
         render_logout_button,
         require_authentication,
@@ -125,19 +136,24 @@ def rerun_app() -> None:
 
     trigger_rerun()
 
+try:
+    CONFIG = get_config()
+except ConfigError as exc:
+    st.error(str(exc))
+    st.stop()
 
-require_authentication()
+require_authentication(CONFIG)
 render_logout_button()
 
 st.title("Settings")
 
-initialise_session_state()
+initialise_session_state(CONFIG)
 
 pending_active_env_key = "portainer_env_pending_active"
 if pending_active := st.session_state.pop(pending_active_env_key, None):
-    set_active_environment(pending_active)
+    set_active_environment(CONFIG, pending_active)
 
-apply_selected_environment()
+apply_selected_environment(CONFIG)
 
 st.header("Portainer environments")
 
@@ -264,10 +280,10 @@ if submitted:
         else:
             updated_envs[edit_index] = updated_env
         set_saved_environments(updated_envs)
-        set_active_environment(name_value)
+        set_active_environment(CONFIG, name_value)
         st.session_state[pending_selection_key] = name_value
         st.session_state[prev_selection_key] = name_value
-        clear_cached_data()
+        clear_cached_data(CONFIG)
         rerun_app()
 
 if form_error:
@@ -301,7 +317,7 @@ if env_names:
         key="portainer_selected_env",
     )
     if choice != active_env:
-        set_active_environment(choice)
+        set_active_environment(CONFIG, choice)
         rerun_app()
 
 else:
@@ -494,6 +510,6 @@ for env in environments_state:
             if get_selected_environment_name() == env_name:
                 next_name = updated_envs[0]["name"] if updated_envs else ""
                 st.session_state[pending_active_env_key] = next_name
-            clear_cached_data()
+            clear_cached_data(CONFIG)
             rerun_app()
 

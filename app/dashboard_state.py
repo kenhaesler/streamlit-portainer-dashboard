@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -11,6 +10,8 @@ from typing import Iterable, Sequence
 import pandas as pd
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+
+from .config import Config
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from .portainer_client import (  # type: ignore[import-not-found]
@@ -122,11 +123,23 @@ def trigger_rerun() -> None:
     rerun()
 
 
-def initialise_session_state() -> None:
+def initialise_session_state(config: Config) -> None:
     """Ensure baseline session state is available for all pages."""
 
     if SESSION_ENVIRONMENTS_KEY not in st.session_state:
-        st.session_state[SESSION_ENVIRONMENTS_KEY] = load_environments()
+        stored = load_environments()
+        if not stored:
+            defaults = config.portainer.default_environment
+            if defaults.api_url and defaults.api_key:
+                stored = [
+                    {
+                        "name": defaults.environment_name or "Default",
+                        "api_url": defaults.api_url,
+                        "api_key": defaults.api_key,
+                        "verify_ssl": defaults.verify_ssl,
+                    }
+                ]
+        st.session_state[SESSION_ENVIRONMENTS_KEY] = stored
 
     environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
     try:
@@ -169,56 +182,52 @@ def _get_selected_environment() -> dict[str, object] | None:
     return None
 
 
-def _set_environment_variables(environment: dict[str, object] | None) -> None:
-    """Apply environment variables for the selected Portainer environment."""
-
-    if environment is None:
-        return
-
-    os.environ["PORTAINER_API_URL"] = str(environment.get("api_url", ""))
-    os.environ["PORTAINER_API_KEY"] = str(environment.get("api_key", ""))
-    os.environ["PORTAINER_VERIFY_SSL"] = (
-        "true" if bool(environment.get("verify_ssl", True)) else "false"
-    )
-    if name := environment.get("name"):
-        os.environ["PORTAINER_ENVIRONMENT_NAME"] = str(name)
-
-
-def set_active_environment(name: str) -> None:
+def set_active_environment(config: Config, name: str) -> None:
     """Update the active environment selection."""
 
     previous_selection = st.session_state.get(SESSION_SELECTED_ENV_KEY, "")
     st.session_state[SESSION_SELECTED_ENV_KEY] = name
     st.session_state.pop(SESSION_APPLIED_ENV_KEY, None)
-    clear_cached_data(persistent=bool(str(previous_selection).strip()))
+    clear_cached_data(config, persistent=bool(str(previous_selection).strip()))
 
 
-def apply_selected_environment() -> None:
+def apply_selected_environment(config: Config) -> None:
     """Apply the selected environment if it has changed since the last run."""
 
     selected = get_selected_environment_name()
     applied = st.session_state.get(SESSION_APPLIED_ENV_KEY)
-    if applied == selected:
-        return
     environment = _get_selected_environment()
-    _set_environment_variables(environment)
+    if environment is None:
+        defaults = config.portainer.default_environment
+        if defaults.api_url and defaults.api_key:
+            environment = {
+                "name": defaults.environment_name or "Default",
+                "api_url": defaults.api_url,
+                "api_key": defaults.api_key,
+                "verify_ssl": defaults.verify_ssl,
+            }
+
+    if applied == selected:
+        st.session_state["active_portainer_environment"] = environment
+        return
+
+    st.session_state["active_portainer_environment"] = environment
     st.session_state[SESSION_APPLIED_ENV_KEY] = selected
-    clear_cached_data(persistent=applied is not None)
+    clear_cached_data(config, persistent=applied is not None)
 
 
-def load_configured_environment_settings() -> tuple[PortainerEnvironment, ...]:
+def load_configured_environment_settings(
+    config: Config,
+) -> tuple[PortainerEnvironment, ...]:
     """Load configured Portainer environments from environment variables."""
 
-    try:
-        environments = tuple(get_configured_environments())
-    except ValueError as exc:  # pragma: no cover - depends on runtime configuration
-        raise ConfigurationError(str(exc)) from exc
+    environments = config.portainer.configured_environments
     if not environments:
         raise NoEnvironmentsConfiguredError
     return environments
 
 
-def clear_cached_data(*, persistent: bool = True) -> None:
+def clear_cached_data(config: Config, *, persistent: bool = True) -> None:
     """Clear cached Portainer data.
 
     Parameters
@@ -233,7 +242,7 @@ def clear_cached_data(*, persistent: bool = True) -> None:
 
     fetch_portainer_data.clear()  # type: ignore[attr-defined]
     if persistent:
-        clear_persistent_portainer_cache()
+        clear_persistent_portainer_cache(config.cache)
 
 
 def _serialise_dataframe(df: pd.DataFrame) -> dict[str, object]:
@@ -558,6 +567,7 @@ def _fetch_portainer_payload(
 
 
 def _start_background_refresh(
+    config: Config,
     cache_key: str,
     environments: tuple[PortainerEnvironment, ...],
     *,
@@ -595,7 +605,7 @@ def _start_background_refresh(
                 image_data,
                 warnings,
             )
-            store_portainer_cache_entry(cache_key, payload)
+            store_portainer_cache_entry(config.cache, cache_key, payload)
         except Exception:  # pragma: no cover - defensive guard for background thread
             LOGGER.warning(
                 "Background refresh for cache key %s failed", cache_key, exc_info=True
@@ -630,6 +640,7 @@ def _start_background_refresh(
 
 @st.cache_data(show_spinner=False)
 def fetch_portainer_data(
+    config: Config,
     environments: tuple[PortainerEnvironment, ...],
     *,
     include_stopped: bool = False,
@@ -663,7 +674,7 @@ def fetch_portainer_data(
         include_container_details=include_container_details,
         include_resource_utilisation=include_resource_utilisation,
     )
-    cache_entry = load_portainer_cache_entry(cache_key)
+    cache_entry = load_portainer_cache_entry(config.cache, cache_key)
 
     if cache_entry:
         cached = _deserialise_cache_entry(cache_entry)
@@ -682,6 +693,7 @@ def fetch_portainer_data(
             is_refreshing = False
             if cache_entry.is_expired:
                 is_refreshing = _start_background_refresh(
+                    config,
                     cache_key,
                     environments,
                     include_stopped=include_stopped,
@@ -719,6 +731,7 @@ def fetch_portainer_data(
         include_resource_utilisation=include_resource_utilisation,
     )
     refreshed_timestamp = store_portainer_cache_entry(
+        config.cache,
         cache_key,
         _build_cached_payload(
             stack_data,
@@ -777,6 +790,7 @@ def render_data_refresh_notice(result: PortainerDataResult) -> None:
 
 
 def load_portainer_data(
+    config: Config,
     environments: tuple[PortainerEnvironment, ...],
     *,
     include_stopped: bool = False,
@@ -793,6 +807,7 @@ def load_portainer_data(
     message = progress_message or "🔄 Fetching the latest data from Portainer…"
     with st.spinner(message):
         return fetch_portainer_data(
+            config,
             environments,
             include_stopped=include_stopped,
             include_container_details=include_container_details,
@@ -903,6 +918,7 @@ def _render_sidebar_refresh_status(status: PortainerDataResult) -> None:
 
 
 def render_sidebar_filters(
+    config: Config,
     stack_data: pd.DataFrame,
     container_data: pd.DataFrame,
     *,
@@ -928,7 +944,7 @@ def render_sidebar_filters(
             help="Clear cached Portainer responses and fetch the latest data immediately.",
         )
         if refresh_now:
-            clear_cached_data()
+            clear_cached_data(config)
             trigger_rerun()
 
         refresh_options = [0, 15, 30, 60, 120, 300]
@@ -962,7 +978,7 @@ def render_sidebar_filters(
             previous_count = st.session_state.get(SESSION_AUTO_REFRESH_COUNT)
             st.session_state[SESSION_AUTO_REFRESH_COUNT] = refresh_count
             if previous_count is not None and refresh_count != previous_count:
-                clear_cached_data()
+                clear_cached_data(config)
                 trigger_rerun()
         else:
             st.session_state.pop(SESSION_AUTO_REFRESH_COUNT, None)
@@ -976,7 +992,7 @@ def render_sidebar_filters(
             current_name = get_selected_environment_name()
             if current_name not in env_names:
                 current_name = env_names[0]
-                set_active_environment(current_name)
+                set_active_environment(config, current_name)
             selection = st.selectbox(
                 "Active environment",
                 env_names,
@@ -984,7 +1000,7 @@ def render_sidebar_filters(
                 help="Choose which saved Portainer environment should drive this session.",
             )
             if selection != current_name:
-                set_active_environment(selection)
+                set_active_environment(config, selection)
                 trigger_rerun()
         else:
             st.info("No saved environments. Use the Settings page to add one.")
