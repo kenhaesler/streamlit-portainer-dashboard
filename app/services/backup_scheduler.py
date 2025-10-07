@@ -7,20 +7,29 @@ import json
 import logging
 import os
 import re
+import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Mapping, Sequence
+
+try:  # pragma: no cover - import shim for Streamlit runtime
+    from ..file_locking import FileLock, Timeout  # type: ignore[import-not-found]
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when executed as a script
+    from file_locking import FileLock, Timeout  # type: ignore[no-redef]
 
 from .backup import (
     backup_directory,
     create_environment_backup,
     default_backup_password,
 )
+from ..settings import load_environments
 
 __all__ = [
     "BackupHistoryEntry",
     "ScheduleSnapshot",
     "configured_interval_seconds",
+    "ensure_scheduler_running",
     "get_schedule_snapshot",
     "maybe_run_scheduled_backups",
     "schedule_state_path",
@@ -35,6 +44,17 @@ _SCHEDULE_FILENAME = "schedule.json"
 _DISABLE_VALUES = {"0", "false", "no", "off", "never", "none"}
 _UNIT_MULTIPLIERS = {"s": 1, "m": 60, "h": 3600, "d": 86_400}
 _DEFAULT_INTERVAL_UNIT = "h"
+_SCHEDULE_LOCK_SUFFIX = ".lock"
+_SCHEDULE_LOCK_TIMEOUT_SECONDS = 10.0
+_SCHEDULER_THREAD_LOCK = threading.Lock()
+_SCHEDULER_THREAD: threading.Thread | None = None
+_SCHEDULER_STOP_EVENT = threading.Event()
+_SCHEDULER_WAKE_EVENT = threading.Event()
+_DEFAULT_NEXT_RUN_DELAY_SECONDS = 300.0
+_LOCK_CONTENTION_BACKOFF_SECONDS = 60.0
+_MIN_SCHEDULER_SLEEP_SECONDS = 1.0
+_MAX_SCHEDULER_SLEEP_SECONDS = 3600.0
+_SCHEDULER_CATCHUP_SLEEP_SECONDS = 15.0
 
 
 @dataclass(frozen=True)
@@ -125,46 +145,33 @@ def _env_interval_metadata() -> tuple[int, str | None, str | None]:
 def configured_interval_seconds() -> int:
     """Return the configured backup interval in seconds (0 when disabled)."""
 
-    state = _load_schedule()
-    env_interval, env_value, _ = _env_interval_metadata()
+    with _acquire_schedule_lock():
+        state = _load_schedule_unlocked()
+        env_interval, env_value, _ = _env_interval_metadata()
 
-    if env_value is not None:
-        if state is None:
+        if env_value is not None:
+            history = list(state.history if state else [])
             if env_interval <= 0:
-                return 0
-            next_run = _advance_schedule(_utcnow(), env_interval)
-            _store_schedule(
-                _ScheduleState(
-                    next_run=next_run,
-                    interval_seconds=env_interval,
-                    history=[],
+                _store_schedule_unlocked(
+                    _ScheduleState(next_run=None, interval_seconds=0, history=history)
                 )
-            )
-            return env_interval
-        if env_interval != state.interval_seconds:
-            if env_interval <= 0:
-                _store_schedule(
+                _notify_scheduler()
+                return 0
+            if state is None or env_interval != state.interval_seconds:
+                next_run = _advance_schedule(_utcnow(), env_interval)
+                _store_schedule_unlocked(
                     _ScheduleState(
-                        next_run=None,
-                        interval_seconds=0,
-                        history=list(state.history),
+                        next_run=next_run,
+                        interval_seconds=env_interval,
+                        history=history,
                     )
                 )
-                return 0
-            next_run = _advance_schedule(_utcnow(), env_interval)
-            _store_schedule(
-                _ScheduleState(
-                    next_run=next_run,
-                    interval_seconds=env_interval,
-                    history=list(state.history),
-                )
-            )
+                _notify_scheduler()
             return env_interval
-        return state.interval_seconds
 
-    if state is not None:
-        return state.interval_seconds
-    return env_interval
+        if state is not None:
+            return state.interval_seconds
+        return env_interval
 
 
 def schedule_state_path() -> Path:
@@ -173,7 +180,33 @@ def schedule_state_path() -> Path:
     return backup_directory() / _SCHEDULE_FILENAME
 
 
-def _load_schedule() -> _ScheduleState | None:
+def _schedule_lock_path() -> Path:
+    path = schedule_state_path()
+    return path.with_suffix(f"{path.suffix}{_SCHEDULE_LOCK_SUFFIX}")
+
+
+@contextmanager
+def _acquire_schedule_lock(timeout: float = _SCHEDULE_LOCK_TIMEOUT_SECONDS):
+    lock_path = _schedule_lock_path()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(lock_path))
+    acquired = False
+    try:
+        lock.acquire(timeout=timeout)
+        acquired = True
+        yield
+    except Timeout:
+        LOGGER.warning("Timeout acquiring backup schedule lock at %s", lock_path)
+        raise
+    finally:
+        if acquired:
+            try:
+                lock.release()
+            except RuntimeError:
+                LOGGER.debug("Backup schedule lock already released: %s", lock_path)
+
+
+def _load_schedule_unlocked() -> _ScheduleState | None:
     path = schedule_state_path()
     try:
         payload = json.loads(path.read_text("utf-8"))
@@ -245,7 +278,7 @@ def _load_schedule() -> _ScheduleState | None:
     )
 
 
-def _store_schedule(state: _ScheduleState) -> None:
+def _store_schedule_unlocked(state: _ScheduleState) -> None:
     path = schedule_state_path()
     directory = path.parent
     directory.mkdir(parents=True, exist_ok=True)
@@ -268,7 +301,15 @@ def _store_schedule(state: _ScheduleState) -> None:
 
 
 def _clear_schedule() -> None:
-    _store_schedule(_ScheduleState(next_run=None, interval_seconds=0, history=[]))
+    with _acquire_schedule_lock():
+        _store_schedule_unlocked(
+            _ScheduleState(next_run=None, interval_seconds=0, history=[])
+        )
+    _notify_scheduler()
+
+
+def _notify_scheduler() -> None:
+    _SCHEDULER_WAKE_EVENT.set()
 
 
 def _advance_schedule(now: _dt.datetime, interval_seconds: int) -> _dt.datetime:
@@ -306,18 +347,19 @@ def get_schedule_snapshot() -> ScheduleSnapshot:
     """Return the persisted scheduler state for display in the UI."""
 
     configured_interval_seconds()
-    state = _load_schedule()
-    env_interval, env_value, env_error = _env_interval_metadata()
-    managed_by_env = env_value is not None
+    with _acquire_schedule_lock():
+        state = _load_schedule_unlocked()
+        env_interval, env_value, env_error = _env_interval_metadata()
+        managed_by_env = env_value is not None
 
-    if state is None:
-        interval = env_interval if env_interval > 0 else 0
-        next_run = None
-        history: tuple[BackupHistoryEntry, ...] = tuple()
-    else:
-        interval = state.interval_seconds
-        next_run = state.next_run
-        history = tuple(state.history)
+        if state is None:
+            interval = env_interval if env_interval > 0 else 0
+            next_run = None
+            history: tuple[BackupHistoryEntry, ...] = tuple()
+        else:
+            interval = state.interval_seconds
+            next_run = state.next_run
+            history = tuple(state.history)
 
     return ScheduleSnapshot(
         interval_seconds=interval,
@@ -339,37 +381,45 @@ def update_schedule_interval(interval_seconds: int) -> ScheduleSnapshot:
             f"{_INTERVAL_ENV_VAR} environment variable."
         )
 
-    existing = _load_schedule()
-    history = list(existing.history if existing else [])
     interval_seconds = max(int(interval_seconds), 0)
-    if interval_seconds <= 0:
-        state = _ScheduleState(next_run=None, interval_seconds=0, history=history)
-        _store_schedule(state)
-        return ScheduleSnapshot(
-            interval_seconds=0,
-            next_run=None,
-            history=tuple(history),
-            managed_by_env=False,
-            env_value=None,
-            env_parse_error=None,
-        )
 
-    now = _utcnow()
-    next_run = _advance_schedule(now, interval_seconds)
-    state = _ScheduleState(next_run=next_run, interval_seconds=interval_seconds, history=history)
-    _store_schedule(state)
-    return ScheduleSnapshot(
-        interval_seconds=interval_seconds,
-        next_run=next_run,
-        history=tuple(history),
-        managed_by_env=False,
-        env_value=None,
-        env_parse_error=None,
-    )
+    with _acquire_schedule_lock():
+        existing = _load_schedule_unlocked()
+        history = list(existing.history if existing else [])
+
+        if interval_seconds <= 0:
+            state = _ScheduleState(next_run=None, interval_seconds=0, history=history)
+            _store_schedule_unlocked(state)
+            snapshot = ScheduleSnapshot(
+                interval_seconds=0,
+                next_run=None,
+                history=tuple(history),
+                managed_by_env=False,
+                env_value=None,
+                env_parse_error=None,
+            )
+        else:
+            now = _utcnow()
+            next_run = _advance_schedule(now, interval_seconds)
+            state = _ScheduleState(
+                next_run=next_run, interval_seconds=interval_seconds, history=history
+            )
+            _store_schedule_unlocked(state)
+            snapshot = ScheduleSnapshot(
+                interval_seconds=interval_seconds,
+                next_run=next_run,
+                history=tuple(history),
+                managed_by_env=False,
+                env_value=None,
+                env_parse_error=None,
+            )
+
+    _notify_scheduler()
+    return snapshot
 
 
 def maybe_run_scheduled_backups(
-    environments: Iterable[Mapping[str, object]]
+    environments: Iterable[Mapping[str, object]],
 ) -> List[Path]:
     """Create backups when the configured schedule is due.
 
@@ -380,80 +430,214 @@ def maybe_run_scheduled_backups(
         attempted for each entry when the schedule triggers.
     """
 
-    current_state = _load_schedule()
     interval_seconds = configured_interval_seconds()
-    history = list(current_state.history if current_state else [])
+    envs_list = list(environments)
 
-    if interval_seconds <= 0:
-        _store_schedule(_ScheduleState(next_run=None, interval_seconds=0, history=history))
-        return []
+    schedule_updated = False
+    result: List[Path] = []
 
-    envs = list(environments)
-    now = _utcnow()
-    schedule = current_state
-    if schedule is None or schedule.interval_seconds != interval_seconds:
-        next_run = _advance_schedule(now, interval_seconds)
-        _store_schedule(
-            _ScheduleState(next_run=next_run, interval_seconds=interval_seconds, history=history)
-        )
-        return []
+    try:
+        with _acquire_schedule_lock():
+            current_state = _load_schedule_unlocked()
+            history = list(current_state.history if current_state else [])
 
-    if not envs:
-        if schedule.next_run is None or now >= schedule.next_run:
+            if interval_seconds <= 0:
+                if (
+                    current_state is None
+                    or current_state.interval_seconds != 0
+                    or current_state.next_run is not None
+                ):
+                    _store_schedule_unlocked(
+                        _ScheduleState(
+                            next_run=None, interval_seconds=0, history=history
+                        )
+                    )
+                    schedule_updated = True
+                LOGGER.info("Scheduled backup run skipped because the schedule is disabled")
+                return []
+
+            now = _utcnow()
+
+            if (
+                current_state is None
+                or current_state.interval_seconds != interval_seconds
+            ):
+                next_run = _advance_schedule(now, interval_seconds)
+                _store_schedule_unlocked(
+                    _ScheduleState(
+                        next_run=next_run,
+                        interval_seconds=interval_seconds,
+                        history=history,
+                    )
+                )
+                schedule_updated = True
+                LOGGER.info(
+                    "Initialised scheduled backups at %s second interval", interval_seconds
+                )
+                return []
+
+            if not envs_list:
+                if current_state.next_run is None or now >= current_state.next_run:
+                    next_run = _roll_forward(
+                        now,
+                        interval_seconds=interval_seconds,
+                        previous_next_run=current_state.next_run,
+                    )
+                    _store_schedule_unlocked(
+                        _ScheduleState(
+                            next_run=next_run,
+                            interval_seconds=interval_seconds,
+                            history=history,
+                        )
+                    )
+                    schedule_updated = True
+                LOGGER.info(
+                    "Scheduled backup run skipped because no environments are configured"
+                )
+                return []
+
+            if current_state.next_run is not None and now < current_state.next_run:
+                LOGGER.info(
+                    "Scheduled backup run skipped; next run at %s", current_state.next_run
+                )
+                return []
+
+            generated: List[Path] = []
+            errors: List[str] = []
+            password = default_backup_password()
+            for environment in envs_list:
+                try:
+                    kwargs = {"password": password} if password else {}
+                    path = create_environment_backup(environment, **kwargs)
+                except Exception as exc:  # pragma: no cover - defensive guard
+                    env_name = str(environment.get("name", "environment"))
+                    LOGGER.warning(
+                        "Scheduled backup failed for %s: %s", env_name, exc, exc_info=True
+                    )
+                    errors.append(f"{env_name}: {exc}")
+                    continue
+                generated.append(path)
+
+            completion_time = _utcnow()
+            if generated or errors:
+                history = _with_history(
+                    history,
+                    BackupHistoryEntry(
+                        completed_at=completion_time,
+                        generated_paths=tuple(generated),
+                        errors=tuple(errors),
+                    ),
+                )
+
             next_run = _roll_forward(
                 now,
                 interval_seconds=interval_seconds,
-                previous_next_run=schedule.next_run,
+                previous_next_run=current_state.next_run,
             )
-            _store_schedule(
+            _store_schedule_unlocked(
                 _ScheduleState(
                     next_run=next_run,
                     interval_seconds=interval_seconds,
-                    history=history,
+                    history=list(history),
                 )
             )
-        return []
+            schedule_updated = True
 
-    if schedule.next_run is not None and now < schedule.next_run:
-        return []
+            if errors and generated:
+                LOGGER.info(
+                    "Scheduled backup completed with %d archive(s) and %d error(s)",
+                    len(generated),
+                    len(errors),
+                )
+            elif errors:
+                LOGGER.info(
+                    "Scheduled backup completed with %d error(s) and no archives",
+                    len(errors),
+                )
+            elif generated:
+                LOGGER.info(
+                    "Scheduled backup created %d archive(s)",
+                    len(generated),
+                )
+            else:
+                LOGGER.info("Scheduled backup completed without generating archives")
 
-    generated: List[Path] = []
-    errors: List[str] = []
-    password = default_backup_password()
-    for environment in envs:
+            result = generated
+    except Timeout:
+        LOGGER.warning(
+            "Skipping scheduled backup run because another worker holds the lock"
+        )
+        return []
+    finally:
+        if schedule_updated:
+            _notify_scheduler()
+
+    return result
+
+
+def _seconds_until_next_run() -> float:
+    try:
+        with _acquire_schedule_lock():
+            state = _load_schedule_unlocked()
+            if state is None or state.next_run is None:
+                return _DEFAULT_NEXT_RUN_DELAY_SECONDS
+            remaining = (state.next_run - _utcnow()).total_seconds()
+            if remaining <= 0:
+                return 0.0
+            return remaining
+    except Timeout:
+        LOGGER.warning(
+            "Unable to evaluate next scheduled backup time due to lock contention"
+        )
+        return _LOCK_CONTENTION_BACKOFF_SECONDS
+
+
+def _scheduler_loop() -> None:
+    LOGGER.info("Scheduled backup runner thread started")
+    while not _SCHEDULER_STOP_EVENT.is_set():
         try:
-            kwargs = {"password": password} if password else {}
-            path = create_environment_backup(environment, **kwargs)
-        except Exception as exc:  # pragma: no cover - defensive guard
-            env_name = str(environment.get("name", "environment"))
-            LOGGER.warning(
-                "Scheduled backup failed for %s: %s", env_name, exc, exc_info=True
-            )
-            errors.append(f"{env_name}: {exc}")
-            continue
-        generated.append(path)
-
-    completion_time = _utcnow()
-    if generated or errors:
-        history = _with_history(
-            history,
-            BackupHistoryEntry(
-                completed_at=completion_time,
-                generated_paths=tuple(generated),
-                errors=tuple(errors),
-            ),
+            try:
+                environments = list(load_environments())
+            except Exception as exc:  # pragma: no cover - defensive guard
+                LOGGER.warning(
+                    "Unable to load environments for scheduled backups: %s",
+                    exc,
+                    exc_info=True,
+                )
+                environments = []
+            maybe_run_scheduled_backups(environments)
+        except Exception:  # pragma: no cover - defensive guard
+            LOGGER.exception("Scheduled backup runner encountered an unexpected error")
+        delay = _seconds_until_next_run()
+        delay = (
+            max(_MIN_SCHEDULER_SLEEP_SECONDS, min(delay, _MAX_SCHEDULER_SLEEP_SECONDS))
+            if delay > 0
+            else _SCHEDULER_CATCHUP_SLEEP_SECONDS
         )
+        _SCHEDULER_WAKE_EVENT.clear()
+        awakened = _SCHEDULER_WAKE_EVENT.wait(timeout=delay)
+        if _SCHEDULER_STOP_EVENT.is_set():
+            break
+        if awakened:
+            _SCHEDULER_WAKE_EVENT.clear()
+    LOGGER.info("Scheduled backup runner thread stopping")
 
-    next_run = _roll_forward(
-        now,
-        interval_seconds=interval_seconds,
-        previous_next_run=schedule.next_run,
-    )
-    _store_schedule(
-        _ScheduleState(
-            next_run=next_run,
-            interval_seconds=interval_seconds,
-            history=list(history),
+
+def ensure_scheduler_running() -> None:
+    """Start the background scheduler thread when it is not already running."""
+
+    global _SCHEDULER_THREAD
+
+    with _SCHEDULER_THREAD_LOCK:
+        if _SCHEDULER_THREAD and _SCHEDULER_THREAD.is_alive():
+            return
+        _SCHEDULER_STOP_EVENT.clear()
+        _SCHEDULER_WAKE_EVENT.set()
+        thread = threading.Thread(
+            target=_scheduler_loop,
+            name="portainer-scheduled-backups",
+            daemon=True,
         )
-    )
-    return generated
+        thread.start()
+        _SCHEDULER_THREAD = thread
+        LOGGER.info("Started scheduled backup runner thread")

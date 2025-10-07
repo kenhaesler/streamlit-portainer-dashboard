@@ -5,9 +5,15 @@ import hashlib
 import json
 import logging
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator
+
+try:  # pragma: no cover - import shim for Streamlit runtime
+    from .file_locking import FileLock, Timeout  # type: ignore[import-not-found]
+except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when executed as a script
+    from file_locking import FileLock, Timeout  # type: ignore[no-redef]
 
 from .config import CacheConfig
 
@@ -18,8 +24,10 @@ except (ModuleNotFoundError, ImportError):  # pragma: no cover - fallback when e
 
 LOGGER = logging.getLogger(__name__)
 _CACHE_FILE_SUFFIX = ".json"
+_CACHE_LOCK_SUFFIX = ".lock"
 _CACHE_KEY_DERIVATION_SALT = b"portainer-environment-cache"
 _CACHE_KEY_DERIVATION_ROUNDS = 200_000
+_CACHE_LOCK_TIMEOUT_SECONDS = 5.0
 
 
 __all__ = [
@@ -69,6 +77,33 @@ def _cache_path(config: CacheConfig, key: str) -> Path:
     return _cache_directory(config) / safe_key
 
 
+def _cache_lock_path(path: Path) -> Path:
+    return path.with_suffix(f"{_CACHE_FILE_SUFFIX}{_CACHE_LOCK_SUFFIX}")
+
+
+@contextmanager
+def _acquire_cache_lock(path: Path) -> Iterator[None]:
+    lock_path = _cache_lock_path(path)
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(lock_path))
+    acquired = False
+    try:
+        lock.acquire(timeout=_CACHE_LOCK_TIMEOUT_SECONDS)
+        acquired = True
+        yield
+    except Timeout:
+        LOGGER.warning("Timeout waiting for cache lock on %s", path)
+        raise
+    finally:
+        if acquired:
+            try:
+                lock.release()
+            except RuntimeError:
+                LOGGER.debug("Cache lock already released for %s", path)
+
+
+def _ensure_cache_directory() -> Path:
+    directory = _cache_directory()
 def _ensure_cache_directory(config: CacheConfig) -> Path:
     directory = _cache_directory(config)
     try:
@@ -152,7 +187,12 @@ def load_cache_entry(config: CacheConfig, key: str) -> CacheEntry | None:
             return None
     except OSError:
         return None
-    return _read_payload(path)
+    try:
+        with _acquire_cache_lock(path):
+            return _read_payload(path)
+    except Timeout:
+        LOGGER.warning("Skipping cache read for %s due to lock contention", path)
+        return None
 
 
 def store_cache_entry(
@@ -187,7 +227,11 @@ def store_cache_entry(
     }
     path = _cache_path(config, key)
     try:
-        path.write_text(json.dumps(data), "utf-8")
+        with _acquire_cache_lock(path):
+            path.write_text(json.dumps(data), "utf-8")
+    except Timeout:
+        LOGGER.warning("Unable to persist cache entry %s due to lock contention", path)
+        return None
     except OSError:
         LOGGER.warning("Unable to persist cache entry %s", path)
         return None
