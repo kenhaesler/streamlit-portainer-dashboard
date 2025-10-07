@@ -1,11 +1,10 @@
-"""Lightweight JWT compatibility layer for test environments.
+"""Minimal JWT test stub used when PyJWT is unavailable.
 
-This module provides a minimal subset of the :mod:`PyJWT` API that our
-unit tests exercise. It is **not** a full JWT implementation and should
-only be used when the real dependency is unavailable (for example in CI
-or local test environments where installing optional packages is
-undesirable).
+This module mirrors the subset of the :mod:`PyJWT` API that our unit tests
+exercise. It intentionally keeps the implementation lightweight and is only
+loaded from :mod:`tests.conftest` when the real dependency cannot be imported.
 """
+
 from __future__ import annotations
 
 import base64
