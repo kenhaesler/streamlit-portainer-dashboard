@@ -12,7 +12,12 @@ EnvironmentList = list[dict[str, object]]
 
 
 def _default_clear_cache(*, persistent: bool = True) -> None:  # pragma: no cover - placeholder
-    """Fallback cache clearer used when none is provided."""
+    """Fallback cache clearer used when none is provided.
+
+    The ``persistent`` parameter is unused, but retained for interface
+    compatibility with cache clearer implementations that distinguish between
+    transient and persistent storage.
+    """
 
     pass
 

@@ -131,7 +131,9 @@ render_logout_button()
 
 st.title("Settings")
 
-environment_manager = EnvironmentManager(st.session_state)
+environment_manager = EnvironmentManager(
+    st.session_state, clear_cache=clear_cached_data
+)
 environments = environment_manager.initialise()
 BackgroundJobRunner().maybe_run_backups(environments)
 
