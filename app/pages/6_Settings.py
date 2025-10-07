@@ -178,26 +178,43 @@ if st.session_state.get(prev_selection_key) != selection:
     st.session_state["portainer_env_form_verify_ssl"] = (
         bool(selected_env.get("verify_ssl", True)) if selected_env else True
     )
+    st.session_state["portainer_env_form_show_api_key"] = False
 
 st.session_state.setdefault("portainer_env_form_name", "")
 st.session_state.setdefault("portainer_env_form_api_url", "")
 st.session_state.setdefault("portainer_env_form_api_key", "")
 st.session_state.setdefault("portainer_env_form_verify_ssl", True)
+st.session_state.setdefault("portainer_env_form_show_api_key", False)
 
 form_error: str | None = None
 test_connection_clicked = False
 with st.form("portainer_env_form"):
     st.text_input("Name", key="portainer_env_form_name")
     st.text_input("API URL", key="portainer_env_form_api_url")
+    st.checkbox(
+        "Show API key",
+        key="portainer_env_form_show_api_key",
+        help="Temporarily reveal the API key in this session.",
+    )
     st.text_input(
         "API key",
         key="portainer_env_form_api_key",
-        type="password",
+        type=(
+            "default"
+            if st.session_state.get("portainer_env_form_show_api_key")
+            else "password"
+        ),
     )
     st.checkbox(
         "Verify SSL certificates",
         key="portainer_env_form_verify_ssl",
     )
+    if not st.session_state.get("portainer_env_form_verify_ssl", True):
+        st.warning(
+            "SSL certificate verification is disabled. Only use this for trusted "
+            "internal installations.",
+            icon="⚠️",
+        )
     save_col, test_col = st.columns(2)
     with save_col:
         submitted = st.form_submit_button(
