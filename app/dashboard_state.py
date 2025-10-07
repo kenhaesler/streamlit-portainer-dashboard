@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
@@ -365,7 +364,9 @@ def _fetch_portainer_payload(
         volumes: dict[int, list[dict]] = {}
         images: dict[int, list[dict]] = {}
 
-        def _load_endpoint_payload(endpoint: dict[str, object]) -> tuple[int, list[dict], list[dict], list[str]]:
+        def _load_endpoint_payload(
+            endpoint: dict[str, object]
+        ) -> tuple[int, list[dict], list[dict], list[str]]:
             endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
             endpoint_warnings: list[str] = []
 
@@ -376,6 +377,9 @@ def _fetch_portainer_payload(
                     f"[{environment.name}] Failed to load stacks for endpoint {endpoint_id}: {exc}"
                 )
                 endpoint_stacks = []
+            else:
+                if not isinstance(endpoint_stacks, list):
+                    endpoint_stacks = []
 
             try:
                 endpoint_containers = client.list_containers_for_endpoint(
@@ -385,7 +389,11 @@ def _fetch_portainer_payload(
                 endpoint_warnings.append(
                     f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
                 )
-                containers[endpoint_id] = []
+                endpoint_containers = []
+            else:
+                if not isinstance(endpoint_containers, list):
+                    endpoint_containers = []
+
             try:
                 host_info[endpoint_id] = client.get_endpoint_host_info(endpoint_id)
             except PortainerAPIError as exc:
@@ -417,7 +425,7 @@ def _fetch_portainer_payload(
 
             inspections.setdefault(endpoint_id, {})
             stats.setdefault(endpoint_id, {})
-            for container in containers.get(endpoint_id, []):
+            for container in endpoint_containers:
                 container_id = (
                     container.get("Id")
                     or container.get("ID")
@@ -441,6 +449,17 @@ def _fetch_portainer_payload(
                     warnings.append(
                         f"[{environment.name}] Failed to load stats for container {container_id[:12]} on endpoint {endpoint_id}: {exc}"
                     )
+
+            return endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings
+
+        for endpoint in endpoints:
+            endpoint_id, endpoint_stacks, endpoint_containers, endpoint_warnings = _load_endpoint_payload(
+                endpoint
+            )
+            stacks[endpoint_id] = endpoint_stacks
+            containers[endpoint_id] = endpoint_containers
+            if endpoint_warnings:
+                warnings.extend(endpoint_warnings)
 
         stack_df = normalise_endpoint_stacks(endpoints, stacks)
         stack_df["environment_name"] = environment.name
@@ -736,7 +755,19 @@ def _humanise_stack_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
 
-    endpoint_mapping = {1: "Up", 2: "Down"}
+    endpoint_mapping = {
+        0: "Unknown",
+        1: "Up",
+        2: "Down",
+        3: "Warning",
+        "UP": "Up",
+        "up": "Up",
+        "DOWN": "Down",
+        "down": "Down",
+        "WARNING": "Warning",
+        "warning": "Warning",
+        "unknown": "Unknown",
+    }
     stack_status_mapping = {1: "Active", 2: "Inactive"}
     stack_type_mapping = {1: "Docker Swarm", 2: "Docker Compose", 3: "Kubernetes"}
 
