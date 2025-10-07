@@ -335,7 +335,12 @@ except NoEnvironmentsConfiguredError:
     st.stop()
 
 try:
-    data_result = load_portainer_data(configured_environments, include_stopped=True)
+    data_result = load_portainer_data(
+        configured_environments,
+        include_stopped=True,
+        include_container_details=True,
+        include_resource_utilisation=True,
+    )
 except PortainerAPIError as exc:
     st.error(f"Failed to load data from Portainer: {exc}")
     st.stop()
