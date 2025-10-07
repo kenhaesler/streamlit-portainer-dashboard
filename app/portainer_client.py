@@ -757,11 +757,57 @@ def normalise_endpoint_host_metrics(
         if not isinstance(system_df, dict):
             system_df = {}
         containers_section = system_df.get("Containers")
-        if not isinstance(containers_section, dict):
-            containers_section = {}
         volumes_section = system_df.get("Volumes")
-        if not isinstance(volumes_section, dict):
-            volumes_section = {}
+
+        containers_total = None
+        containers_running = None
+        containers_stopped = None
+        if isinstance(containers_section, dict):
+            containers_total = containers_section.get("Total")
+            containers_running = containers_section.get("Running")
+            containers_stopped = containers_section.get("Stopped")
+        elif isinstance(containers_section, (list, tuple, set)):
+            containers_total = len(list(containers_section))
+        elif isinstance(containers_section, (int, float)):
+            containers_total = containers_section
+
+        volumes_total = None
+        if isinstance(volumes_section, dict):
+            total_count = volumes_section.get("TotalCount")
+            if isinstance(total_count, (int, float)):
+                volumes_total = total_count
+            else:
+                total_raw = volumes_section.get("Total")
+                if isinstance(total_raw, (int, float)):
+                    volumes_total = total_raw
+        elif isinstance(volumes_section, (list, tuple, set)):
+            volumes_total = len(list(volumes_section))
+        elif isinstance(volumes_section, (int, float)):
+            volumes_total = volumes_section
+
+        if not isinstance(info, dict):
+            info = {}
+        if containers_total is None and isinstance(info.get("Containers"), (int, float)):
+            containers_total = info.get("Containers")
+        if containers_running is None and isinstance(
+            info.get("ContainersRunning"), (int, float)
+        ):
+            containers_running = info.get("ContainersRunning")
+        if containers_stopped is None and isinstance(
+            info.get("ContainersStopped"), (int, float)
+        ):
+            containers_stopped = info.get("ContainersStopped")
+        if volumes_total is None and isinstance(info.get("Volumes"), (int, float)):
+            volumes_total = info.get("Volumes")
+
+        if not isinstance(containers_total, (int, float)):
+            containers_total = None
+        if not isinstance(containers_running, (int, float)):
+            containers_running = None
+        if not isinstance(containers_stopped, (int, float)):
+            containers_stopped = None
+        if not isinstance(volumes_total, (int, float)):
+            volumes_total = None
         builder = {
             "endpoint_id": endpoint_id,
             "endpoint_name": endpoint_name,
@@ -773,12 +819,10 @@ def normalise_endpoint_host_metrics(
             "swarm_node": info.get("Swarm", {}).get("ControlAvailable")
             if isinstance(info.get("Swarm"), dict)
             else None,
-            "containers_total": containers_section.get("Total"),
-            "containers_running": containers_section.get("Running"),
-            "containers_stopped": containers_section.get("Stopped"),
-            "volumes_total": volumes_section.get("TotalCount")
-            if isinstance(volumes_section.get("TotalCount"), (int, float))
-            else volumes_section.get("Total"),
+            "containers_total": containers_total,
+            "containers_running": containers_running,
+            "containers_stopped": containers_stopped,
+            "volumes_total": volumes_total,
             "images_total": system_df.get("ImagesTotal")
             if "ImagesTotal" in system_df
             else info.get("Images"),

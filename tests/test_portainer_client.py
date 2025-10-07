@@ -372,6 +372,28 @@ def test_normalise_endpoint_host_metrics_combines_sources():
     assert df.loc[0, "images_total"] == 9
 
 
+def test_normalise_endpoint_host_metrics_falls_back_to_host_info():
+    endpoints = [{"Id": 3, "Name": "edge-3"}]
+    info = {
+        3: {
+            "ServerVersion": "25.0",
+            "NCPU": 8,
+            "MemTotal": 2048,
+            "Containers": 12,
+            "ContainersRunning": 5,
+            "ContainersStopped": 7,
+        }
+    }
+    usage = {3: {"Containers": [object(), object()], "Volumes": [{}, {}, {}]}}
+
+    df = normalise_endpoint_host_metrics(endpoints, info, usage)
+
+    assert df.loc[0, "containers_total"] == 2
+    assert df.loc[0, "containers_running"] == 5
+    assert df.loc[0, "containers_stopped"] == 7
+    assert df.loc[0, "volumes_total"] == 3
+
+
 def test_normalise_endpoint_volumes_preserves_labels():
     endpoints = [{"Id": 1, "Name": "edge-1"}]
     volumes = {1: [{"Name": "data", "Driver": "local", "Labels": {"managed": "true"}}]}
