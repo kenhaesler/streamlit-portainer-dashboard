@@ -2,10 +2,16 @@
 from __future__ import annotations
 
 import base64
+from pathlib import Path
+import sys
 import time
 
 import pytest
 import jwt
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 from app import auth
 
@@ -97,4 +103,53 @@ def test_verify_id_token_uses_jwks(monkeypatch: pytest.MonkeyPatch) -> None:
     claims = auth._verify_id_token(settings, id_token)
 
     assert claims["sub"] == "user-123"
+
+
+def test_verify_id_token_raises_for_unknown_kid(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_oidc_caches()
+
+    settings = auth._OIDCSettings(
+        issuer="https://issuer.example.com",
+        client_id="client-id",
+        client_secret=None,
+        redirect_uri="https://app.example.com/callback",
+        scopes=("openid",),
+        audience=None,
+        discovery_url="https://issuer.example.com/.well-known/openid-configuration",
+    )
+
+    metadata = auth._OIDCProviderMetadata(
+        issuer="https://issuer.example.com",
+        authorization_endpoint="https://issuer.example.com/auth",
+        token_endpoint="https://issuer.example.com/token",
+        jwks_uri="https://issuer.example.com/jwks",
+        end_session_endpoint=None,
+    )
+
+    monkeypatch.setattr(auth, "_load_oidc_provider_metadata", lambda _: metadata)
+
+    jwk = {
+        "kid": "kid-1",
+        "kty": "oct",
+        "k": base64.urlsafe_b64encode(b"super-secret").rstrip(b"=").decode("ascii"),
+        "alg": "HS256",
+    }
+    monkeypatch.setattr(auth, "_fetch_oidc_jwks", lambda _: {"keys": [jwk]})
+
+    now = int(time.time())
+    id_token = jwt.encode(
+        {
+            "sub": "user-123",
+            "iss": "https://issuer.example.com",
+            "aud": "client-id",
+            "exp": now + 300,
+            "iat": now,
+        },
+        "super-secret",
+        algorithm="HS256",
+        headers={"kid": "kid-mismatch"},
+    )
+
+    with pytest.raises(ValueError, match="Unable to find a signing key"):
+        auth._verify_id_token(settings, id_token)
 

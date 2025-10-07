@@ -238,7 +238,10 @@ def _select_jwk(jwks: dict[str, Any], *, kid: Optional[str]) -> dict[str, Any]:
         if key.get("kid") == kid:
             return key
 
-    raise ValueError("Unable to find a signing key that matches the ID token.")
+    raise ValueError(
+        "Unable to find a signing key that matches the ID token kid "
+        f"{kid!r}."
+    )
 
 
 def _verify_id_token(settings: _OIDCSettings, id_token: str) -> dict[str, Any]:
