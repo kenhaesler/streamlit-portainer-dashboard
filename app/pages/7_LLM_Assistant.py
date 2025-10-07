@@ -29,6 +29,12 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         LLMClient,
         LLMClientError,
     )
+    from app.services.llm_context import (  # type: ignore[import-not-found]
+        build_context_summary,
+        enforce_context_budget,
+        estimate_token_count,
+        serialise_records,
+    )
     from app.ui_helpers import (  # type: ignore[import-not-found]
         ExportableDataFrame,
         render_page_header,
@@ -50,6 +56,12 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     )
     from portainer_client import PortainerAPIError  # type: ignore[no-redef]
     from services.llm_client import LLMClient, LLMClientError  # type: ignore[no-redef]
+    from services.llm_context import (  # type: ignore[no-redef]
+        build_context_summary,
+        enforce_context_budget,
+        estimate_token_count,
+        serialise_records,
+    )
     from ui_helpers import ExportableDataFrame, render_page_header  # type: ignore[no-redef]
 
 
@@ -61,23 +73,6 @@ def _prepare_dataframe(df: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame
         return pd.DataFrame(columns=list(columns))
     subset = df.loc[:, available_columns].copy()
     return subset.fillna("")
-
-
-def _serialise_records(df: pd.DataFrame) -> list[dict[str, object]]:
-    if df.empty:
-        return []
-    serialised: list[dict[str, object]] = []
-    for record in df.to_dict(orient="records"):
-        cleaned: dict[str, object] = {}
-        for key, value in record.items():
-            if value in ("", None):
-                cleaned[key] = value
-            elif isinstance(value, (str, int, float, bool)):
-                cleaned[key] = value
-            else:
-                cleaned[key] = str(value)
-        serialised.append(cleaned)
-    return serialised
 
 
 require_authentication()
@@ -272,6 +267,17 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
         step=5,
         help="Limit the number of container rows shared with the LLM to keep prompts concise.",
     )
+    max_context_tokens = st.slider(
+        "Max context tokens",
+        min_value=500,
+        max_value=8000,
+        value=int(st.session_state.get("llm_max_context_tokens", 3000)),
+        step=250,
+        help=(
+            "Upper bound for the approximate number of tokens allowed in the LLM context payload. "
+            "The assistant will trim or omit low-priority tables when this limit is exceeded."
+        ),
+    )
     question = st.text_area(
         "Ask the LLM",
         value=st.session_state.get(
@@ -292,6 +298,7 @@ st.session_state["llm_temperature"] = temperature
 st.session_state["llm_max_tokens"] = max_tokens
 st.session_state["llm_verify_ssl"] = verify_ssl
 st.session_state["llm_max_context_rows"] = max_context_rows
+st.session_state["llm_max_context_tokens"] = max_context_tokens
 
 if SYSTEM_CREDENTIALS_LOCKED and SYSTEM_API_ENDPOINT:
     st.info(
@@ -380,32 +387,110 @@ container_detail_context = _prepare_dataframe(
 volume_context = _prepare_dataframe(volume_filtered, volume_columns)
 image_context = _prepare_dataframe(image_filtered, image_columns)
 
-context_notice = False
+container_context_template = container_context.iloc[0:0]
+stack_context_template = stack_context.iloc[0:0]
+endpoint_context_template = endpoint_context.iloc[0:0]
+host_context_template = host_context.iloc[0:0]
+container_detail_template = container_detail_context.iloc[0:0]
+volume_context_template = volume_context.iloc[0:0]
+image_context_template = image_context.iloc[0:0]
+
+context_notices: list[str] = []
+truncation_notice = (
+    "Only the first %s containers and their detailed health metrics are included in the LLM context "
+    "to keep the prompt concise."
+    % max_context_rows
+)
 if len(container_context) > max_context_rows:
     container_context = container_context.head(max_context_rows)
-    context_notice = True
+    context_notices.append(truncation_notice)
 if len(container_detail_context) > max_context_rows:
     container_detail_context = container_detail_context.head(max_context_rows)
+    if truncation_notice not in context_notices:
+        context_notices.append(truncation_notice)
 
-context_payload: dict[str, object] = {}
-if not container_context.empty:
-    context_payload["containers"] = _serialise_records(container_context)
 if not stack_context.empty:
-    context_payload["stacks"] = _serialise_records(stack_context.head(50))
+    stack_context = stack_context.head(50)
 if not endpoint_context.empty:
-    context_payload["endpoints"] = _serialise_records(endpoint_context.head(50))
+    endpoint_context = endpoint_context.head(50)
 if not host_context.empty:
-    context_payload["hosts"] = _serialise_records(host_context.head(50))
-if not container_detail_context.empty:
-    context_payload["container_health"] = _serialise_records(
-        container_detail_context
-    )
+    host_context = host_context.head(50)
 if not volume_context.empty:
-    context_payload["volumes"] = _serialise_records(volume_context.head(50))
+    volume_context = volume_context.head(50)
 if not image_context.empty:
-    context_payload["images"] = _serialise_records(image_context.head(50))
+    image_context = image_context.head(50)
+
+context_frames: dict[str, pd.DataFrame] = {}
+if not container_context.empty:
+    context_frames["containers"] = container_context
+if not stack_context.empty:
+    context_frames["stacks"] = stack_context
+if not endpoint_context.empty:
+    context_frames["endpoints"] = endpoint_context
+if not host_context.empty:
+    context_frames["hosts"] = host_context
+if not container_detail_context.empty:
+    context_frames["container_health"] = container_detail_context
+if not volume_context.empty:
+    context_frames["volumes"] = volume_context
+if not image_context.empty:
+    context_frames["images"] = image_context
+
+context_payload: dict[str, object] = {
+    key: serialise_records(df) for key, df in context_frames.items()
+}
 if warnings:
     context_payload["warnings"] = list(warnings)
+
+context_summary = build_context_summary(
+    containers_filtered,
+    container_details_filtered,
+    stack_filtered,
+    host_filtered,
+)
+if context_summary:
+    context_payload["summary"] = context_summary
+
+(
+    context_payload,
+    context_frames,
+    budget_notices,
+    context_token_count,
+) = enforce_context_budget(context_payload, context_frames, max_context_tokens)
+context_notices.extend(budget_notices)
+
+container_context = context_frames.get("containers", container_context_template)
+stack_context = context_frames.get("stacks", stack_context_template)
+endpoint_context = context_frames.get("endpoints", endpoint_context_template)
+host_context = context_frames.get("hosts", host_context_template)
+container_detail_context = context_frames.get(
+    "container_health", container_detail_template
+)
+volume_context = context_frames.get("volumes", volume_context_template)
+image_context = context_frames.get("images", image_context_template)
+
+if "summary" in context_payload:
+    context_summary = context_payload["summary"]  # type: ignore[assignment]
+else:
+    context_summary = {}
+
+context_notices = list(dict.fromkeys(context_notices))
+
+if context_payload:
+    context_json_pretty = json.dumps(context_payload, indent=2, ensure_ascii=False)
+    context_json_compact = json.dumps(
+        context_payload, ensure_ascii=False, separators=(",", ":")
+    )
+    context_token_count = estimate_token_count(context_json_compact)
+else:
+    context_json_pretty = "{}"
+    context_token_count = 0
+
+has_context_to_send = (
+    bool(context_frames)
+    or bool(context_summary)
+    or bool(context_payload.get("warnings"))
+)
 
 # The context notice is rendered after the response section to keep feedback near the form.
 response_container = st.container()
@@ -437,8 +522,8 @@ if submitted:
     elif auth_error:
         st.error(auth_error)
     else:
-        if context_payload:
-            context_json = json.dumps(context_payload, indent=2, ensure_ascii=False)
+        if has_context_to_send:
+            context_json = context_json_pretty
         else:
             st.info(
                 "There is no Portainer data available for the current filters. The question will be "
@@ -489,12 +574,12 @@ if not displayed_response and (last_answer := st.session_state.get("llm_last_ans
         st.markdown("### Most recent response")
         st.markdown(last_answer)
 
-if context_notice:
-    st.caption(
-        "Only the first %s containers and their detailed health metrics are included in the LLM "
-        "context to keep the prompt concise."
-        % max_context_rows
-    )
+st.caption(
+    "Approximate LLM context size: %s tokens (limit %s)."
+    % (context_token_count, max_context_tokens)
+)
+for notice in context_notices:
+    st.caption(notice)
 
 show_context_default = bool(st.session_state.get("llm_show_context", True))
 show_context = st.toggle(
@@ -505,6 +590,10 @@ show_context = st.toggle(
 st.session_state["llm_show_context"] = show_context
 
 if show_context:
+    if context_summary:
+        st.subheader("Summary shared with the LLM")
+        st.json(context_summary)
+
     st.subheader("Container context shared with the LLM")
     ExportableDataFrame(
         "Download container context",
