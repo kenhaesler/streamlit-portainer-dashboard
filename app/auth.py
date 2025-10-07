@@ -11,13 +11,15 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from secrets import token_urlsafe
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 from urllib.parse import urlencode
 
 import jwt
 import requests
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+
+from app.session_storage import SessionRecord, SessionStorage, create_session_storage
 
 USERNAME_ENV_VAR = "DASHBOARD_USERNAME"
 KEY_ENV_VAR = "DASHBOARD_KEY"
@@ -58,28 +60,11 @@ class _OIDCProviderMetadata:
     end_session_endpoint: Optional[str]
 
 
-@dataclass
-class _PersistentSession:
-    """Metadata used to keep track of long-lived authenticated sessions."""
-
-    username: str
-    authenticated_at: datetime
-    last_active: datetime
-    session_timeout: Optional[timedelta]
-    auth_method: str = "static"
-
-    def is_expired(self, now: datetime) -> bool:
-        """Return ``True`` if the session expired according to the timeout."""
-        if self.session_timeout is None:
-            return False
-        return now - self.last_active >= self.session_timeout
-
-
 @st.cache_resource(show_spinner=False)
-def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
-    """Return a process-wide store of persistent session metadata."""
+def _get_session_storage() -> SessionStorage:
+    """Return the configured session storage backend."""
 
-    return {}
+    return create_session_storage()
 
 
 def _get_auth_provider() -> str:
@@ -541,11 +526,7 @@ def _prune_expired_sessions(*, now: Optional[datetime] = None) -> None:
     """Remove expired sessions from the persistent store."""
 
     reference_time = now or datetime.now(timezone.utc)
-    sessions = _get_persistent_sessions()
-
-    for token, session in list(sessions.items()):
-        if session.is_expired(reference_time):
-            sessions.pop(token, None)
+    _get_session_storage().purge_expired(reference_time)
 
 
 def get_active_session_count(*, now: Optional[datetime] = None) -> int:
@@ -558,9 +539,8 @@ def get_active_session_count(*, now: Optional[datetime] = None) -> int:
     """
 
     reference_time = now or datetime.now(timezone.utc)
-    sessions = _get_persistent_sessions()
-    _prune_expired_sessions(now=reference_time)
-    return len(sessions)
+    storage = _get_session_storage()
+    return storage.count(reference_time)
 
 
 def _trigger_rerun() -> None:
@@ -661,8 +641,8 @@ def _clear_persistent_session() -> None:
     """Forget any persisted session token for the active user."""
 
     token = st.session_state.pop("_session_token", None)
-    if token:
-        _get_persistent_sessions().pop(token, None)
+    if isinstance(token, str):
+        _get_session_storage().delete(token)
 
     _delete_session_cookie()
 
@@ -678,12 +658,15 @@ def _store_persistent_session(
 
     _prune_expired_sessions(now=now)
     token = token_urlsafe(32)
-    _get_persistent_sessions()[token] = _PersistentSession(
-        username=username,
-        authenticated_at=now,
-        last_active=now,
-        session_timeout=session_timeout,
-        auth_method=auth_method,
+    _get_session_storage().create(
+        SessionRecord(
+            token=token,
+            username=username,
+            authenticated_at=now,
+            last_active=now,
+            session_timeout=session_timeout,
+            auth_method=auth_method,
+        )
     )
     st.session_state["_session_token"] = token
     _set_session_cookie(token, now=now, session_timeout=session_timeout)
@@ -698,12 +681,12 @@ def _update_persistent_session_activity(
     if not isinstance(token, str):
         return
 
-    session = _get_persistent_sessions().get(token)
+    storage = _get_session_storage()
+    session = storage.retrieve(token)
     if session is None:
         return
 
-    session.last_active = now
-    session.session_timeout = session_timeout
+    storage.touch(token, last_active=now, session_timeout=session_timeout)
     _set_session_cookie(token, now=now, session_timeout=session_timeout)
 
 
@@ -719,23 +702,20 @@ def _restore_persistent_session(
     if not token:
         return
 
-    sessions = _get_persistent_sessions()
-    session = sessions.get(token)
+    storage = _get_session_storage()
+    session = storage.retrieve(token)
     if session is None:
-        sessions.pop(token, None)
+        storage.delete(token)
         _delete_session_cookie()
         return
 
     if expected_username is not None and session.username != expected_username:
-        sessions.pop(token, None)
+        storage.delete(token)
         _delete_session_cookie()
         return
 
-    # Ensure we use the most up-to-date timeout configuration.
-    session.session_timeout = session_timeout
-
-    if session.is_expired(now):
-        sessions.pop(token, None)
+    if session.is_expired(now, session_timeout=session_timeout):
+        storage.delete(token)
         _delete_session_cookie()
         st.session_state.pop("authenticated", None)
         st.session_state.pop("authenticated_at", None)
@@ -750,7 +730,7 @@ def _restore_persistent_session(
     st.session_state["auth_method"] = session.auth_method
     st.session_state["display_name"] = session.username
     _set_session_cookie(token, now=now, session_timeout=session_timeout)
-    session.last_active = now
+    storage.touch(token, last_active=now, session_timeout=session_timeout)
 
 
 def require_authentication() -> None:
