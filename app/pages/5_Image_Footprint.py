@@ -23,12 +23,16 @@ try:  # pragma: no cover - import shim for Streamlit runtime
     from app.dashboard_state import (  # type: ignore[import-not-found]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
-        apply_selected_environment,
-        initialise_session_state,
         load_configured_environment_settings,
         load_portainer_data,
         render_data_refresh_notice,
         render_sidebar_filters,
+    )
+    from app.managers.background_job_runner import (  # type: ignore[import-not-found]
+        BackgroundJobRunner,
+    )
+    from app.managers.environment_manager import (  # type: ignore[import-not-found]
+        EnvironmentManager,
     )
     from app.portainer_client import (  # type: ignore[import-not-found]
         PortainerAPIError,
@@ -44,12 +48,16 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     from dashboard_state import (  # type: ignore[no-redef]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
-        apply_selected_environment,
-        initialise_session_state,
         load_configured_environment_settings,
         load_portainer_data,
         render_data_refresh_notice,
         render_sidebar_filters,
+    )
+    from managers.background_job_runner import (  # type: ignore[no-redef]
+        BackgroundJobRunner,
+    )
+    from managers.environment_manager import (  # type: ignore[no-redef]
+        EnvironmentManager,
     )
     from portainer_client import (  # type: ignore[no-redef]
         PortainerAPIError,
@@ -303,8 +311,10 @@ render_page_header(
     description="Identify the images powering your workloads and where they are deployed.",
 )
 
-initialise_session_state()
-apply_selected_environment()
+environment_manager = EnvironmentManager(st.session_state)
+environments = environment_manager.initialise()
+BackgroundJobRunner().maybe_run_backups(environments)
+environment_manager.apply_selected_environment()
 
 try:
     configured_environments = load_configured_environment_settings()

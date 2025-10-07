@@ -12,10 +12,11 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         require_authentication,
         get_active_session_count,
     )
-    from app.dashboard_state import (  # type: ignore[import-not-found]
-        apply_selected_environment,
-        get_saved_environments,
-        initialise_session_state,
+    from app.managers.background_job_runner import (  # type: ignore[import-not-found]
+        BackgroundJobRunner,
+    )
+    from app.managers.environment_manager import (  # type: ignore[import-not-found]
+        EnvironmentManager,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from auth import (  # type: ignore[no-redef]
@@ -23,10 +24,11 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         require_authentication,
         get_active_session_count,
     )
-    from dashboard_state import (  # type: ignore[no-redef]
-        apply_selected_environment,
-        get_saved_environments,
-        initialise_session_state,
+    from managers.background_job_runner import (  # type: ignore[no-redef]
+        BackgroundJobRunner,
+    )
+    from managers.environment_manager import (  # type: ignore[no-redef]
+        EnvironmentManager,
     )
 
 
@@ -37,8 +39,10 @@ st.set_page_config(page_title="Portainer Dashboard", page_icon="🛳️", layout
 require_authentication()
 render_logout_button()
 
-initialise_session_state()
-apply_selected_environment()
+environment_manager = EnvironmentManager(st.session_state)
+environments = environment_manager.initialise()
+BackgroundJobRunner().maybe_run_backups(environments)
+environment_manager.apply_selected_environment()
 
 st.markdown(
     """
@@ -110,7 +114,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-saved_environments = get_saved_environments()
+saved_environments = environment_manager.get_saved_environments()
 secured_environment_count = sum(
     1 for env in saved_environments if bool(env.get("verify_ssl", True))
 )
