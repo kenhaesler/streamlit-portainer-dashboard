@@ -714,9 +714,7 @@ def _restore_persistent_session(
         _delete_session_cookie()
         return
 
-    session.session_timeout = session_timeout
-
-    if session.is_expired(now):
+    if session.is_expired(now, session_timeout=session_timeout):
         storage.delete(token)
         _delete_session_cookie()
         st.session_state.pop("authenticated", None)

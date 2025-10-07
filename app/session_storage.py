@@ -7,11 +7,14 @@ from pathlib import Path
 import os
 import sqlite3
 from threading import RLock
-from typing import Optional, Protocol
+from typing import Optional, Protocol, cast
 
 
 SESSION_BACKEND_ENV_VAR = "DASHBOARD_SESSION_BACKEND"
 SQLITE_PATH_ENV_VAR = "DASHBOARD_SESSION_SQLITE_PATH"
+
+
+_UNSET = object()
 
 
 @dataclass
@@ -25,12 +28,26 @@ class SessionRecord:
     session_timeout: Optional[timedelta]
     auth_method: str
 
-    def is_expired(self, now: datetime) -> bool:
-        """Return ``True`` if the record expired relative to ``now``."""
+    def is_expired(
+        self,
+        now: datetime,
+        *,
+        session_timeout: Optional[timedelta] | object = _UNSET,
+    ) -> bool:
+        """Return ``True`` if the record expired relative to ``now``.
 
-        if self.session_timeout is None:
+        ``session_timeout`` allows callers to evaluate expiry using a
+        different timeout value without mutating the record in-place.
+        """
+
+        if session_timeout is _UNSET:
+            effective_timeout = self.session_timeout
+        else:
+            effective_timeout = cast(Optional[timedelta], session_timeout)
+
+        if effective_timeout is None:
             return False
-        return now - self.last_active >= self.session_timeout
+        return now - self.last_active >= effective_timeout
 
 
 class SessionStorage(Protocol):

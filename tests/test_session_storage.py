@@ -35,6 +35,22 @@ def test_inmemory_storage_purges_expired_sessions() -> None:
     assert store.retrieve("expired") is None
 
 
+def test_session_record_expiry_override() -> None:
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    record = SessionRecord(
+        token="token",
+        username="user",
+        authenticated_at=now - timedelta(minutes=10),
+        last_active=now - timedelta(minutes=5),
+        session_timeout=timedelta(minutes=15),
+        auth_method="static",
+    )
+
+    assert not record.is_expired(now)
+    assert record.is_expired(now, session_timeout=timedelta(minutes=1))
+    assert not record.is_expired(now, session_timeout=None)
+
+
 def test_sqlite_storage_roundtrip(tmp_path) -> None:
     database_path = tmp_path / "sessions.db"
     store = SQLiteSessionStorage(database_path)
