@@ -267,15 +267,18 @@ with st.form("llm_query_form", enter_to_submit=False, clear_on_submit=False):
         step=5,
         help="Limit the number of container rows shared with the LLM to keep prompts concise.",
     )
-    max_context_tokens = st.slider(
+    max_context_default = int(st.session_state.get("llm_max_context_tokens", 3000))
+    if max_context_default < 500:
+        max_context_default = 500
+    max_context_tokens = st.number_input(
         "Max context tokens",
         min_value=500,
-        max_value=8000,
-        value=int(st.session_state.get("llm_max_context_tokens", 3000)),
+        value=max_context_default,
         step=250,
         help=(
             "Upper bound for the approximate number of tokens allowed in the LLM context payload. "
-            "The assistant will trim or omit low-priority tables when this limit is exceeded."
+            "Enter larger values when using models with extended context windows; the assistant will "
+            "trim or omit low-priority tables when this limit is exceeded."
         ),
     )
     question = st.text_area(
