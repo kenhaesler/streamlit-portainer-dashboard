@@ -73,8 +73,9 @@ traditional bearer token or a `username:password`
 pair, which is automatically sent using HTTP Basic authentication when detected. The page now builds an
 operational summary (container counts, unhealthy services, top CPU/memory consumers) before serialising the
 underlying Portainer tables. You can steer how much detail reaches the LLM by adjusting both the maximum number
-of container rows and a dedicated “Max context tokens” slider; the assistant automatically trims low-priority
-tables or reduces their size when the payload would exceed that budget. This keeps prompts efficient even when
+of container rows and a dedicated “Max context tokens” control that accepts custom budgets for extended-context
+models; the assistant automatically trims low-priority tables or reduces their size when the payload would exceed
+that budget. This keeps prompts efficient even when
 large environments are selected. The UI surfaces the exact context size, any trade-offs that were applied, and
 still allows you to download the data that was shared for auditing. With the context in place you can ask natural
 language questions—such as “are there any containers that have issues and why?”—and review the LLM response
