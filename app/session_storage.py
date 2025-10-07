@@ -187,7 +187,7 @@ class SQLiteSessionStorage(SessionStorage):
     def _timeout_from_seconds(seconds: Optional[int]) -> Optional[timedelta]:
         if seconds is None:
             return None
-        return timedelta(seconds=int(seconds))
+        return timedelta(seconds=seconds)
 
     def _compute_expiry(
         self, *, last_active: datetime, session_timeout: Optional[timedelta]
