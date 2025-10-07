@@ -23,6 +23,23 @@ def _normalise_messages(messages: Iterable[Mapping[str, object]]) -> list[dict[s
     return normalised
 
 
+def _coerce_content_to_text(content: object) -> str | None:
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, Sequence):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, Mapping):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text)
+            elif isinstance(item, str) and item.strip():
+                parts.append(item)
+        if parts:
+            return "".join(parts).strip()
+    return None
+
+
 def _extract_response_text(payload: Mapping[str, object]) -> str:
     choices = payload.get("choices")
     if not isinstance(choices, Sequence) or not choices:
@@ -31,13 +48,13 @@ def _extract_response_text(payload: Mapping[str, object]) -> str:
     if isinstance(first_choice, Mapping):
         message = first_choice.get("message")
         if isinstance(message, Mapping):
-            content = message.get("content")
-            if isinstance(content, str):
-                return content.strip()
-        content = first_choice.get("text")
-        if isinstance(content, str):
-            return content.strip()
-    if isinstance(first_choice, str):
+            content_text = _coerce_content_to_text(message.get("content"))
+            if content_text:
+                return content_text
+        content_text = _coerce_content_to_text(first_choice.get("text"))
+        if content_text:
+            return content_text
+    if isinstance(first_choice, str) and first_choice.strip():
         return first_choice.strip()
     raise LLMClientError("LLM API response did not contain text output")
 
