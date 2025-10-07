@@ -24,7 +24,7 @@ finding to the components that are actually present in the Streamlit Portainer D
 | Component | CVEs | Assessment | Rationale |
 | --- | --- | --- | --- |
 | `libpython3.11-minimal`, `libpython3.11-stdlib`, `python3.11-minimal` | CVE-2025-8194, CVE-2025-4516, CVE-2025-6069 | Not applicable | The container is built from Python 3.12 base images and never installs Python 3.11 runtimes or standard libraries.【F:Dockerfile†L1-L24】 |
-| `pip` 25.2 | CVE-2025-8869 | Present but unused at runtime | The build stage upgrades `pip` and copies the entire `/usr/local` tree into the distroless image, so the installer binaries and modules remain available even though the application never invokes them. An attacker would still need an independent code-execution path inside the container to reach `pip`.【F:Dockerfile†L5-L22】 |
+| `pip` 25.2 | CVE-2025-8869 | Removed from runtime image | The build stage now deletes the `pip` binaries and modules after installing the Python dependencies, so the final distroless layer does not include the vulnerable tooling.【F:Dockerfile†L5-L10】 |
 | `libsqlite3-0` | CVE-2025-29088, CVE-2025-7709, CVE-2021-45346 | Not exploitable | Neither the application code nor its declared dependencies use SQLite APIs, so an attacker has no path to trigger SQLite query execution.【F:requirements.txt†L1-L7】【039b84†L1-L1】 |
 | `libexpat1` | CVE-2025-59375, CVE-2023-52426, CVE-2024-28757 | Low risk in current workload | The dashboard does not parse XML documents, so the Expat parser is dormant. Continue to monitor upstream distroless releases for patched builds.【F:requirements.txt†L1-L7】【ea0168†L1-L1】 |
 | `libncursesw6`, `libtinfo6` | CVE-2023-50495, CVE-2025-6141 | Not used | The dashboard is a Streamlit web UI and does not load the curses bindings that depend on these terminal libraries.【F:requirements.txt†L1-L7】 |
@@ -32,6 +32,10 @@ finding to the components that are actually present in the Streamlit Portainer D
 
 None of the newly reported CVEs expand the attack surface of the current application configuration. Continue to rebuild the
 container image regularly so that distroless and Debian security updates are incorporated.
+
+### Runtime footprint adjustments
+- Stripped the `pip` CLI and module tree from the final image so that only the runtime dependencies remain under `/usr/local`.
+  This prevents package-manager CVEs from surfacing in vulnerability scans while keeping the application dependencies intact.【F:Dockerfile†L5-L10】
 
 ## Conclusion
 Neither the newly reviewed CVEs nor the previously analysed CVE-2023-45853 and CVE-2025-7458 impact the Streamlit Portainer
