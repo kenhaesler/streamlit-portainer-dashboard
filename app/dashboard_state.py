@@ -747,8 +747,10 @@ def _humanise_stack_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         ("stack_type", stack_type_mapping),
     ):
         if column in humanised.columns:
-            humanised[column] = humanised[column].apply(
-                lambda value, mapping=mapping: _humanise_value(value, mapping)
+            humanised[column] = (
+                humanised[column]
+                .apply(lambda value, mapping=mapping: _humanise_value(value, mapping))
+                .astype("string")
             )
     return humanised
 
