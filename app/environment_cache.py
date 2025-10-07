@@ -23,6 +23,8 @@ _CACHE_DIR_ENV_VAR = "PORTAINER_CACHE_DIR"
 _DEFAULT_CACHE_TTL_SECONDS = 900
 _FALSEY_VALUES = {"0", "false", "no", "off"}
 _CACHE_FILE_SUFFIX = ".json"
+_CACHE_KEY_DERIVATION_SALT = b"portainer-environment-cache"
+_CACHE_KEY_DERIVATION_ROUNDS = 200_000
 
 
 __all__ = [
@@ -110,7 +112,15 @@ def _ensure_cache_directory() -> Path:
 
 
 def _hash_api_key(value: str) -> str:
-    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+    """Return a deterministic hash for an API key using PBKDF2."""
+
+    derived = hashlib.pbkdf2_hmac(
+        "sha256",
+        value.encode("utf-8"),
+        _CACHE_KEY_DERIVATION_SALT,
+        _CACHE_KEY_DERIVATION_ROUNDS,
+    )
+    return derived.hex()
 
 
 def build_cache_key(
