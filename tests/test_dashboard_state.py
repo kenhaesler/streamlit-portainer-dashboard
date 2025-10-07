@@ -248,6 +248,12 @@ def test_fetch_portainer_payload_normalises_swagger_fixture(monkeypatch):
             assert api_key == environment.api_key
             assert verify_ssl is True
 
+        def __enter__(self) -> "FakePortainerClient":
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
         def list_edge_endpoints(self) -> list[dict[str, object]]:
             return endpoints
 
