@@ -4,6 +4,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Iterable, Sequence
@@ -364,21 +365,24 @@ def _fetch_portainer_payload(
         volumes: dict[int, list[dict]] = {}
         images: dict[int, list[dict]] = {}
 
-        for endpoint in endpoints:
+        def _load_endpoint_payload(endpoint: dict[str, object]) -> tuple[int, list[dict], list[dict], list[str]]:
             endpoint_id = int(endpoint.get("Id") or endpoint.get("id", 0))
+            endpoint_warnings: list[str] = []
+
             try:
-                stacks[endpoint_id] = client.list_stacks_for_endpoint(endpoint_id)
+                endpoint_stacks = client.list_stacks_for_endpoint(endpoint_id)
             except PortainerAPIError as exc:
-                warnings.append(
+                endpoint_warnings.append(
                     f"[{environment.name}] Failed to load stacks for endpoint {endpoint_id}: {exc}"
                 )
-                stacks[endpoint_id] = []
+                endpoint_stacks = []
+
             try:
-                containers[endpoint_id] = client.list_containers_for_endpoint(
+                endpoint_containers = client.list_containers_for_endpoint(
                     endpoint_id, include_stopped=include_stopped
                 )
             except PortainerAPIError as exc:
-                warnings.append(
+                endpoint_warnings.append(
                     f"[{environment.name}] Failed to load containers for endpoint {endpoint_id}: {exc}"
                 )
                 containers[endpoint_id] = []
