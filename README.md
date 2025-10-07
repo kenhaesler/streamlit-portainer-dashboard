@@ -50,6 +50,16 @@ primaryColor = "#009fe3"
 Users can still toggle between Streamlit's light and dark modes from the app settings. Only the primary
 accent colour is overridden, so the interface remains readable in either mode.
 
+### Logging
+
+The dashboard configures Python's logging system on import so messages from both the app and its
+dependencies are emitted to the console. Diagnostic output up to `WARNING` is routed to standard
+output, while anything `ERROR` and above is sent to standard error. Set the `DASHBOARD_LOG_LEVEL`
+environment variable (for example `DEBUG` or `TRACE`) to increase verbosity when troubleshooting; the
+value is resolved using the aliases defined in [`app/logging_setup.py`](app/logging_setup.py) so
+common synonyms such as `verbose` are accepted. No additional Streamlit switches are required—logs
+become visible as soon as the app starts.
+
 ### Persistent API caching
 
 The dashboard now caches Portainer API responses to reduce latency for returning users. The first fetch after
