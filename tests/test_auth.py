@@ -83,3 +83,33 @@ def test_update_session_activity_synchronises_query_param(monkeypatch):
     auth._update_persistent_session_activity(now, timedelta(minutes=30))
 
     assert dummy_streamlit.query_params["session_token"] == token
+
+
+def test_store_session_prunes_expired_entries(monkeypatch):
+    store = _setup_session_store(monkeypatch)
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    store["expired"] = auth._PersistentSession(
+        username="dave",
+        authenticated_at=now - timedelta(hours=2),
+        last_active=now - timedelta(hours=2),
+        session_timeout=timedelta(minutes=30),
+    )
+
+    class DummyStreamlit:
+        def __init__(self) -> None:
+            self.session_state: dict[str, object] = {}
+
+        def experimental_set_cookie(self, *_, **__):  # pragma: no cover - noop for tests
+            return None
+
+    dummy_streamlit = DummyStreamlit()
+    monkeypatch.setattr(auth, "st", dummy_streamlit)
+    monkeypatch.setattr(auth, "_ensure_session_query_param", lambda *_: None)
+    monkeypatch.setattr(auth, "token_urlsafe", lambda *_: "new-token")
+
+    auth._store_persistent_session("alice", now, timedelta(minutes=30))
+
+    assert "expired" not in store
+    assert "new-token" in store
+    assert store["new-token"].username == "alice"

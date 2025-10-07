@@ -42,6 +42,17 @@ def _get_persistent_sessions() -> Dict[str, _PersistentSession]:
     return {}
 
 
+def _prune_expired_sessions(*, now: Optional[datetime] = None) -> None:
+    """Remove expired sessions from the persistent store."""
+
+    reference_time = now or datetime.now(timezone.utc)
+    sessions = _get_persistent_sessions()
+
+    for token, session in list(sessions.items()):
+        if session.is_expired(reference_time):
+            sessions.pop(token, None)
+
+
 def get_active_session_count(*, now: Optional[datetime] = None) -> int:
     """Return the number of currently active authenticated sessions.
 
@@ -53,19 +64,8 @@ def get_active_session_count(*, now: Optional[datetime] = None) -> int:
 
     reference_time = now or datetime.now(timezone.utc)
     sessions = _get_persistent_sessions()
-    active_tokens: list[str] = []
-    expired_tokens: list[str] = []
-
-    for token, session in list(sessions.items()):
-        if session.is_expired(reference_time):
-            expired_tokens.append(token)
-            continue
-        active_tokens.append(token)
-
-    for token in expired_tokens:
-        sessions.pop(token, None)
-
-    return len(active_tokens)
+    _prune_expired_sessions(now=reference_time)
+    return len(sessions)
 
 
 def _trigger_rerun() -> None:
@@ -209,6 +209,7 @@ def _store_persistent_session(
 ) -> None:
     """Create and persist a new session token for the authenticated user."""
 
+    _prune_expired_sessions(now=now)
     token = token_urlsafe(32)
     _get_persistent_sessions()[token] = _PersistentSession(
         username=username,
@@ -245,6 +246,7 @@ def _restore_persistent_session(
 ) -> None:
     """Restore an authenticated session based on the persisted token, if present."""
 
+    _prune_expired_sessions(now=now)
     tokens_to_check = []
     token_from_query = _get_session_token_from_query_params()
     if token_from_query:
