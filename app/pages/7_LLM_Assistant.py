@@ -484,6 +484,7 @@ if context_payload:
     context_token_count = estimate_token_count(context_json_compact)
 else:
     context_json_pretty = "{}"
+    context_json_compact = "{}"
     context_token_count = 0
 
 has_context_to_send = (
@@ -523,7 +524,9 @@ if submitted:
         st.error(auth_error)
     else:
         if has_context_to_send:
-            context_json = context_json_pretty
+            # Send the compact JSON payload to the model so the transmitted prompt
+            # matches the representation used for the token budget estimate.
+            context_json = context_json_compact
         else:
             st.info(
                 "There is no Portainer data available for the current filters. The question will be "
