@@ -243,7 +243,11 @@ def load_cache_entry(*args: Any, **kwargs: Any) -> CacheEntry | None:
             raise TypeError("load_cache_entry() missing required key argument")
         key = args[0]
     elif len(args) == 2:
-        config, key = args  # type: ignore[assignment]
+        if not (isinstance(args[0], CacheConfig) or args[0] is None):
+            raise TypeError("First argument must be a CacheConfig or None")
+        if not isinstance(args[1], str):
+            raise TypeError("Second argument must be a string key")
+        config, key = args
     elif len(args) == 1:
         (key,) = args
         config = None
