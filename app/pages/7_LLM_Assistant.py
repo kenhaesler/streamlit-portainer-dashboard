@@ -389,10 +389,21 @@ snapshot_columns[2].metric(
 container_total = overview.get("containers", {}).get("total", 0)
 snapshot_columns[3].metric("Containers", container_total)
 
-if hotspots_cpu := overview.get("hotspots_cpu"):
+hotspots_cpu = overview.get("hotspots_cpu")
+if isinstance(hotspots_cpu, pd.DataFrame):
+    if not hotspots_cpu.empty:
+        st.markdown("### Containers using the most CPU")
+        st.dataframe(hotspots_cpu, hide_index=True, use_container_width=True)
+elif hotspots_cpu:
     st.markdown("### Containers using the most CPU")
     st.dataframe(hotspots_cpu, hide_index=True, use_container_width=True)
-if hotspots_mem := overview.get("hotspots_memory"):
+
+hotspots_mem = overview.get("hotspots_memory")
+if isinstance(hotspots_mem, pd.DataFrame):
+    if not hotspots_mem.empty:
+        st.markdown("### Containers using the most memory")
+        st.dataframe(hotspots_mem, hide_index=True, use_container_width=True)
+elif hotspots_mem:
     st.markdown("### Containers using the most memory")
     st.dataframe(hotspots_mem, hide_index=True, use_container_width=True)
 
