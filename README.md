@@ -22,6 +22,10 @@ The application is configured via environment variables:
 - `PORTAINER_BACKUP_INTERVAL` – Optional. Interval used for automatic Portainer backups (for example `24h` or `30m`). Set to `0`, `off`, or leave unset to disable recurring backups. The dashboard persists the next scheduled run on disk so restarts continue the cadence without creating duplicate backups.
 - `LLM_API_ENDPOINT` – Optional. When set, the LLM assistant page defaults to this chat completion endpoint.
 - `LLM_BEARER_TOKEN` – Optional. When set, the LLM assistant page pre-populates the bearer token field so every authenticated user can reuse the shared credentials. When both `LLM_API_ENDPOINT` and `LLM_BEARER_TOKEN` are provided the endpoint and credential inputs become read-only, signalling that the deployment manages the LLM configuration.
+- `KIBANA_LOGS_ENDPOINT` – Optional. Full URL of the Kibana/Elasticsearch search endpoint (for example `https://elastic.example.com/_search`) used to retrieve container logs.
+- `KIBANA_API_KEY` – Optional. API key sent via the `Authorization: ApiKey <token>` header when querying Kibana. Required when `KIBANA_LOGS_ENDPOINT` is set.
+- `KIBANA_VERIFY_SSL` – Optional. Defaults to `true`. Set to `false` to skip TLS verification when connecting to Kibana with self-signed certificates.
+- `KIBANA_TIMEOUT_SECONDS` – Optional. Request timeout (in seconds) for Kibana log queries. Defaults to 30 seconds when unset or invalid.
 
 Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
 operators can fix the configuration before exposing the dashboard.
@@ -70,6 +74,14 @@ pair, which is automatically sent using HTTP Basic authentication when detected.
 warnings—and sends that context along with your natural language question. This makes it possible to ask questions
 like “are there any containers that have issues and why?” directly from the dashboard. Responses are displayed in
 the UI and you can download the exact context shared with the model for auditing.
+
+### Edge agent log explorer
+
+The **Edge agent logs** page surfaces container logs collected in Kibana/Elasticsearch. Configure the
+`KIBANA_LOGS_ENDPOINT` and `KIBANA_API_KEY` environment variables to enable the integration. The page reuses your
+current Portainer filters so you can drill into a specific subset of environments or endpoints before issuing a log
+query. Specify a time window (15 minutes to 24 hours), optional container name or message search term and download the
+results as CSV for further analysis.
 
 ## Usage
 
