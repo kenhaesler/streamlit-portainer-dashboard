@@ -512,7 +512,9 @@ def maybe_run_scheduled_backups(
                 except Exception as exc:  # pragma: no cover - defensive guard
                     env_name = str(environment.get("name", "environment"))
                     LOGGER.warning(
-                        "Scheduled backup failed for %s: %s", env_name, exc, exc_info=True
+                        "Scheduled backup failed for %s (error type: %s)",
+                        env_name,
+                        type(exc).__name__,
                     )
                     errors.append(f"{env_name}: {exc}")
                     continue
