@@ -585,6 +585,9 @@ def _store_persistent_session(
 
     if token_from_cookie:
         session = storage.retrieve(token_from_cookie)
+        if session is None:
+            storage.delete(token_from_cookie)
+        elif session.username != username:
         if session is not None and session.username != username:
             storage.delete(token_from_cookie)
         else:

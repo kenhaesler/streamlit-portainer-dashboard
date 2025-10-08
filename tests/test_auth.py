@@ -183,6 +183,40 @@ def test_store_session_reuses_existing_cookie_token(monkeypatch):
     assert dummy_streamlit.cookies[auth.SESSION_COOKIE_NAME] == token
 
 
+def test_store_session_rejects_unknown_cookie_token(monkeypatch):
+    store = _setup_session_store(monkeypatch)
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+
+    class DummyStreamlit:
+        def __init__(self) -> None:
+            self.session_state: dict[str, object] = {}
+            self.cookies = {auth.SESSION_COOKIE_NAME: "attacker-token"}
+
+        def experimental_get_cookie(self, name: str) -> str | None:  # pragma: no cover - simple passthrough
+            return self.cookies.get(name)
+
+        def experimental_set_cookie(self, name: str, value: str, **kwargs) -> None:  # pragma: no cover - data capture only
+            self.cookies[name] = value
+
+    dummy_streamlit = DummyStreamlit()
+    monkeypatch.setattr(auth, "st", dummy_streamlit)
+
+    generated_tokens: list[str] = []
+
+    def fake_token_urlsafe(length: int) -> str:
+        generated_tokens.append("called")
+        return "fresh-token"
+
+    monkeypatch.setattr(auth, "token_urlsafe", fake_token_urlsafe)
+
+    auth._store_persistent_session("alice", now, timedelta(minutes=30))
+
+    assert generated_tokens, "Expected a new token to be generated"
+    assert store.retrieve("fresh-token") is not None
+    assert dummy_streamlit.session_state["_session_token"] == "fresh-token"
+    assert dummy_streamlit.cookies[auth.SESSION_COOKIE_NAME] == "fresh-token"
+
+
 def test_store_session_replaces_cookie_when_user_changes(monkeypatch):
     store = _setup_session_store(monkeypatch)
     now = datetime(2024, 1, 1, tzinfo=timezone.utc)
