@@ -248,6 +248,12 @@ def test_fetch_portainer_payload_normalises_swagger_fixture(monkeypatch):
             assert api_key == environment.api_key
             assert verify_ssl is True
 
+        def __enter__(self) -> "FakePortainerClient":
+            return self
+
+        def __exit__(self, exc_type, exc, traceback) -> None:
+            return None
+
         def list_edge_endpoints(self) -> list[dict[str, object]]:
             return endpoints
 
@@ -288,6 +294,50 @@ def test_fetch_portainer_payload_normalises_swagger_fixture(monkeypatch):
     monkeypatch.setattr(dashboard_state, "PortainerClient", FakePortainerClient)
 
     (
+        stack_df_min,
+        container_df_min,
+        endpoint_df_min,
+        container_details_min,
+        host_df_min,
+        volume_df_min,
+        image_df_min,
+        warnings_min,
+    ) = dashboard_state._fetch_portainer_payload(
+        (environment,),
+        include_stopped=False,
+        include_container_details=False,
+        include_resource_utilisation=False,
+    )
+
+    assert stack_calls == [101, 102]
+    assert container_calls == [(101, False), (102, False)]
+    assert inspect_calls == []
+    assert stats_calls == []
+    assert host_info_calls == []
+    assert host_usage_calls == []
+    assert volume_calls == []
+    assert image_calls == []
+
+    assert warnings_min == []
+    assert container_details_min["cpu_percent"].dropna().empty
+    assert container_details_min["memory_percent"].dropna().empty
+    assert container_details_min["health_status"].dropna().empty
+    if not host_df_min.empty:
+        assert host_df_min["total_cpus"].dropna().empty
+        assert host_df_min["containers_total"].dropna().empty
+    assert volume_df_min.empty
+    assert image_df_min.empty
+
+    stack_calls.clear()
+    container_calls.clear()
+    inspect_calls.clear()
+    stats_calls.clear()
+    host_info_calls.clear()
+    host_usage_calls.clear()
+    volume_calls.clear()
+    image_calls.clear()
+
+    (
         stack_df,
         container_df,
         endpoint_df,
@@ -296,7 +346,12 @@ def test_fetch_portainer_payload_normalises_swagger_fixture(monkeypatch):
         volume_df,
         image_df,
         warnings,
-    ) = dashboard_state._fetch_portainer_payload((environment,), include_stopped=False)
+    ) = dashboard_state._fetch_portainer_payload(
+        (environment,),
+        include_stopped=False,
+        include_container_details=True,
+        include_resource_utilisation=True,
+    )
 
     assert stack_calls == [101, 102]
     assert container_calls == [(101, False), (102, False)]

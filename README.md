@@ -5,6 +5,12 @@
 
 A streamlit application that pulls information from the Portainer API and visualizes everything.
 
+## Architecture & contributor docs
+
+- [Module boundaries and ownership](docs/module_boundaries.md) – high-level architecture, module responsibilities, and guidance on where to place new functionality.
+- [LLM context management](docs/llm_context_management.md) – explains how prompt construction and trimming works inside the assistant.
+- [Portainer data audit](docs/portainer_data_audit.md) – details the telemetry surfaced for compliance reviews.
+
 ## Configuration
 
 The application is configured via environment variables:
@@ -14,8 +20,18 @@ The application is configured via environment variables:
 - `PORTAINER_VERIFY_SSL` – Optional. Set to `false` to disable TLS certificate verification when using self-signed certificates.
 - `DASHBOARD_USERNAME` – Username required to sign in to the dashboard UI.
 - `DASHBOARD_KEY` – Access key (password) required to sign in to the dashboard UI.
+- `DASHBOARD_AUTH_PROVIDER` – Optional. Set to `oidc` to enable OpenID Connect single sign-on. Defaults to `static`, which uses the username/key form above.
 - `DASHBOARD_SESSION_TIMEOUT_MINUTES` – Optional. Expire authenticated sessions after the specified number of minutes of inactivity. Omit or set to a non-positive value to disable the timeout.
+- `DASHBOARD_SESSION_BACKEND` – Optional. Selects where authenticated session metadata is stored. Defaults to `memory`, which keeps sessions in-process. Set to `sqlite` to persist sessions in a shared SQLite database (recommended for multi-container deployments).
+- `DASHBOARD_SESSION_SQLITE_PATH` – Optional. When using the SQLite session backend, override the database path. Defaults to `.streamlit/sessions.db` inside the application directory.
 - `DASHBOARD_LOG_LEVEL` – Optional. Overrides the log verbosity for the dashboard. Accepts standard Python levels (e.g. `INFO`, `DEBUG`, `ERROR`) plus `TRACE`/`VERBOSE`. Defaults to `INFO` when unset or invalid.
+- `DASHBOARD_OIDC_ISSUER` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. Base issuer URL advertised by your identity provider.
+- `DASHBOARD_OIDC_CLIENT_ID` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. OAuth client identifier registered with the provider.
+- `DASHBOARD_OIDC_CLIENT_SECRET` – Optional. Client secret issued by the provider. Omit for public clients using PKCE only.
+- `DASHBOARD_OIDC_REDIRECT_URI` – Required when `DASHBOARD_AUTH_PROVIDER=oidc`. Callback URL configured for the dashboard client (for example `https://dashboard.example.com/`).
+- `DASHBOARD_OIDC_SCOPES` – Optional. Space-separated list of scopes to request during login. Defaults to `openid profile email` and always ensures the mandatory `openid` scope is requested.
+- `DASHBOARD_OIDC_DISCOVERY_URL` – Optional. Overrides the OIDC discovery document URL. When unset the dashboard fetches `{issuer}/.well-known/openid-configuration` automatically.
+- `DASHBOARD_OIDC_AUDIENCE` – Optional. Audience value to enforce when validating ID tokens. Defaults to the configured client ID.
 - `PORTAINER_CACHE_ENABLED` – Optional. Defaults to `true`. Set to `false` to disable persistent caching of Portainer API responses between sessions.
 - `PORTAINER_CACHE_TTL_SECONDS` – Optional. Number of seconds before cached Portainer API responses are refreshed. Defaults to 900 seconds (15 minutes). Set to `0` or a negative value to keep cached data until it is manually invalidated.
 - `PORTAINER_CACHE_DIR` – Optional. Directory used to persist cached Portainer data. Defaults to `.streamlit/cache` inside the application directory.
@@ -27,14 +43,17 @@ The application is configured via environment variables:
 - `KIBANA_VERIFY_SSL` – Optional. Defaults to `true`. Set to `false` to skip TLS verification when connecting to Kibana with self-signed certificates.
 - `KIBANA_TIMEOUT_SECONDS` – Optional. Request timeout (in seconds) for Kibana log queries. Defaults to 30 seconds when unset or invalid.
 
-Both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be set. When they are missing, the app blocks access and displays an error so
-operators can fix the configuration before exposing the dashboard.
+When `DASHBOARD_AUTH_PROVIDER` is unset or set to `static`, both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be provided. The app blocks access and displays an error until those credentials are configured. When `DASHBOARD_AUTH_PROVIDER=oidc`, configure the matching `DASHBOARD_OIDC_*` variables instead—the dashboard redirects users through the standard authorization-code flow, discovers the provider endpoints via the well-known document, and validates ID tokens against the advertised JWKS before establishing a session.
 
 After signing in, operators can use the persistent **Log out** button in the sidebar to clear their authentication session when
 they step away from the dashboard. When a session timeout is configured, the remaining time is shown in the sidebar so
 operators can always see how much longer the session will stay active. The dashboard automatically refreshes idle sessions every
 second to keep the countdown up to date. During the final 30 seconds a warning banner appears with a **Keep me logged in**
 button; clicking it immediately refreshes the activity timestamp and prevents the session from expiring.
+
+When OpenID Connect is enabled the dashboard still issues an application session so Streamlit components can operate without
+re-running the full OIDC flow on every page load. The backing store for those sessions is controlled through the environment
+variables above, ensuring both static and OIDC deployments benefit from the shared persistence layer.
 
 ### Theme
 
@@ -49,6 +68,16 @@ primaryColor = "#009fe3"
 
 Users can still toggle between Streamlit's light and dark modes from the app settings. Only the primary
 accent colour is overridden, so the interface remains readable in either mode.
+
+### Logging
+
+The dashboard configures Python's logging system on import so messages from both the app and its
+dependencies are emitted to the console. Diagnostic output up to `WARNING` is routed to standard
+output, while anything `ERROR` and above is sent to standard error. Set the `DASHBOARD_LOG_LEVEL`
+environment variable (for example `DEBUG` or `TRACE`) to increase verbosity when troubleshooting; the
+value is resolved using the aliases defined in [`app/logging_setup.py`](app/logging_setup.py) so
+common synonyms such as `verbose` are accepted. No additional Streamlit switches are required—logs
+become visible as soon as the app starts.
 
 ### Persistent API caching
 
@@ -80,6 +109,39 @@ large environments are selected. The UI surfaces the exact context size, any tra
 still allows you to download the data that was shared for auditing. With the context in place you can ask natural
 language questions—such as “are there any containers that have issues and why?”—and review the LLM response
 directly inside the dashboard.
+
+#### How the LLM workflow is orchestrated
+
+At a high level the assistant prepares the data hub and operational overview, asks the model for a research plan,
+executes the requested queries, and finally supplies the results for the answer stage. The following diagram
+captures the flow:
+
+```mermaid
+flowchart TD
+    A[User enters question + config] --> B[Build data hub & overview]
+    B --> C[_build_research_prompt()]
+    C --> D[LLMClient.chat (planning)]
+    D -->|plan JSON| E[parse_query_plan()]
+    E --> F{Any requests?}
+    F -- Yes --> G[Execute QueryRequests via LLMDataHub]
+    G --> H[serialise_results()]
+    F -- No --> H
+    H --> I[_build_answer_prompt()]
+    I --> J[LLMClient.chat (answer)]
+    J --> K[Display answer & plan\nStore in conversation]
+    K --> L[Expose datasets & payload for auditing]
+```
+
+**Planning stage** – `_build_research_prompt()` primes the LLM to return a JSON plan describing which tables or
+metrics it wants to inspect. `parse_query_plan()` extracts the structured instructions, skips malformed entries,
+and warns when the model requests more datasets than allowed.
+
+**Execution stage** – For each valid request the hub filters and serialises the relevant Portainer dataframes and
+captures a compact summary of what was shared with the model.
+
+**Answer stage** – `_build_answer_prompt()` restates the question, embeds the executed plan and results, and asks
+the LLM to provide a final answer that reuses the supplied JSON context. The response is displayed alongside the
+plan and downloadable datasets so operators can audit exactly what was sent.
 
 ### Edge agent log explorer
 

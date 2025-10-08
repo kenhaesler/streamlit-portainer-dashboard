@@ -2,9 +2,21 @@
 from __future__ import annotations
 
 import datetime as _dt
+from functools import partial
 from pathlib import Path
 
 import streamlit as st
+
+try:  # pragma: no cover - import shim for Streamlit runtime
+    from app.config import (  # type: ignore[import-not-found]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from config import (  # type: ignore[no-redef]
+        ConfigurationError as ConfigError,
+        get_config,
+    )
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.auth import (  # type: ignore[import-not-found]
@@ -21,23 +33,31 @@ try:  # pragma: no cover - import shim for Streamlit runtime
     from app.dashboard_state import (  # type: ignore[import-not-found]
         apply_selected_environment,
         clear_cached_data,
-        get_saved_environments,
-        get_selected_environment_name,
         initialise_session_state,
         set_active_environment,
         set_saved_environments,
         trigger_rerun,
     )
+    from app.managers.background_job_runner import (  # type: ignore[import-not-found]
+        BackgroundJobRunner,
+    )
+    from app.managers.environment_manager import (  # type: ignore[import-not-found]
+        EnvironmentManager,
+    )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
     from dashboard_state import (  # type: ignore[no-redef]
         apply_selected_environment,
         clear_cached_data,
-        get_saved_environments,
-        get_selected_environment_name,
         initialise_session_state,
         set_active_environment,
         set_saved_environments,
         trigger_rerun,
+    )
+    from managers.background_job_runner import (  # type: ignore[no-redef]
+        BackgroundJobRunner,
+    )
+    from managers.environment_manager import (  # type: ignore[no-redef]
+        EnvironmentManager,
     )
 
 try:  # pragma: no cover - import shim for Streamlit runtime
@@ -125,23 +145,40 @@ def rerun_app() -> None:
 
     trigger_rerun()
 
+try:
+    CONFIG = get_config()
+except ConfigError as exc:
+    st.error(str(exc))
+    st.stop()
 
-require_authentication()
+require_authentication(CONFIG)
 render_logout_button()
 
 st.title("Settings")
 
-initialise_session_state()
+initialise_session_state(CONFIG)
 
 pending_active_env_key = "portainer_env_pending_active"
 if pending_active := st.session_state.pop(pending_active_env_key, None):
-    set_active_environment(pending_active)
+    set_active_environment(CONFIG, pending_active)
 
-apply_selected_environment()
+apply_selected_environment(CONFIG)
+environment_manager = EnvironmentManager(
+    st.session_state,
+    clear_cache=partial(clear_cached_data, CONFIG),
+)
+environments = environment_manager.initialise()
+BackgroundJobRunner().maybe_run_backups(environments)
+
+pending_active_env_key = "portainer_env_pending_active"
+if pending_active := st.session_state.pop(pending_active_env_key, None):
+    environment_manager.set_active_environment(pending_active)
+
+environment_manager.apply_selected_environment()
 
 st.header("Portainer environments")
 
-environments_state = get_saved_environments()
+environments_state = environment_manager.get_saved_environments()
 env_names = [env.get("name", "") for env in environments_state if env.get("name")]
 
 form_selection_key = "portainer_env_form_selection"
@@ -153,7 +190,7 @@ if pending_selection := st.session_state.pop(pending_selection_key, None):
     st.session_state[form_selection_key] = pending_selection
 
 if st.session_state.get(form_selection_key) not in options:
-    default_env = get_selected_environment_name() or "New environment"
+    default_env = environment_manager.get_selected_environment_name() or "New environment"
     st.session_state[form_selection_key] = (
         default_env if default_env in env_names else "New environment"
     )
@@ -178,26 +215,43 @@ if st.session_state.get(prev_selection_key) != selection:
     st.session_state["portainer_env_form_verify_ssl"] = (
         bool(selected_env.get("verify_ssl", True)) if selected_env else True
     )
+    st.session_state["portainer_env_form_show_api_key"] = False
 
 st.session_state.setdefault("portainer_env_form_name", "")
 st.session_state.setdefault("portainer_env_form_api_url", "")
 st.session_state.setdefault("portainer_env_form_api_key", "")
 st.session_state.setdefault("portainer_env_form_verify_ssl", True)
+st.session_state.setdefault("portainer_env_form_show_api_key", False)
 
 form_error: str | None = None
 test_connection_clicked = False
 with st.form("portainer_env_form"):
     st.text_input("Name", key="portainer_env_form_name")
     st.text_input("API URL", key="portainer_env_form_api_url")
+    st.checkbox(
+        "Show API key",
+        key="portainer_env_form_show_api_key",
+        help="Temporarily reveal the API key in this session.",
+    )
     st.text_input(
         "API key",
         key="portainer_env_form_api_key",
-        type="password",
+        type=(
+            "default"
+            if st.session_state.get("portainer_env_form_show_api_key")
+            else "password"
+        ),
     )
     st.checkbox(
         "Verify SSL certificates",
         key="portainer_env_form_verify_ssl",
     )
+    if not st.session_state.get("portainer_env_form_verify_ssl", True):
+        st.warning(
+            "SSL certificate verification is disabled. Only use this for trusted "
+            "internal installations.",
+            icon="⚠️",
+        )
     save_col, test_col = st.columns(2)
     with save_col:
         submitted = st.form_submit_button(
@@ -247,10 +301,12 @@ if submitted:
         else:
             updated_envs[edit_index] = updated_env
         set_saved_environments(updated_envs)
-        set_active_environment(name_value)
+        set_active_environment(CONFIG, name_value)
+        environment_manager.set_saved_environments(updated_envs)
+        environment_manager.set_active_environment(name_value)
         st.session_state[pending_selection_key] = name_value
         st.session_state[prev_selection_key] = name_value
-        clear_cached_data()
+        clear_cached_data(CONFIG)
         rerun_app()
 
 if form_error:
@@ -276,7 +332,7 @@ if test_connection_clicked and not submitted:
 
 if env_names:
     st.subheader("Active environment")
-    active_env = get_selected_environment_name()
+    active_env = environment_manager.get_selected_environment_name()
     choice = st.radio(
         "Choose which environment to use for dashboards",
         env_names,
@@ -284,7 +340,8 @@ if env_names:
         key="portainer_selected_env",
     )
     if choice != active_env:
-        set_active_environment(choice)
+        set_active_environment(CONFIG, choice)
+        environment_manager.set_active_environment(choice)
         rerun_app()
 
 else:
@@ -473,10 +530,10 @@ for env in environments_state:
             updated_envs = [
                 existing for existing in environments_state if existing.get("name") != env_name
             ]
-            set_saved_environments(updated_envs)
-            if get_selected_environment_name() == env_name:
+            environment_manager.set_saved_environments(updated_envs)
+            if environment_manager.get_selected_environment_name() == env_name:
                 next_name = updated_envs[0]["name"] if updated_envs else ""
                 st.session_state[pending_active_env_key] = next_name
-            clear_cached_data()
+            clear_cached_data(CONFIG)
             rerun_app()
 

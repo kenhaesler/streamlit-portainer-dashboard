@@ -17,6 +17,11 @@ Welcome! This repository powers the Streamlit Portainer dashboard. Follow these 
 - Keep the dashboard user-friendly and responsive. Optimise for performance where practical and ensure new features preserve the app's security posture.
 - Avoid capping or truncating data whenever possible; instead, design solutions that can gracefully handle the full data set.
 
+## Testing expectations
+- Always run the available automated checks when modifying code. At a minimum execute `pytest -q` before submitting a change, and run any targeted tests that cover the modules you touched.
+- Do not commit changes while any required automated tests are failing.
+- When you adjust UI flows or authentication, pair the unit tests with a manual smoke test via `scripts/check_app_starts.sh` to confirm the app still boots and the login flow works as expected.
+
 ## Environment & configuration
 - Streamlit configuration and cached Portainer data live under `.streamlit/`. When your changes touch persistence or caching, verify they respect the `PORTAINER_CACHE_*` variables described in `README.md`.
 - Authentication relies on the `DASHBOARD_USERNAME` and `DASHBOARD_KEY` environment variables. Tests should not depend on real credentials—mock them via `monkeypatch` if necessary.

@@ -4,7 +4,10 @@ WORKDIR /app
 
 COPY requirements.txt .
 RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --prefix=/usr/local -r requirements.txt
+    pip install --no-cache-dir --prefix=/usr/local -r requirements.txt && \
+    find /usr/local/bin -maxdepth 1 -type f -name 'pip*' -exec rm -f {} + && \
+    rm -rf /usr/local/lib/python3.12/site-packages/pip \
+           /usr/local/lib/python3.12/site-packages/pip-*.dist-info
 
 COPY .streamlit ./.streamlit
 COPY app ./app
