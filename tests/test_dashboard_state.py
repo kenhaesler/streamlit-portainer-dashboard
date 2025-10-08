@@ -386,6 +386,8 @@ def test_fetch_portainer_payload_normalises_swagger_fixture(monkeypatch):
     assert endpoint_map.loc[102, "last_check_in"] == "2024-05-01T12:00:00+00:00"
     assert endpoint_map.loc[101, "tags"] == "prod, region-a"
     assert endpoint_map.loc[102, "tags"] == "staging"
+    assert endpoint_map.loc[101, "agent_hostname"] == "edge-alpha"
+    assert endpoint_map.loc[102, "agent_hostname"] == "edge-beta"
 
     detail_map = container_details_df.set_index("container_id")
     assert detail_map.loc["abc123", "health_status"] == "healthy"
