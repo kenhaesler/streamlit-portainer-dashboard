@@ -5,7 +5,7 @@ import logging
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Iterable, MutableMapping, Sequence
+from typing import Iterable, Mapping, MutableMapping, Sequence
 
 import pandas as pd
 import streamlit as st
@@ -257,19 +257,66 @@ def apply_selected_environment(
     manager.apply_selected_environment()
 
 
+def _active_environment_override(
+    config: Config,
+) -> tuple[PortainerEnvironment, ...] | None:
+    """Return the active environment stored in session state, if valid."""
+
+    payload = st.session_state.get("active_portainer_environment")
+    if not isinstance(payload, Mapping):
+        return None
+
+    api_url = str(payload.get("api_url", "")).strip()
+    api_key = str(payload.get("api_key", "")).strip()
+    if not api_url or not api_key:
+        return None
+
+    raw_name = payload.get("name") or config.portainer.default_environment.environment_name
+    name = str(raw_name).strip() or "Default"
+    verify_ssl = bool(payload.get("verify_ssl", True))
+
+    return (
+        PortainerEnvironment(
+            name=name,
+            api_url=api_url,
+            api_key=api_key,
+            verify_ssl=verify_ssl,
+        ),
+    )
+
+
 def load_configured_environment_settings(
     config: Config,
 ) -> tuple[PortainerEnvironment, ...]:
-    """Load configured Portainer environments from environment variables."""
+    """Load configured Portainer environments for the active session."""
 
-    environments = config.portainer.configured_environments
+    override = _active_environment_override(config)
+    if override:
+        return override
+
     try:
         environments = EnvironmentManager.load_configured_environment_settings()
     except ValueError as exc:  # pragma: no cover - depends on runtime configuration
         raise ConfigurationError(str(exc)) from exc
-    if not environments:
-        raise NoEnvironmentsConfiguredError
-    return environments
+
+    if environments:
+        return environments
+
+    if config.portainer.configured_environments:
+        return config.portainer.configured_environments
+
+    defaults = config.portainer.default_environment
+    if defaults.api_url and defaults.api_key:
+        return (
+            PortainerEnvironment(
+                name=defaults.environment_name or "Default",
+                api_url=defaults.api_url,
+                api_key=defaults.api_key,
+                verify_ssl=defaults.verify_ssl,
+            ),
+        )
+
+    raise NoEnvironmentsConfiguredError
 
 
 def clear_cached_data(config: Config, *, persistent: bool = True) -> None:
