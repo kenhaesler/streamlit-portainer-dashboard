@@ -148,17 +148,46 @@ def trigger_rerun() -> None:
     rerun()
 
 
-def initialise_session_state(config: Config) -> None:
-    """Ensure baseline session state is available for all pages."""
+def _noop_clear_cache(*, persistent: bool = True) -> None:
+    """Default cache clearer used when no configuration is available."""
 
-    if SESSION_ENVIRONMENTS_KEY not in st.session_state:
-        stored = load_environments()
-        if not stored:
-            defaults = config.portainer.default_environment
-            if defaults.api_url and defaults.api_key:
-                stored = [_environment_from_defaults(defaults)]
-        st.session_state[SESSION_ENVIRONMENTS_KEY] = stored
+    return None
+
+
+def _build_default_environment(config: Config | None) -> dict[str, object] | None:
+    if config is None:
+        return None
+    defaults = config.portainer.default_environment
+    if defaults.api_url and defaults.api_key:
+        return _environment_from_defaults(defaults)
+    return None
+
+
+def _maybe_seed_default_environment(
+    manager: EnvironmentManager, config: Config | None
+) -> dict[str, object] | None:
+    default_environment = _build_default_environment(config)
+    if default_environment is None:
+        return None
+    environments = manager.ensure_environments_loaded()
+    if environments:
+        return None
+    manager.set_saved_environments([default_environment])
+    return default_environment
+
+
+def _resolve_active_environment(manager: EnvironmentManager) -> dict[str, object] | None:
+    selected_name = manager.get_selected_environment_name()
+    if not selected_name:
+        return None
+    for environment in manager.get_saved_environments():
+        if environment.get("name") == selected_name:
+            return environment
+    return None
+
+
 def _get_environment_manager(
+    config: Config | None = None,
     state: MutableMapping[str, object] | None = None,
     *,
     environment_manager: EnvironmentManager | None = None,
@@ -166,33 +195,45 @@ def _get_environment_manager(
     mapping = state or st.session_state
     if environment_manager is not None:
         return environment_manager
+
+    if config is not None:
+        cache_callback = lambda *, persistent=True: clear_cached_data(  # noqa: E731
+            config, persistent=persistent
+        )
+    else:
+        cache_callback = _noop_clear_cache
+
     return EnvironmentManager(
         mapping,
-        clear_cache=clear_cached_data,
+        clear_cache=cache_callback,
         loader=load_environments,
         saver=save_environments,
     )
 
-    try:
-        ensure_scheduler_running()
-    except Exception:  # pragma: no cover - defensive guard for Streamlit runtime
-        LOGGER.warning("Scheduled backup runner failed to start", exc_info=True)
-
-    if SESSION_SELECTED_ENV_KEY not in st.session_state:
-        environments = st.session_state[SESSION_ENVIRONMENTS_KEY]
-        st.session_state[SESSION_SELECTED_ENV_KEY] = (
-            environments[0]["name"] if environments else ""
-        )
 
 def initialise_session_state(
+    config: Config | None = None,
     *,
     environment_manager: EnvironmentManager | None = None,
     background_runner: BackgroundJobRunner | None = None,
 ) -> None:
     """Ensure baseline session state is available for all pages."""
 
-    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager = _get_environment_manager(
+        config,
+        environment_manager=environment_manager,
+    )
+    default_environment = _maybe_seed_default_environment(manager, config)
     environments = manager.initialise()
+
+    if default_environment is not None and not environments:
+        environments = [default_environment]
+
+    try:
+        ensure_scheduler_running()
+    except Exception:  # pragma: no cover - defensive guard for Streamlit runtime
+        LOGGER.warning("Scheduled backup runner failed to start", exc_info=True)
+
     runner = background_runner or BackgroundJobRunner()
     runner.maybe_run_backups(environments)
 
@@ -225,53 +266,42 @@ def get_selected_environment_name(
     manager = _get_environment_manager(environment_manager=environment_manager)
     return manager.get_selected_environment_name()
 
-def set_active_environment(config: Config, name: str) -> None:
+def set_active_environment(config: Config | None = None, name: str | None = None, *, environment_manager: EnvironmentManager | None = None) -> None:
     """Update the active environment selection."""
 
-    previous_selection = st.session_state.get(SESSION_SELECTED_ENV_KEY, "")
-    st.session_state[SESSION_SELECTED_ENV_KEY] = name
-    st.session_state.pop(SESSION_APPLIED_ENV_KEY, None)
-    clear_cached_data(config, persistent=bool(str(previous_selection).strip()))
+    if name is None:
+        raise ValueError("An environment name must be provided")
 
-
-def apply_selected_environment(config: Config) -> None:
-    """Apply the selected environment if it has changed since the last run."""
-
-    selected = get_selected_environment_name()
-    applied = st.session_state.get(SESSION_APPLIED_ENV_KEY)
-    environment = _get_selected_environment()
-    if environment is None:
-        defaults = config.portainer.default_environment
-        if defaults.api_url and defaults.api_key:
-            environment = _environment_from_defaults(defaults)
-
-    if applied == selected:
-        st.session_state["active_portainer_environment"] = environment
-        return
-
-    st.session_state["active_portainer_environment"] = environment
-    st.session_state[SESSION_APPLIED_ENV_KEY] = selected
-    clear_cached_data(config, persistent=applied is not None)
-
-def set_active_environment(
-    name: str,
-    *,
-    environment_manager: EnvironmentManager | None = None,
-) -> None:
-    """Update the active environment selection."""
-
-    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager = _get_environment_manager(
+        config,
+        environment_manager=environment_manager,
+    )
     manager.set_active_environment(name)
 
 
 def apply_selected_environment(
-    *, environment_manager: EnvironmentManager | None = None
+    config: Config | None = None,
+    *,
+    environment_manager: EnvironmentManager | None = None,
 ) -> None:
     """Apply the selected environment if it has changed since the last run."""
 
-    manager = _get_environment_manager(environment_manager=environment_manager)
+    manager = _get_environment_manager(
+        config,
+        environment_manager=environment_manager,
+    )
+    default_environment = _maybe_seed_default_environment(manager, config)
+    manager.ensure_selection()
     manager.apply_selected_environment()
 
+    active_environment = _resolve_active_environment(manager)
+    if active_environment is None:
+        active_environment = default_environment
+
+    if active_environment is not None:
+        st.session_state["active_portainer_environment"] = active_environment
+    else:
+        st.session_state.pop("active_portainer_environment", None)
 
 def load_configured_environment_settings(
     config: Config,
