@@ -775,7 +775,14 @@ def normalise_container_details(
                 "labels",
             ]
         )
-    return pd.DataFrame.from_records(records)
+
+    df = pd.DataFrame.from_records(records)
+
+    for column in ("cpu_percent", "memory_usage", "memory_limit", "memory_percent"):
+        if column in df.columns:
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+    return df
 
 
 def normalise_endpoint_host_metrics(
