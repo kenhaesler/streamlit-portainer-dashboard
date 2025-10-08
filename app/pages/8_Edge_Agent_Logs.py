@@ -87,23 +87,44 @@ TIME_WINDOWS = {
 }
 
 
-def _build_agent_dataframe(container_data: pd.DataFrame) -> pd.DataFrame:
-    if container_data.empty:
-        return container_data
-    columns = ["endpoint_id", "endpoint_name"]
-    available_columns = [column for column in columns if column in container_data.columns]
-    if not available_columns:
+def _build_agent_dataframe(
+    container_data: pd.DataFrame, endpoint_data: pd.DataFrame
+) -> pd.DataFrame:
+    columns = ["endpoint_id", "endpoint_name", "agent_hostname"]
+    frames: list[pd.DataFrame] = []
+
+    if not container_data.empty:
+        container_columns = [
+            column for column in ("endpoint_id", "endpoint_name") if column in container_data.columns
+        ]
+        if container_columns:
+            frames.append(container_data[container_columns].copy())
+
+    if not endpoint_data.empty:
+        endpoint_columns = [
+            column for column in columns if column in endpoint_data.columns
+        ]
+        if endpoint_columns:
+            frames.append(endpoint_data[endpoint_columns].copy())
+
+    if not frames:
         return pd.DataFrame(columns=columns)
-    agents = (
-        container_data[available_columns]
-        .dropna()
-        .drop_duplicates()
-        .sort_values(by=available_columns)
+
+    merged = pd.concat(frames, ignore_index=True, sort=False)
+    if "agent_hostname" not in merged.columns:
+        merged["agent_hostname"] = pd.NA
+
+    merged = (
+        merged.dropna(subset=["endpoint_id"], how="any")
+        .drop_duplicates(subset=["endpoint_id", "agent_hostname", "endpoint_name"], keep="first")
         .reset_index(drop=True)
     )
-    if "endpoint_name" not in agents.columns:
-        agents["endpoint_name"] = agents[available_columns[0]].astype("string")
-    return agents
+
+    for column in ("endpoint_name", "agent_hostname"):
+        if column in merged.columns:
+            merged[column] = merged[column].astype("string")
+
+    return merged[columns]
 
 
 try:
@@ -158,8 +179,9 @@ for warning in data_result.warnings:
     st.warning(warning, icon="⚠️")
 
 container_data = data_result.container_data
+endpoint_data = data_result.endpoint_data
 
-agents_df = _build_agent_dataframe(container_data)
+agents_df = _build_agent_dataframe(container_data, endpoint_data)
 if agents_df.empty:
     st.info(
         "No edge agents were discovered from the Portainer API response. Logs cannot be queried yet.",
@@ -184,7 +206,7 @@ filters = render_sidebar_filters(
     data_status=data_result,
 )
 
-agents_in_scope = _build_agent_dataframe(filters.container_data)
+agents_in_scope = _build_agent_dataframe(filters.container_data, filters.endpoint_data)
 if agents_in_scope.empty:
     st.info(
         "The current filters hide all edge agents. Adjust the sidebar scope to continue.",
@@ -192,17 +214,49 @@ if agents_in_scope.empty:
     )
     st.stop()
 
-default_agent = agents_in_scope["endpoint_name"].astype("string").iloc[0]
+agents_in_scope = agents_in_scope.assign(
+    query_hostname=lambda df: df["agent_hostname"]
+    .fillna(df["endpoint_name"])
+    .astype("string")
+    .fillna("")
+)
+agents_in_scope = agents_in_scope[
+    agents_in_scope["query_hostname"].str.strip() != ""
+].copy()
+
+if agents_in_scope.empty:
+    st.info(
+        "No edge agents expose a hostname to query. Check the Portainer endpoint configuration.",
+        icon="ℹ️",
+    )
+    st.stop()
+
+def _format_agent_label(row: pd.Series) -> str:
+    endpoint_name = row.get("endpoint_name")
+    hostname = row.get("query_hostname")
+    label: str | None
+    if endpoint_name and hostname and endpoint_name != hostname:
+        label = f"{endpoint_name} · {hostname}"
+    else:
+        label = endpoint_name or hostname
+    if not label:
+        label = f"Endpoint {row.get('endpoint_id')}"
+    return str(label)
+
+agents_in_scope = agents_in_scope.assign(
+    display_label=lambda df: df.apply(_format_agent_label, axis=1)
+).sort_values("display_label", kind="stable").reset_index(drop=True)
+
+default_index = 0
 
 with st.form("kibana_log_filters"):
-    agent_display = (
-        agents_in_scope["endpoint_name"].astype("string").sort_values().unique().tolist()
-    )
-    selected_agent = st.selectbox(
+    option_indices = agents_in_scope.index.tolist()
+    selected_position = st.selectbox(
         "Edge agent",
-        options=agent_display,
-        index=agent_display.index(default_agent) if default_agent in agent_display else 0,
-        help="Select the edge agent to query logs for. This maps directly to the `host.hostname` value.",
+        options=option_indices,
+        index=default_index,
+        format_func=lambda idx: agents_in_scope.loc[idx, "display_label"],
+        help="Select the edge agent to query logs for. The hostname is used to match Kibana log entries.",
     )
     container_filter = st.text_input(
         "Container name filter",
@@ -231,7 +285,7 @@ with st.form("kibana_log_filters"):
 if not submitted:
     st.stop()
 
-hostname = selected_agent.strip()
+hostname = agents_in_scope.loc[selected_position, "query_hostname"].strip()
 
 if not hostname:
     st.warning("Provide a hostname to query logs for.", icon="⚠️")

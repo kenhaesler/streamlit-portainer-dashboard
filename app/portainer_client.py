@@ -6,6 +6,7 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from urllib.parse import urlparse
 
 import pandas as pd
 import requests
@@ -498,6 +499,33 @@ def normalise_endpoint_metadata(
                 last_check_iso = pd.to_datetime(last_check_in, utc=True).isoformat()
             except (ValueError, TypeError):
                 last_check_iso = last_check_in
+        url_value = endpoint.get("URL") or endpoint.get("Url") or endpoint.get("url")
+
+        def _parse_hostname(value: object) -> Optional[str]:
+            if not isinstance(value, str):
+                return None
+            candidate = value.strip()
+            if not candidate:
+                return None
+            parsed = urlparse(candidate if "://" in candidate else f"tcp://{candidate}")
+            hostname = parsed.hostname
+            if hostname:
+                return hostname
+            if ":" in candidate and "//" not in candidate:
+                return candidate.split(":", 1)[0]
+            return candidate or None
+
+        agent_hostname = _parse_hostname(url_value)
+        if not agent_hostname:
+            public_url = (
+                endpoint.get("PublicURL")
+                or endpoint.get("PublicUrl")
+                or endpoint.get("publicURL")
+                or endpoint.get("publicUrl")
+                or endpoint.get("public_url")
+            )
+            agent_hostname = _parse_hostname(public_url)
+
         record = {
             "endpoint_id": endpoint_id,
             "endpoint_name": endpoint_name,
@@ -508,7 +536,8 @@ def normalise_endpoint_metadata(
             "group_id": group_id,
             "tags": tag_summary,
             "last_check_in": last_check_iso,
-            "url": endpoint.get("URL") or endpoint.get("Url") or endpoint.get("url"),
+            "url": url_value,
+            "agent_hostname": agent_hostname,
         }
         records.append(record)
     if not records:
@@ -525,6 +554,7 @@ def normalise_endpoint_metadata(
                 "tags",
                 "last_check_in",
                 "url",
+                "agent_hostname",
             ]
         )
     return pd.DataFrame.from_records(records)
