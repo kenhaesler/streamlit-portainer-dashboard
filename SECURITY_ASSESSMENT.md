@@ -41,3 +41,13 @@ container image regularly so that distroless and Debian security updates are inc
 Neither the newly reviewed CVEs nor the previously analysed CVE-2023-45853 and CVE-2025-7458 impact the Streamlit Portainer
 Dashboard as presently configured. No remediation is required for this codebase today. Continue to monitor base images for
 unrelated security updates as part of routine maintenance.
+
+## CodeQL alert #4 – Hard-coded credential strings
+
+- **Alert summary**: GitHub Advanced Security flagged several string literals that resemble passwords (alert `security/code-scanning/4`).
+  The affected lines include environment-variable names in the configuration loader, Streamlit session-state keys that track
+  user-provided backup credentials, and placeholder values assigned when no LLM basic-auth credentials are supplied.【F:app/config/__init__.py†L30-L38】【F:app/pages/6_Settings.py†L93-L101】【F:app/pages/7_LLM_Assistant.py†L454-L486】【F:app/services/backup.py†L18-L24】
+- **Assessment**: None of the flagged strings embed real secrets. They are identifiers that point to values supplied by the
+  operator at runtime (environment variables or Streamlit inputs). The dashboard never hard-codes actual passwords in the
+  repository, and credentials entered through the UI are kept in-memory inside the user session. Consequently, the alert is a
+  false positive, and no mitigation is required beyond acknowledging the tooling limitation.
