@@ -578,8 +578,22 @@ def _store_persistent_session(
     """Create and persist a new session token for the authenticated user."""
 
     _prune_expired_sessions(now=now)
-    token = token_urlsafe(32)
-    _get_session_storage().create(
+    storage = _get_session_storage()
+
+    token_from_cookie = _get_session_token_from_cookie()
+    token: str | None = None
+
+    if token_from_cookie:
+        session = storage.retrieve(token_from_cookie)
+        if session is not None and session.username != username:
+            storage.delete(token_from_cookie)
+        else:
+            token = token_from_cookie
+
+    if token is None:
+        token = token_urlsafe(32)
+
+    storage.create(
         SessionRecord(
             token=token,
             username=username,
