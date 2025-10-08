@@ -29,6 +29,8 @@ try:  # pragma: no cover - runtime imports resolved differently during tests
     from app.dashboard_state import (  # type: ignore[import-not-found]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
+        apply_selected_environment,
+        initialise_session_state,
         load_configured_environment_settings,
         load_portainer_data,
         render_data_refresh_notice,
@@ -61,6 +63,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback for direct execution
     from dashboard_state import (  # type: ignore[no-redef]
         ConfigurationError,
         NoEnvironmentsConfiguredError,
+        apply_selected_environment,
+        initialise_session_state,
         load_configured_environment_settings,
         load_portainer_data,
         render_data_refresh_notice,
