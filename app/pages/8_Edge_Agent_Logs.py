@@ -6,6 +6,15 @@ from datetime import datetime, timedelta, timezone
 import pandas as pd
 import streamlit as st
 
+try:
+    from app.pages.edge_agent_logs_helpers import (  # type: ignore[import-not-found]
+        build_agent_dataframe,
+    )
+except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
+    from edge_agent_logs_helpers import (  # type: ignore[no-redef]
+        build_agent_dataframe,
+    )
+
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.config import (  # type: ignore[import-not-found]
         ConfigurationError as ConfigError,
@@ -85,48 +94,6 @@ TIME_WINDOWS = {
     "Last 6 hours": timedelta(hours=6),
     "Last 24 hours": timedelta(hours=24),
 }
-
-
-def _build_agent_dataframe(
-    container_data: pd.DataFrame, endpoint_data: pd.DataFrame
-) -> pd.DataFrame:
-    columns = ["endpoint_id", "endpoint_name", "agent_hostname"]
-    frames: list[pd.DataFrame] = []
-
-    if not container_data.empty:
-        container_columns = [
-            column for column in ("endpoint_id", "endpoint_name") if column in container_data.columns
-        ]
-        if container_columns:
-            frames.append(container_data[container_columns].copy())
-
-    if not endpoint_data.empty:
-        endpoint_columns = [
-            column for column in columns if column in endpoint_data.columns
-        ]
-        if endpoint_columns:
-            frames.append(endpoint_data[endpoint_columns].copy())
-
-    if not frames:
-        return pd.DataFrame(columns=columns)
-
-    merged = pd.concat(frames, ignore_index=True, sort=False)
-    if "agent_hostname" not in merged.columns:
-        merged["agent_hostname"] = pd.NA
-
-    merged = (
-        merged.dropna(subset=["endpoint_id"], how="any")
-        .drop_duplicates(subset=["endpoint_id", "agent_hostname", "endpoint_name"], keep="first")
-        .reset_index(drop=True)
-    )
-
-    for column in ("endpoint_name", "agent_hostname"):
-        if column in merged.columns:
-            merged[column] = merged[column].astype("string")
-
-    return merged[columns]
-
-
 try:
     CONFIG = get_config()
 except ConfigError as exc:
@@ -181,7 +148,7 @@ for warning in data_result.warnings:
 container_data = data_result.container_data
 endpoint_data = data_result.endpoint_data
 
-agents_df = _build_agent_dataframe(container_data, endpoint_data)
+agents_df = build_agent_dataframe(container_data, endpoint_data)
 if agents_df.empty:
     st.info(
         "No edge agents were discovered from the Portainer API response. Logs cannot be queried yet.",
@@ -206,7 +173,7 @@ filters = render_sidebar_filters(
     data_status=data_result,
 )
 
-agents_in_scope = _build_agent_dataframe(filters.container_data, filters.endpoint_data)
+agents_in_scope = build_agent_dataframe(filters.container_data, filters.endpoint_data)
 if agents_in_scope.empty:
     st.info(
         "The current filters hide all edge agents. Adjust the sidebar scope to continue.",
