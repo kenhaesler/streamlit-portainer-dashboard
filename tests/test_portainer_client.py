@@ -296,6 +296,7 @@ def test_normalise_endpoint_metadata_extracts_agent_details():
     assert df.loc[0, "agent_version"] == "2.18.1"
     assert df.loc[0, "tags"] == "prod, site-a"
     assert df.loc[0, "last_check_in"].startswith("2023-")
+    assert df.loc[0, "agent_hostname"] == "127.0.0.1"
 
 
 def test_normalise_container_details_combines_inspect_and_stats():
