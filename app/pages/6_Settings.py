@@ -34,12 +34,8 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         apply_selected_environment,
         clear_cached_data,
         initialise_session_state,
-        set_active_environment,
         set_saved_environments,
         trigger_rerun,
-    )
-    from app.managers.background_job_runner import (  # type: ignore[import-not-found]
-        BackgroundJobRunner,
     )
     from app.managers.environment_manager import (  # type: ignore[import-not-found]
         EnvironmentManager,
@@ -49,12 +45,8 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         apply_selected_environment,
         clear_cached_data,
         initialise_session_state,
-        set_active_environment,
         set_saved_environments,
         trigger_rerun,
-    )
-    from managers.background_job_runner import (  # type: ignore[no-redef]
-        BackgroundJobRunner,
     )
     from managers.environment_manager import (  # type: ignore[no-redef]
         EnvironmentManager,
@@ -156,25 +148,18 @@ render_logout_button()
 
 st.title("Settings")
 
-initialise_session_state(CONFIG)
-
-pending_active_env_key = "portainer_env_pending_active"
-if pending_active := st.session_state.pop(pending_active_env_key, None):
-    set_active_environment(CONFIG, pending_active)
-
-apply_selected_environment(CONFIG)
 environment_manager = EnvironmentManager(
     st.session_state,
     clear_cache=partial(clear_cached_data, CONFIG),
 )
-environments = environment_manager.initialise()
-BackgroundJobRunner().maybe_run_backups(environments)
+
+initialise_session_state(CONFIG, environment_manager=environment_manager)
 
 pending_active_env_key = "portainer_env_pending_active"
 if pending_active := st.session_state.pop(pending_active_env_key, None):
     environment_manager.set_active_environment(pending_active)
 
-environment_manager.apply_selected_environment()
+apply_selected_environment(environment_manager=environment_manager)
 
 st.header("Portainer environments")
 
@@ -301,7 +286,6 @@ if submitted:
         else:
             updated_envs[edit_index] = updated_env
         set_saved_environments(updated_envs)
-        set_active_environment(CONFIG, name_value)
         environment_manager.set_saved_environments(updated_envs)
         environment_manager.set_active_environment(name_value)
         st.session_state[pending_selection_key] = name_value
@@ -340,7 +324,6 @@ if env_names:
         key="portainer_selected_env",
     )
     if choice != active_env:
-        set_active_environment(CONFIG, choice)
         environment_manager.set_active_environment(choice)
         rerun_app()
 

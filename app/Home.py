@@ -20,9 +20,6 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         apply_selected_environment,
         initialise_session_state,
     )
-    from app.managers.background_job_runner import (  # type: ignore[import-not-found]
-        BackgroundJobRunner,
-    )
     from app.managers.environment_manager import (  # type: ignore[import-not-found]
         EnvironmentManager,
     )
@@ -39,9 +36,6 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
     from dashboard_state import (  # type: ignore[no-redef]
         apply_selected_environment,
         initialise_session_state,
-    )
-    from managers.background_job_runner import (  # type: ignore[no-redef]
-        BackgroundJobRunner,
     )
     from managers.environment_manager import (  # type: ignore[no-redef]
         EnvironmentManager,
@@ -61,12 +55,9 @@ except ConfigurationError as exc:
 require_authentication(CONFIG)
 render_logout_button()
 
-initialise_session_state(CONFIG)
-apply_selected_environment(CONFIG)
 environment_manager = EnvironmentManager(st.session_state)
-environments = environment_manager.initialise()
-BackgroundJobRunner().maybe_run_backups(environments)
-environment_manager.apply_selected_environment()
+initialise_session_state(CONFIG, environment_manager=environment_manager)
+apply_selected_environment(environment_manager=environment_manager)
 
 st.markdown(
     """
