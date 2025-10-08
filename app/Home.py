@@ -16,6 +16,10 @@ try:  # pragma: no cover - import shim for Streamlit runtime
         require_authentication,
         get_active_session_count,
     )
+    from app.dashboard_state import (  # type: ignore[import-not-found]
+        apply_selected_environment,
+        initialise_session_state,
+    )
     from app.managers.background_job_runner import (  # type: ignore[import-not-found]
         BackgroundJobRunner,
     )
@@ -31,6 +35,10 @@ except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a sc
         render_logout_button,
         require_authentication,
         get_active_session_count,
+    )
+    from dashboard_state import (  # type: ignore[no-redef]
+        apply_selected_environment,
+        initialise_session_state,
     )
     from managers.background_job_runner import (  # type: ignore[no-redef]
         BackgroundJobRunner,
