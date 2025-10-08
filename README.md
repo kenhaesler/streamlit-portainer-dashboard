@@ -79,6 +79,34 @@ value is resolved using the aliases defined in [`app/logging_setup.py`](app/logg
 common synonyms such as `verbose` are accepted. No additional Streamlit switches are required—logs
 become visible as soon as the app starts.
 
+### Trusting internal certificate authorities
+
+Many enterprises issue TLS certificates from a private certificate authority (CA). To keep
+`PORTAINER_VERIFY_SSL=true` (the default) and avoid suppressing verification inside the dashboard,
+mount the host's CA bundle into the container so Python reuses the same trust store:
+
+1. Export your internal root/intermediate certificates on the host and install them in the operating
+   system trust store (for example by placing `*.crt` files under `/usr/local/share/ca-certificates`
+   and running `update-ca-certificates` on Debian/Ubuntu).
+2. Mount the populated trust store into the container. With Docker Compose you can extend the service
+   definition as follows so the distroless image sees the updated bundle:
+
+   ```yaml
+   services:
+     streamlit-portainer-dashboard:
+       volumes:
+         - streamlit_portainer_envs:/app/.streamlit
+         - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+         - /usr/local/share/ca-certificates:/usr/local/share/ca-certificates:ro
+   ```
+
+   The first bind mount exposes the consolidated CA bundle that Debian maintains at
+   `/etc/ssl/certs/ca-certificates.crt`, while the second covers individual certificates in case
+   client libraries consult `SSL_CERT_DIR`.
+3. Restart the container so the updated certificates are loaded. Python's TLS stack now trusts the
+   same issuers as the host and continues to validate Portainer, Kibana, or any other HTTPS
+   integrations without disabling verification.
+
 ### Persistent API caching
 
 The dashboard now caches Portainer API responses to reduce latency for returning users. The first fetch after
