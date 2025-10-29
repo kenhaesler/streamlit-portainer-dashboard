@@ -6,4 +6,4 @@ plotly==6.3.0
 PyYAML==6.0.3
 python-dotenv==1.2.1
 PyJWT==2.10.1
-filelock==3.16.1
+filelock==3.20.0
