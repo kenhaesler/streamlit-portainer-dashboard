@@ -7,11 +7,16 @@ import pandas as pd
 import streamlit as st
 
 try:
-    from app.pages.edge_agent_logs_helpers import (  # type: ignore[import-not-found]
+    from app.utils.edge_agent_logs import (  # type: ignore[import-not-found]
         build_agent_dataframe,
     )
 except ModuleNotFoundError:  # pragma: no cover - fallback when executed as a script
-    from edge_agent_logs_helpers import (  # type: ignore[no-redef]
+    from pathlib import Path
+    import sys
+
+    sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+    from app.utils.edge_agent_logs import (  # type: ignore[no-redef]
         build_agent_dataframe,
     )
 

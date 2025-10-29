@@ -1,4 +1,4 @@
-"""Helper utilities for the edge agent logs page."""
+"""Utility helpers for working with edge agent log data."""
 from __future__ import annotations
 
 import pandas as pd

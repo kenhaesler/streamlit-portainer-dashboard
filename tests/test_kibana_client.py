@@ -10,6 +10,7 @@ import pytest
 
 from app.services.kibana_client import (
     KibanaClient,
+    KibanaClientError,
     build_logs_query,
     load_kibana_client_from_env,
 )
@@ -91,6 +92,7 @@ def test_fetch_logs_returns_dataframe(monkeypatch):
 
     assert captured_payload["url"] == "https://elastic.example.com/_search"
     assert captured_payload["headers"]["Authorization"] == "ApiKey secret"
+    assert captured_payload["headers"]["kbn-xsrf"] == "streamlit-portainer-dashboard"
     assert isinstance(result, pd.DataFrame)
     assert not result.empty
     assert list(result.columns) == [
@@ -115,3 +117,34 @@ def test_load_kibana_client_from_env(monkeypatch):
     monkeypatch.delenv("KIBANA_LOGS_ENDPOINT", raising=False)
     monkeypatch.delenv("KIBANA_API_KEY", raising=False)
     assert load_kibana_client_from_env() is None
+
+
+def test_fetch_logs_raises_on_error_payload(monkeypatch):
+    def fake_post(url, headers, json, timeout, verify):  # type: ignore[override]
+        class DummyResponse:
+            status_code = 200
+
+            @staticmethod
+            def raise_for_status() -> None:
+                return None
+
+            @staticmethod
+            def json() -> Dict[str, Any]:
+                return {
+                    "statusCode": 400,
+                    "error": "Bad Request",
+                    "message": "kbn-xsrf header is required",
+                }
+
+        return DummyResponse()
+
+    monkeypatch.setattr("app.services.kibana_client.requests.post", fake_post)
+
+    client = KibanaClient(endpoint="https://elastic.example.com/_search", api_key="secret")
+    now = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    later = datetime(2024, 1, 1, 1, tzinfo=timezone.utc)
+
+    with pytest.raises(KibanaClientError) as excinfo:
+        client.fetch_logs(hostname="edge-agent-1", start_time=now, end_time=later)
+
+    assert "kbn-xsrf header is required" in str(excinfo.value)
