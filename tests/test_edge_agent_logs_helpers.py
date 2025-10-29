@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.pages.edge_agent_logs_helpers import build_agent_dataframe
+from app.utils.edge_agent_logs import build_agent_dataframe
 
 
 def test_build_agent_dataframe_prefers_hostname_entries():
