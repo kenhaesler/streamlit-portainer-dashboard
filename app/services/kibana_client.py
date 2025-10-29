@@ -115,6 +115,7 @@ class KibanaClient:
             "Authorization": f"ApiKey {self._api_key}",
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "kbn-xsrf": "streamlit-portainer-dashboard",
         }
         try:
             response = requests.post(
@@ -128,9 +129,26 @@ class KibanaClient:
         except requests.RequestException as exc:  # pragma: no cover - network errors
             raise KibanaClientError(f"Failed to query Kibana logs: {exc}") from exc
         try:
-            return response.json()
+            payload_json = response.json()
         except json.JSONDecodeError as exc:  # pragma: no cover - invalid server response
             raise KibanaClientError("Kibana response was not valid JSON") from exc
+        if not isinstance(payload_json, Mapping):
+            raise KibanaClientError("Kibana response was not a JSON object")
+        status_code = payload_json.get("statusCode")
+        try:
+            status_code_int = int(status_code) if status_code is not None else None
+        except (TypeError, ValueError):
+            status_code_int = None
+        if status_code_int is not None and status_code_int >= 400:
+            message = payload_json.get("message") or payload_json.get("error")
+            raise KibanaClientError(
+                f"Kibana returned an error response: {message or status_code_int}"
+            )
+        if payload_json.get("error") and payload_json.get("message"):
+            raise KibanaClientError(
+                f"Kibana returned an error response: {payload_json['message']}"
+            )
+        return payload_json
 
     def fetch_logs(
         self,
