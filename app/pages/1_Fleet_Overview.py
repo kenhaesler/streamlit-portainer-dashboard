@@ -176,6 +176,42 @@ stack_table = stack_filtered.sort_values(
     na_position="last",
 ).reset_index(drop=True)
 
+endpoint_metadata = filters.endpoint_data
+if not endpoint_metadata.empty:
+    endpoint_metadata = endpoint_metadata.drop_duplicates(subset="endpoint_id")
+    stack_table = stack_table.merge(
+        endpoint_metadata[
+            [
+                "endpoint_id",
+                "endpoint_status",
+                "last_check_in",
+                "agent_version",
+                "platform",
+                "operating_system",
+                "tags",
+            ]
+        ],
+        on="endpoint_id",
+        how="left",
+        suffixes=("", "_metadata"),
+    )
+    stack_table["endpoint_status"] = stack_table.apply(
+        lambda row: row["endpoint_status"]
+        if str(row["endpoint_status"]).strip().lower() not in {"nan", "none", "unknown"}
+        else row.get("endpoint_status_metadata"),
+        axis=1,
+    )
+    stack_table.drop(columns=["endpoint_status_metadata"], inplace=True)
+
+stack_table["stack_name"] = stack_table["stack_name"].fillna("No stack deployed")
+stack_table["stack_status"] = stack_table["stack_status"].fillna("No stack detected")
+stack_table["stack_type"] = stack_table["stack_type"].fillna("Unknown type")
+stack_table["endpoint_status"] = stack_table["endpoint_status"].fillna("Unknown")
+status_mapping = {0: "Unknown", 1: "Up", 2: "Down", 3: "Warning", "unknown": "Unknown"}
+stack_table["endpoint_status"] = (
+    stack_table["endpoint_status"].map(status_mapping).fillna(stack_table["endpoint_status"])
+)
+
 stack_counts = (
     stack_filtered.dropna(subset=["stack_id"])
     .groupby(["environment_name", "endpoint_name"], dropna=False)
@@ -290,6 +326,23 @@ with tab_overview:
             .apply(lambda row: any(query in str(value).lower() for value in row), axis=1)
         ]
         st.caption(f"Showing {len(stack_display)} stack(s) matching “{stack_search}”.")
+    column_order = [
+        "environment_name",
+        "endpoint_name",
+        "endpoint_status",
+        "stack_name",
+        "stack_status",
+        "stack_type",
+        "last_check_in",
+        "agent_version",
+        "platform",
+        "operating_system",
+        "tags",
+    ]
+    present_columns = [
+        column for column in column_order if column in stack_display.columns
+    ]
+    stack_display = stack_display[present_columns]
     if stack_display.empty:
         st.info("No stacks match the current filters. Try adjusting the filters or clearing the search.")
     else:
@@ -302,6 +355,11 @@ with tab_overview:
                     "stack_name": "Stack",
                     "stack_status": "Stack status",
                     "stack_type": "Stack type",
+                    "last_check_in": "Last check-in",
+                    "agent_version": "Agent version",
+                    "platform": "Platform",
+                    "operating_system": "Operating system",
+                    "tags": "Tags",
                 }
             ),
             column_config={
@@ -311,6 +369,15 @@ with tab_overview:
                 "Stack": st.column_config.TextColumn(help="Stack deployed to the edge agent"),
                 "Stack status": st.column_config.TextColumn(),
                 "Stack type": st.column_config.TextColumn(),
+                "Last check-in": st.column_config.TextColumn(
+                    help="Timestamp of the most recent agent check-in"
+                ),
+                "Agent version": st.column_config.TextColumn(help="Reported edge agent version"),
+                "Platform": st.column_config.TextColumn(help="Reported platform"),
+                "Operating system": st.column_config.TextColumn(
+                    help="Agent operating system details"
+                ),
+                "Tags": st.column_config.TextColumn(help="Portainer endpoint tags"),
             },
             use_container_width=True,
             hide_index=True,
