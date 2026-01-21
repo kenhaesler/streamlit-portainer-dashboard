@@ -171,7 +171,7 @@ else:
         )
         state_chart.update_traces(hovertemplate="%{x}<br>Containers: %{y}")
         st.plotly_chart(
-            style_plotly_figure(state_chart), use_container_width=True
+            style_plotly_figure(state_chart), width="stretch"
         )
 
     container_display = containers_filtered.copy()
