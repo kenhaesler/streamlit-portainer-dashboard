@@ -104,10 +104,24 @@ def _validate_ca_bundle_path(raw_path: str) -> Path | None:
     """
     Validate a user-provided CA bundle path before using it to access the filesystem.
 
-    Returns a resolved Path if the input points to an existing regular file, otherwise None.
+    The path is:
+    - expanded (to handle '~'),
+    - resolved to an absolute path, and
+    - required to be an existing regular file located under a configured CA bundle root.
+
+    Returns a resolved Path if the input passes validation, otherwise None.
     """
     if not raw_path:
         return None
+
+    # Derive a safe root directory for CA bundles from the default environment setting,
+    # falling back to the current working directory if not configured.
+    ca_bundle_env = os.getenv(LLM_CA_BUNDLE_ENV_VAR) or ""
+    if ca_bundle_env:
+        ca_root = Path(ca_bundle_env).expanduser().resolve(strict=False).parent
+    else:
+        ca_root = Path.cwd()
+
     try:
         # Expand '~' and normalise to an absolute path
         candidate = Path(raw_path).expanduser().resolve(strict=False)
@@ -119,7 +133,25 @@ def _validate_ca_bundle_path(raw_path: str) -> Path | None:
     if not candidate.is_file():
         return None
 
-    return candidate
+    try:
+        # Ensure the candidate path is within the configured CA root directory.
+        candidate_resolved = candidate.resolve(strict=False)
+        root_resolved = ca_root.resolve(strict=False)
+        try:
+            # Python 3.9+: use is_relative_to if available
+            is_within_root = candidate_resolved.is_relative_to(root_resolved)  # type: ignore[attr-defined]
+        except AttributeError:
+            # Fallback for older Python versions
+            candidate_resolved.relative_to(root_resolved)
+            is_within_root = True
+    except (ValueError, OSError, RuntimeError):
+        # Path is outside the allowed root or cannot be normalized safely.
+        return None
+    if not is_within_root:
+        return None
+    return candidate_resolved
+
+
 
 
 def _prepare_dataframe(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
