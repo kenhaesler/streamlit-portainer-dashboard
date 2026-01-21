@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import os
-from pathlib import Path
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -100,14 +100,33 @@ class AssistantTurn:
     results_payload: Mapping[str, Any] | None = None
 
 
+CA_BUNDLE_ALLOWED_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+
+def _is_safe_bundle_filename(raw_path: str) -> bool:
+    if not raw_path or len(raw_path) > 255:
+        return False
+    if raw_path.startswith(".") or raw_path.endswith("."):
+        return False
+    if raw_path.count(".") > 1:
+        return False
+    stem, dot, extension = raw_path.partition(".")
+    if not stem or not all(char in CA_BUNDLE_ALLOWED_CHARS for char in stem):
+        return False
+    if dot and not extension:
+        return False
+    if extension and not all(char in CA_BUNDLE_ALLOWED_CHARS for char in extension):
+        return False
+    return True
+
+
 def _validate_ca_bundle_path(raw_path: str) -> Path | None:
     """
     Validate a user-provided CA bundle path before using it to access the filesystem.
 
     The path is:
-    - expanded (to handle '~'),
-    - resolved to an absolute path, and
-    - required to be an existing regular file located under a configured CA bundle root.
+    - either identical to the configured LLM_CA_BUNDLE path, or
+    - a validated filename that resolves under a configured CA bundle root.
 
     Returns a resolved Path if the input passes validation, otherwise None.
     """
@@ -117,16 +136,29 @@ def _validate_ca_bundle_path(raw_path: str) -> Path | None:
     # Derive a safe root directory for CA bundles from the default environment setting,
     # falling back to the current working directory if not configured.
     ca_bundle_env = os.getenv(LLM_CA_BUNDLE_ENV_VAR) or ""
+    if ca_bundle_env and raw_path == ca_bundle_env:
+        try:
+            candidate = Path(ca_bundle_env).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return None
+        return candidate if candidate.is_file() else None
     if ca_bundle_env:
         ca_root = Path(ca_bundle_env).expanduser().resolve(strict=False).parent
     else:
         ca_root = Path.cwd()
 
+    if Path(raw_path).is_absolute():
+        return None
+
+    if not _is_safe_bundle_filename(raw_path):
+        return None
+
+    if any(sep for sep in (os.sep, os.altsep) if sep in raw_path):
+        return None
+
     try:
-        # Expand '~' and normalise to an absolute path
-        candidate = Path(raw_path).expanduser().resolve(strict=False)
+        candidate = (ca_root / raw_path).resolve(strict=False)
     except (OSError, RuntimeError):
-        # Any resolution error results in treating the path as invalid
         return None
 
     # Only allow existing regular files
