@@ -10,6 +10,8 @@ from typing import Any, Dict, Iterable, List, Mapping
 import pandas as pd
 import requests
 
+from app.tls import get_ca_bundle_path
+
 __all__ = [
     "KibanaClient",
     "KibanaClientError",
@@ -98,7 +100,7 @@ class KibanaClient:
         *,
         endpoint: str,
         api_key: str,
-        verify_ssl: bool = True,
+        verify_ssl: bool | str = True,
         timeout: int = 30,
     ) -> None:
         if not endpoint:
@@ -107,7 +109,12 @@ class KibanaClient:
             raise ValueError("api_key is required")
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
-        self._verify_ssl = verify_ssl
+        resolved_verify_ssl: bool | str = verify_ssl
+        if verify_ssl is True:
+            ca_bundle_path = get_ca_bundle_path()
+            if ca_bundle_path:
+                resolved_verify_ssl = ca_bundle_path
+        self._verify_ssl = resolved_verify_ssl
         self._timeout = timeout
 
     def _request(self, payload: Mapping[str, Any]) -> Mapping[str, Any]:
