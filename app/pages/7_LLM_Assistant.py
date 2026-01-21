@@ -461,11 +461,22 @@ DEFAULT_ENDPOINT = "https://llm.example.com/v1/chat/completions"
 SYSTEM_API_ENDPOINT = os.getenv("LLM_API_ENDPOINT")
 SYSTEM_BEARER_TOKEN = os.getenv("LLM_BEARER_TOKEN")
 SYSTEM_CREDENTIALS_LOCKED = bool(SYSTEM_API_ENDPOINT and SYSTEM_BEARER_TOKEN)
+LLM_MAX_TOKENS_ENV_VAR = "LLM_MAX_TOKENS"
+DEFAULT_MAX_TOKENS_LIMIT = 200000
+LARGE_CONTEXT_WARNING_THRESHOLD = 32000
 
 assistant_tab, data_tab = st.tabs(["Ask the assistant", "Datasets shared with the LLM"])
 
 with assistant_tab:
     with st.expander("LLM connection", expanded=not SYSTEM_CREDENTIALS_LOCKED):
+        max_tokens_limit = DEFAULT_MAX_TOKENS_LIMIT
+        invalid_max_tokens_limit = False
+        raw_max_tokens_limit = os.getenv(LLM_MAX_TOKENS_ENV_VAR)
+        if raw_max_tokens_limit:
+            try:
+                max_tokens_limit = max(int(raw_max_tokens_limit), 256)
+            except ValueError:
+                invalid_max_tokens_limit = True
         api_endpoint = st.text_input(
             "LLM API endpoint",
             value=SYSTEM_API_ENDPOINT or st.session_state.get("llm_api_endpoint", DEFAULT_ENDPOINT),
@@ -515,10 +526,21 @@ with assistant_tab:
         max_tokens = st.slider(
             "Maximum answer length",
             min_value=256,
-            max_value=2048,
+            max_value=max_tokens_limit,
             value=int(st.session_state.get("llm_max_tokens", 1024)),
-            step=64,
+            step=256,
         )
+        if invalid_max_tokens_limit:
+            st.warning(
+                f"{LLM_MAX_TOKENS_ENV_VAR} must be set to an integer; using the default limit of "
+                f"{DEFAULT_MAX_TOKENS_LIMIT:,} tokens."
+            )
+        if max_tokens > LARGE_CONTEXT_WARNING_THRESHOLD:
+            st.warning(
+                "This answer length exceeds 32k tokens. Ensure your model and infrastructure can handle "
+                "large responses and plan for longer runtimes.",
+                icon="⚠️",
+            )
         verify_ssl = st.toggle(
             "Require HTTPS certificates",
             value=bool(st.session_state.get("llm_verify_ssl", True)),
