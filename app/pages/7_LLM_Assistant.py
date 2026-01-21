@@ -100,6 +100,28 @@ class AssistantTurn:
     results_payload: Mapping[str, Any] | None = None
 
 
+def _validate_ca_bundle_path(raw_path: str) -> Path | None:
+    """
+    Validate a user-provided CA bundle path before using it to access the filesystem.
+
+    Returns a resolved Path if the input points to an existing regular file, otherwise None.
+    """
+    if not raw_path:
+        return None
+    try:
+        # Expand '~' and normalise to an absolute path
+        candidate = Path(raw_path).expanduser().resolve(strict=False)
+    except (OSError, RuntimeError):
+        # Any resolution error results in treating the path as invalid
+        return None
+
+    # Only allow existing regular files
+    if not candidate.is_file():
+        return None
+
+    return candidate
+
+
 def _prepare_dataframe(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=list(columns))
@@ -610,12 +632,13 @@ with assistant_tab:
             if verify_ssl:
                 ca_bundle_clean = ca_bundle_path.strip()
                 if ca_bundle_clean:
-                    bundle_path = Path(ca_bundle_clean).expanduser()
-                    if bundle_path.is_file():
+                    bundle_path = _validate_ca_bundle_path(ca_bundle_clean)
+                    if bundle_path is not None:
                         verify_setting = str(bundle_path)
                     else:
                         st.warning(
-                            "The CA bundle path does not exist. Falling back to the default trust store.",
+                            "The CA bundle path is invalid or does not exist. "
+                            "Falling back to the default trust store.",
                             icon="⚠️",
                         )
                         verify_setting = True
