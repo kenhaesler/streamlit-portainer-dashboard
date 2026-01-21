@@ -269,7 +269,7 @@ if not problem_summary.empty:
     )
     issue_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
     st.plotly_chart(
-        style_plotly_figure(issue_chart), use_container_width=True
+        style_plotly_figure(issue_chart), width="stretch"
     )
 
 if not problem_containers.empty:

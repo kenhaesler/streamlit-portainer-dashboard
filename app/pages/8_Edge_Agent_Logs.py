@@ -286,7 +286,7 @@ if logs_df.empty:
 
 logs_df = logs_df.sort_values("timestamp", ascending=False).reset_index(drop=True)
 
-st.dataframe(logs_df, use_container_width=True, hide_index=True)
+st.dataframe(logs_df, width="stretch", hide_index=True)
 
 export = ExportableDataFrame(
     label="Download results as CSV",

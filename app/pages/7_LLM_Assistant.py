@@ -5,6 +5,7 @@ import json
 import os
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import pandas as pd
@@ -99,13 +100,103 @@ class AssistantTurn:
     results_payload: Mapping[str, Any] | None = None
 
 
+CA_BUNDLE_ALLOWED_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+
+def _is_safe_bundle_filename(raw_path: str) -> bool:
+    if not raw_path or len(raw_path) > 255:
+        return False
+    if raw_path.startswith(".") or raw_path.endswith("."):
+        return False
+    if raw_path.count(".") > 1:
+        return False
+    stem, dot, extension = raw_path.partition(".")
+    if not stem or not all(char in CA_BUNDLE_ALLOWED_CHARS for char in stem):
+        return False
+    if dot and not extension:
+        return False
+    if extension and not all(char in CA_BUNDLE_ALLOWED_CHARS for char in extension):
+        return False
+    return True
+
+
+def _validate_ca_bundle_path(raw_path: str) -> Path | None:
+    """
+    Validate a user-provided CA bundle path before using it to access the filesystem.
+
+    The path is:
+    - either identical to the configured LLM_CA_BUNDLE path, or
+    - a validated filename that resolves under a configured CA bundle root.
+
+    Returns a resolved Path if the input passes validation, otherwise None.
+    """
+    if not raw_path:
+        return None
+
+    # Derive a safe root directory for CA bundles from the default environment setting,
+    # falling back to the current working directory if not configured.
+    ca_bundle_env = os.getenv(LLM_CA_BUNDLE_ENV_VAR) or ""
+    if ca_bundle_env and raw_path == ca_bundle_env:
+        try:
+            candidate = Path(ca_bundle_env).expanduser().resolve(strict=False)
+        except (OSError, RuntimeError):
+            return None
+        return candidate if candidate.is_file() else None
+    if ca_bundle_env:
+        ca_root = Path(ca_bundle_env).expanduser().resolve(strict=False).parent
+    else:
+        ca_root = Path.cwd()
+
+    if Path(raw_path).is_absolute():
+        return None
+
+    if not _is_safe_bundle_filename(raw_path):
+        return None
+
+    if any(sep for sep in (os.sep, os.altsep) if sep in raw_path):
+        return None
+
+    try:
+        candidate = (ca_root / raw_path).resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+
+    # Only allow existing regular files
+    if not candidate.is_file():
+        return None
+
+    try:
+        # Ensure the candidate path is within the configured CA root directory.
+        candidate_resolved = candidate.resolve(strict=False)
+        root_resolved = ca_root.resolve(strict=False)
+        try:
+            # Python 3.9+: use is_relative_to if available
+            is_within_root = candidate_resolved.is_relative_to(root_resolved)  # type: ignore[attr-defined]
+        except AttributeError:
+            # Fallback for older Python versions
+            candidate_resolved.relative_to(root_resolved)
+            is_within_root = True
+    except (ValueError, OSError, RuntimeError):
+        # Path is outside the allowed root or cannot be normalized safely.
+        return None
+    if not is_within_root:
+        return None
+    return candidate_resolved
+
+
+
+
 def _prepare_dataframe(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame:
     if df.empty:
         return pd.DataFrame(columns=list(columns))
     available = [column for column in columns if column in df.columns]
     if not available:
         return pd.DataFrame(columns=list(columns))
-    return df.loc[:, available].fillna("")
+    prepared = df.loc[:, available].copy()
+    string_columns = prepared.select_dtypes(include=["object", "string"]).columns
+    if len(string_columns) > 0:
+        prepared[string_columns] = prepared[string_columns].fillna("")
+    return prepared
 
 
 def _build_data_hub(filters: Mapping[str, pd.DataFrame]) -> LLMDataHub:
@@ -433,19 +524,19 @@ hotspots_cpu = overview.get("hotspots_cpu")
 if isinstance(hotspots_cpu, pd.DataFrame):
     if not hotspots_cpu.empty:
         st.markdown("### Containers using the most CPU")
-        st.dataframe(hotspots_cpu, hide_index=True, use_container_width=True)
+        st.dataframe(hotspots_cpu, hide_index=True, width="stretch")
 elif hotspots_cpu:
     st.markdown("### Containers using the most CPU")
-    st.dataframe(hotspots_cpu, hide_index=True, use_container_width=True)
+    st.dataframe(hotspots_cpu, hide_index=True, width="stretch")
 
 hotspots_mem = overview.get("hotspots_memory")
 if isinstance(hotspots_mem, pd.DataFrame):
     if not hotspots_mem.empty:
         st.markdown("### Containers using the most memory")
-        st.dataframe(hotspots_mem, hide_index=True, use_container_width=True)
+        st.dataframe(hotspots_mem, hide_index=True, width="stretch")
 elif hotspots_mem:
     st.markdown("### Containers using the most memory")
-    st.dataframe(hotspots_mem, hide_index=True, use_container_width=True)
+    st.dataframe(hotspots_mem, hide_index=True, width="stretch")
 
 catalog = hub.describe_for_llm()
 catalog_json = json.dumps(catalog, ensure_ascii=False, indent=2)
@@ -462,6 +553,7 @@ SYSTEM_API_ENDPOINT = os.getenv("LLM_API_ENDPOINT")
 SYSTEM_BEARER_TOKEN = os.getenv("LLM_BEARER_TOKEN")
 SYSTEM_CREDENTIALS_LOCKED = bool(SYSTEM_API_ENDPOINT and SYSTEM_BEARER_TOKEN)
 LLM_MAX_TOKENS_ENV_VAR = "LLM_MAX_TOKENS"
+LLM_CA_BUNDLE_ENV_VAR = "LLM_CA_BUNDLE"
 DEFAULT_MAX_TOKENS_LIMIT = 200000
 LARGE_CONTEXT_WARNING_THRESHOLD = 32000
 
@@ -545,6 +637,15 @@ with assistant_tab:
             "Require HTTPS certificates",
             value=bool(st.session_state.get("llm_verify_ssl", True)),
         )
+        ca_bundle_default = os.getenv(LLM_CA_BUNDLE_ENV_VAR) or ""
+        ca_bundle_path = st.text_input(
+            "CA bundle path",
+            value=st.session_state.get("llm_ca_bundle", ca_bundle_default),
+            help=(
+                "Optional path to a PEM file containing your trusted certificate authorities. "
+                f"Defaults to {LLM_CA_BUNDLE_ENV_VAR} when set."
+            ),
+        )
 
     st.markdown(
         "#### What would you like to investigate?"
@@ -561,7 +662,7 @@ with assistant_tab:
         value=int(st.session_state.get("llm_max_requests", 3)),
         help="Higher values allow deeper dives at the cost of longer response times.",
     )
-    submit = st.button("Analyse with AI", use_container_width=True)
+    submit = st.button("Analyse with AI", width="stretch")
 
     for turn in conversation:
         with st.chat_message("user"):
@@ -591,11 +692,28 @@ with assistant_tab:
                     st.error("Please supply a username for basic authentication.")
                     st.stop()
                 token_to_send = f"{basic_username.strip()}:{basic_password}"
+            verify_setting: bool | str = False
+            if verify_ssl:
+                ca_bundle_clean = ca_bundle_path.strip()
+                if ca_bundle_clean:
+                    bundle_path = _validate_ca_bundle_path(ca_bundle_clean)
+                    if bundle_path is not None:
+                        verify_setting = str(bundle_path)
+                    else:
+                        st.warning(
+                            "The CA bundle path is invalid or does not exist. "
+                            "Falling back to the default trust store.",
+                            icon="⚠️",
+                        )
+                        verify_setting = True
+                else:
+                    verify_setting = True
+
             client = LLMClient(
                 base_url=endpoint_clean,
                 token=token_to_send,
                 model=model_name.strip() or "gpt-oss:latest",
-                verify_ssl=verify_ssl,
+                verify_ssl=verify_setting,
             )
             with st.spinner("Asking the model which data it needs..."):
                 research_messages = _build_research_prompt(
@@ -669,6 +787,7 @@ with assistant_tab:
                 st.session_state["llm_temperature"] = temperature
                 st.session_state["llm_max_tokens"] = max_tokens
                 st.session_state["llm_verify_ssl"] = verify_ssl
+                st.session_state["llm_ca_bundle"] = ca_bundle_path
                 st.session_state["llm_max_requests"] = max_requests
                 st.rerun()
 
@@ -685,7 +804,7 @@ with data_tab:
             table_obj.dataframe,
             f"llm_{table_obj.name}.csv",
         ).render_download_button()
-        st.dataframe(table_obj.dataframe, hide_index=True, use_container_width=True)
+        st.dataframe(table_obj.dataframe, hide_index=True, width="stretch")
 
 if conversation and conversation[-1].results_payload:
     st.markdown("### Last analysis payload sent to the model")

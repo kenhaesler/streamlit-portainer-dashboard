@@ -114,7 +114,7 @@ class LLMClient:
     token: str | None = None
     model: str = "gpt-oss"
     timeout: tuple[float, float] = (10.0, 60.0)
-    verify_ssl: bool = True
+    verify_ssl: bool | str = True
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -193,4 +193,3 @@ class LLMClient:
         if not isinstance(data, Mapping):
             raise LLMClientError("Unexpected LLM API response format")
         return _extract_response_text(data)
-

@@ -32,8 +32,15 @@ def serialise_records(df: pd.DataFrame) -> list[dict[str, object]]:
     for row in df.to_dict(orient="records"):
         cleaned: dict[str, object] = {}
         for key, value in row.items():
+            is_missing = False
+            try:
+                is_missing = pd.isna(value)
+            except TypeError:
+                is_missing = False
             if value in (None, ""):
                 cleaned[key] = value
+            elif isinstance(is_missing, bool) and is_missing:
+                cleaned[key] = None
             elif isinstance(value, (str, int, float, bool)):
                 cleaned[key] = value
             else:

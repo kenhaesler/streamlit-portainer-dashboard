@@ -379,7 +379,7 @@ with tab_overview:
                 ),
                 "Tags": st.column_config.TextColumn(help="Portainer endpoint tags"),
             },
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=420,
         )
@@ -403,7 +403,7 @@ with tab_overview:
                     "container_count": "Running containers",
                 }
             ).sort_values(["Environment", "Edge agent"], na_position="last"),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=320,
         )
@@ -425,7 +425,7 @@ with tab_overview:
                     "running_containers": "Running containers",
                 }
             ).sort_values(["Environment", "Edge agent"], na_position="last"),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
             height=320,
         )
@@ -461,7 +461,7 @@ with tab_visuals:
             title="Stacks deployed per edge agent",
         )
         stack_chart.update_traces(hovertemplate="%{y}<br>Stacks: %{x}")
-        st.plotly_chart(style_plotly_figure(stack_chart), use_container_width=True)
+        st.plotly_chart(style_plotly_figure(stack_chart), width="stretch")
 
     if status_summary.empty:
         st.info("No status information available for the selected agents.")
@@ -474,7 +474,7 @@ with tab_visuals:
             hole=0.45,
         )
         status_chart.update_traces(textinfo="percent+label")
-        st.plotly_chart(style_plotly_figure(status_chart), use_container_width=True)
+        st.plotly_chart(style_plotly_figure(status_chart), width="stretch")
 
     if endpoint_overview.empty:
         st.info("No combined stack and container data to visualise yet.")
@@ -505,7 +505,7 @@ with tab_visuals:
             load_scatter.update_traces(
                 hovertemplate="%{hovertext}<br>Stacks: %{x}<br>Containers: %{y}"
             )
-            st.plotly_chart(style_plotly_figure(load_scatter), use_container_width=True)
+            st.plotly_chart(style_plotly_figure(load_scatter), width="stretch")
 
     st.subheader("Container insights", divider="blue")
     if containers_overview.empty:
@@ -525,7 +525,7 @@ with tab_visuals:
             title="Running containers per edge agent",
         )
         container_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
-        st.plotly_chart(style_plotly_figure(container_chart), use_container_width=True)
+        st.plotly_chart(style_plotly_figure(container_chart), width="stretch")
 
     if treemap_source.empty:
         st.info("Add container image metadata to explore image distribution.")
@@ -537,7 +537,7 @@ with tab_visuals:
             title="Container footprint by environment, agent and image",
         )
         treemap.update_traces(hovertemplate="%{label}<br>Containers: %{value}")
-        st.plotly_chart(style_plotly_figure(treemap), use_container_width=True)
+        st.plotly_chart(style_plotly_figure(treemap), width="stretch")
 
     if not top_images.empty:
         image_chart = px.bar(
@@ -554,7 +554,7 @@ with tab_visuals:
             },
         )
         image_chart.update_traces(hovertemplate="%{y}<br>Containers: %{x}")
-        st.plotly_chart(style_plotly_figure(image_chart), use_container_width=True)
+        st.plotly_chart(style_plotly_figure(image_chart), width="stretch")
         ExportableDataFrame(
             "⬇️ Download top images",
             data=top_images,
@@ -589,5 +589,5 @@ with tab_visuals:
         age_chart.update_traces(
             hovertemplate="Age: %{x:.1f} days<br>Containers: %{y}"
         )
-        st.plotly_chart(style_plotly_figure(age_chart), use_container_width=True)
+        st.plotly_chart(style_plotly_figure(age_chart), width="stretch")
 
