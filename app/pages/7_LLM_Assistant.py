@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -101,7 +100,24 @@ class AssistantTurn:
     results_payload: Mapping[str, Any] | None = None
 
 
-CA_BUNDLE_FILENAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]*(\.[A-Za-z0-9_-]+)?$")
+CA_BUNDLE_ALLOWED_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+
+
+def _is_safe_bundle_filename(raw_path: str) -> bool:
+    if not raw_path or len(raw_path) > 255:
+        return False
+    if raw_path.startswith(".") or raw_path.endswith("."):
+        return False
+    if raw_path.count(".") > 1:
+        return False
+    stem, dot, extension = raw_path.partition(".")
+    if not stem or not all(char in CA_BUNDLE_ALLOWED_CHARS for char in stem):
+        return False
+    if dot and not extension:
+        return False
+    if extension and not all(char in CA_BUNDLE_ALLOWED_CHARS for char in extension):
+        return False
+    return True
 
 
 def _validate_ca_bundle_path(raw_path: str) -> Path | None:
@@ -134,7 +150,7 @@ def _validate_ca_bundle_path(raw_path: str) -> Path | None:
     if Path(raw_path).is_absolute():
         return None
 
-    if not CA_BUNDLE_FILENAME_RE.fullmatch(raw_path):
+    if not _is_safe_bundle_filename(raw_path):
         return None
 
     if any(sep for sep in (os.sep, os.altsep) if sep in raw_path):
