@@ -1,13 +1,17 @@
-# --- Build stage (3.12) ---
-FROM python:3.12.7-slim AS builder
+# syntax=docker/dockerfile:1
+
+# --- Build stage (3.12, DHI dev image) ---
+FROM dhi.io/python:3.12.12-debian12-dev AS build-stage
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
+
 WORKDIR /app
 
+RUN python -m venv /app/venv
 COPY requirements.txt .
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir --prefix=/usr/local -r requirements.txt && \
-    find /usr/local/bin -maxdepth 1 -type f -name 'pip*' -exec rm -f {} + && \
-    rm -rf /usr/local/lib/python3.12/site-packages/pip \
-           /usr/local/lib/python3.12/site-packages/pip-*.dist-info
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY .streamlit ./.streamlit
 COPY app ./app
@@ -15,14 +19,19 @@ COPY app ./app
 # Ensure the Streamlit configuration directory is writable by the runtime user
 RUN chown -R 65532:65532 ./.streamlit
 
-# --- Runtime stage (distroless 3.12) ---
-FROM gcr.io/distroless/python3-debian12:nonroot
+# --- Runtime stage (3.12, DHI nonroot image) ---
+FROM dhi.io/python:3.12.12-debian12 AS runtime-stage
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
+
 WORKDIR /app
 
-COPY --from=builder /usr/local /usr/local
-COPY --from=builder /app /app
+COPY --from=build-stage /app/venv /app/venv
+COPY --from=build-stage /app/app /app/app
 # Guarantee the runtime user owns the Streamlit configuration directory
-COPY --from=builder --chown=65532:65532 /app/.streamlit /app/.streamlit
+COPY --from=build-stage --chown=65532:65532 /app/.streamlit /app/.streamlit
 
 EXPOSE 8501
 
