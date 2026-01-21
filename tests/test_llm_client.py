@@ -61,6 +61,31 @@ def test_chat_returns_first_message(monkeypatch):
     assert captured["verify"] is False
 
 
+def test_chat_supports_custom_ca_bundle(monkeypatch):
+    """Custom CA bundle paths should be forwarded to requests."""
+
+    captured: dict[str, object] = {}
+
+    def fake_post(url, *, headers=None, json=None, timeout=None, verify=None):  # type: ignore[override]
+        captured["verify"] = verify
+        payload = {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "Hello."},
+                }
+            ]
+        }
+        return _DummyResponse(payload)
+
+    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
+
+    client = LLMClient(base_url="https://example.test/api", verify_ssl="/etc/ssl/certs/ca.pem")
+
+    client.chat([{"role": "user", "content": "Ping"}])
+
+    assert captured["verify"] == "/etc/ssl/certs/ca.pem"
+
+
 def test_chat_supports_basic_auth(monkeypatch):
     """Username/password tokens should be sent as HTTP Basic credentials."""
 
@@ -183,4 +208,3 @@ def test_chat_includes_usage_hint_when_available(monkeypatch):
     message = str(excinfo.value)
     assert "46595" in message
     assert "8192" in message
-

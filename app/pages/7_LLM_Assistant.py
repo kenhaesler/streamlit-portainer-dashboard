@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from pathlib import Path
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -462,6 +463,7 @@ SYSTEM_API_ENDPOINT = os.getenv("LLM_API_ENDPOINT")
 SYSTEM_BEARER_TOKEN = os.getenv("LLM_BEARER_TOKEN")
 SYSTEM_CREDENTIALS_LOCKED = bool(SYSTEM_API_ENDPOINT and SYSTEM_BEARER_TOKEN)
 LLM_MAX_TOKENS_ENV_VAR = "LLM_MAX_TOKENS"
+LLM_CA_BUNDLE_ENV_VAR = "LLM_CA_BUNDLE"
 DEFAULT_MAX_TOKENS_LIMIT = 200000
 LARGE_CONTEXT_WARNING_THRESHOLD = 32000
 
@@ -545,6 +547,15 @@ with assistant_tab:
             "Require HTTPS certificates",
             value=bool(st.session_state.get("llm_verify_ssl", True)),
         )
+        ca_bundle_default = os.getenv(LLM_CA_BUNDLE_ENV_VAR) or ""
+        ca_bundle_path = st.text_input(
+            "CA bundle path",
+            value=st.session_state.get("llm_ca_bundle", ca_bundle_default),
+            help=(
+                "Optional path to a PEM file containing your trusted certificate authorities. "
+                f"Defaults to {LLM_CA_BUNDLE_ENV_VAR} when set."
+            ),
+        )
 
     st.markdown(
         "#### What would you like to investigate?"
@@ -591,11 +602,27 @@ with assistant_tab:
                     st.error("Please supply a username for basic authentication.")
                     st.stop()
                 token_to_send = f"{basic_username.strip()}:{basic_password}"
+            verify_setting: bool | str = False
+            if verify_ssl:
+                ca_bundle_clean = ca_bundle_path.strip()
+                if ca_bundle_clean:
+                    bundle_path = Path(ca_bundle_clean).expanduser()
+                    if bundle_path.is_file():
+                        verify_setting = str(bundle_path)
+                    else:
+                        st.warning(
+                            "The CA bundle path does not exist. Falling back to the default trust store.",
+                            icon="⚠️",
+                        )
+                        verify_setting = True
+                else:
+                    verify_setting = True
+
             client = LLMClient(
                 base_url=endpoint_clean,
                 token=token_to_send,
                 model=model_name.strip() or "gpt-oss:latest",
-                verify_ssl=verify_ssl,
+                verify_ssl=verify_setting,
             )
             with st.spinner("Asking the model which data it needs..."):
                 research_messages = _build_research_prompt(
@@ -669,6 +696,7 @@ with assistant_tab:
                 st.session_state["llm_temperature"] = temperature
                 st.session_state["llm_max_tokens"] = max_tokens
                 st.session_state["llm_verify_ssl"] = verify_ssl
+                st.session_state["llm_ca_bundle"] = ca_bundle_path
                 st.session_state["llm_max_requests"] = max_requests
                 st.rerun()
 

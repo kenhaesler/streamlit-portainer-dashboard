@@ -39,6 +39,7 @@ The application is configured via environment variables:
 - `LLM_API_ENDPOINT` – Optional. When set, the LLM assistant page defaults to this chat completion endpoint.
 - `LLM_BEARER_TOKEN` – Optional. When set, the LLM assistant page pre-populates the bearer token field so every authenticated user can reuse the shared credentials. When both `LLM_API_ENDPOINT` and `LLM_BEARER_TOKEN` are provided the endpoint and credential inputs become read-only, signalling that the deployment manages the LLM configuration.
 - `LLM_MAX_TOKENS` – Optional. Caps the maximum answer length slider in the LLM assistant. Defaults to `200000` and must be an integer.
+- `LLM_CA_BUNDLE` – Optional. Path to a PEM-encoded CA bundle that should be trusted when connecting to the LLM API.
 - `KIBANA_LOGS_ENDPOINT` – Optional. Full URL of the Kibana/Elasticsearch search endpoint (for example `https://elastic.example.com/_search`) used to retrieve container logs.
 - `KIBANA_API_KEY` – Optional. API key sent via the `Authorization: ApiKey <token>` header when querying Kibana. Required when `KIBANA_LOGS_ENDPOINT` is set.
 - `KIBANA_VERIFY_SSL` – Optional. Defaults to `true`. Set to `false` to skip TLS verification when connecting to Kibana with self-signed certificates.
@@ -138,6 +139,8 @@ large environments are selected. The UI surfaces the exact context size, any tra
 still allows you to download the data that was shared for auditing. With the context in place you can ask natural
 language questions—such as “are there any containers that have issues and why?”—and review the LLM response
 directly inside the dashboard.
+When your LLM API uses a private certificate authority, set `LLM_CA_BUNDLE` (or the **CA bundle path** field) to
+point at the PEM file that should be trusted for TLS verification.
 
 #### How the LLM workflow is orchestrated
 
