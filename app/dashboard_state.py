@@ -1031,7 +1031,7 @@ def render_sidebar_filters(
 
         refresh_now = st.button(
             "🔄 Refresh data",
-            use_container_width=True,
+            width="stretch",
             help="Clear cached Portainer responses and fetch the latest data immediately.",
         )
         if refresh_now:

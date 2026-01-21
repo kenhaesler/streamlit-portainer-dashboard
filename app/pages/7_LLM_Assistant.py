@@ -106,7 +106,11 @@ def _prepare_dataframe(df: pd.DataFrame, columns: Sequence[str]) -> pd.DataFrame
     available = [column for column in columns if column in df.columns]
     if not available:
         return pd.DataFrame(columns=list(columns))
-    return df.loc[:, available].fillna("")
+    prepared = df.loc[:, available].copy()
+    string_columns = prepared.select_dtypes(include=["object", "string"]).columns
+    if len(string_columns) > 0:
+        prepared[string_columns] = prepared[string_columns].fillna("")
+    return prepared
 
 
 def _build_data_hub(filters: Mapping[str, pd.DataFrame]) -> LLMDataHub:
@@ -434,19 +438,19 @@ hotspots_cpu = overview.get("hotspots_cpu")
 if isinstance(hotspots_cpu, pd.DataFrame):
     if not hotspots_cpu.empty:
         st.markdown("### Containers using the most CPU")
-        st.dataframe(hotspots_cpu, hide_index=True, use_container_width=True)
+        st.dataframe(hotspots_cpu, hide_index=True, width="stretch")
 elif hotspots_cpu:
     st.markdown("### Containers using the most CPU")
-    st.dataframe(hotspots_cpu, hide_index=True, use_container_width=True)
+    st.dataframe(hotspots_cpu, hide_index=True, width="stretch")
 
 hotspots_mem = overview.get("hotspots_memory")
 if isinstance(hotspots_mem, pd.DataFrame):
     if not hotspots_mem.empty:
         st.markdown("### Containers using the most memory")
-        st.dataframe(hotspots_mem, hide_index=True, use_container_width=True)
+        st.dataframe(hotspots_mem, hide_index=True, width="stretch")
 elif hotspots_mem:
     st.markdown("### Containers using the most memory")
-    st.dataframe(hotspots_mem, hide_index=True, use_container_width=True)
+    st.dataframe(hotspots_mem, hide_index=True, width="stretch")
 
 catalog = hub.describe_for_llm()
 catalog_json = json.dumps(catalog, ensure_ascii=False, indent=2)
@@ -572,7 +576,7 @@ with assistant_tab:
         value=int(st.session_state.get("llm_max_requests", 3)),
         help="Higher values allow deeper dives at the cost of longer response times.",
     )
-    submit = st.button("Analyse with AI", use_container_width=True)
+    submit = st.button("Analyse with AI", width="stretch")
 
     for turn in conversation:
         with st.chat_message("user"):
@@ -713,7 +717,7 @@ with data_tab:
             table_obj.dataframe,
             f"llm_{table_obj.name}.csv",
         ).render_download_button()
-        st.dataframe(table_obj.dataframe, hide_index=True, use_container_width=True)
+        st.dataframe(table_obj.dataframe, hide_index=True, width="stretch")
 
 if conversation and conversation[-1].results_payload:
     st.markdown("### Last analysis payload sent to the model")

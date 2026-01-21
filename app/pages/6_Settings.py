@@ -382,7 +382,7 @@ else:
     create_backup_clicked = st.button(
         "Create backup",
         key="portainer_create_backup",
-        use_container_width=True,
+        width="stretch",
     )
     if create_backup_clicked:
         with st.spinner("Requesting backup from Portainer..."):
@@ -417,7 +417,7 @@ else:
                     "Download latest backup",
                     data=handle.read(),
                     file_name=backup_path.name,
-                    use_container_width=True,
+                    width="stretch",
                     key="portainer_download_backup",
                 )
             st.caption(f"Latest backup located at `{backup_path}`.")
@@ -474,7 +474,7 @@ else:
         )
         submitted_schedule = st.form_submit_button(
             "Save schedule",
-            use_container_width=True,
+            width="stretch",
         )
 
     if submitted_schedule:
