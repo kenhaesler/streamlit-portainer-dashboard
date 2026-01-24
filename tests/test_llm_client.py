@@ -120,10 +120,8 @@ def test_chat_raises_for_missing_choices(monkeypatch):
 
     client = LLMClient(base_url="https://example.test/api")
 
-    with pytest.raises(LLMClientError) as excinfo:
+    with pytest.raises(LLMClientError):
         client.chat([{"role": "user", "content": "Ping"}])
-    
-    assert "choices or message" in str(excinfo.value)
 
 
 def test_chat_supports_structured_content(monkeypatch):
@@ -210,75 +208,3 @@ def test_chat_includes_usage_hint_when_available(monkeypatch):
     message = str(excinfo.value)
     assert "46595" in message
     assert "8192" in message
-
-
-def test_chat_supports_ollama_native_format(monkeypatch):
-    """Ollama native /api/chat responses should be parsed correctly."""
-
-    def fake_post(*args, **kwargs):  # type: ignore[override]
-        return _DummyResponse(
-            {
-                "model": "llama2",
-                "created_at": "2024-01-01T00:00:00.000000Z",
-                "message": {
-                    "role": "assistant",
-                    "content": "Response from Ollama native API",
-                },
-                "done": True,
-            }
-        )
-
-    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
-
-    client = LLMClient(base_url="https://example.test/api/chat")
-    response = client.chat([{"role": "user", "content": "Ping"}])
-
-    assert response == "Response from Ollama native API"
-
-
-def test_chat_supports_ollama_native_structured_content(monkeypatch):
-    """Ollama native responses with structured content should be flattened."""
-
-    def fake_post(*args, **kwargs):  # type: ignore[override]
-        return _DummyResponse(
-            {
-                "model": "llama2",
-                "message": {
-                    "role": "assistant",
-                    "content": [
-                        {"type": "text", "text": "Structured "},
-                        {"type": "text", "text": "response"},
-                    ],
-                },
-                "done": True,
-            }
-        )
-
-    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
-
-    client = LLMClient(base_url="https://example.test/api/chat")
-    response = client.chat([{"role": "user", "content": "Ping"}])
-
-    assert response == "Structured response"
-
-
-def test_chat_prefers_ollama_format_over_malformed_choices(monkeypatch):
-    """When both message and empty choices exist, prefer the Ollama native message."""
-
-    def fake_post(*args, **kwargs):  # type: ignore[override]
-        return _DummyResponse(
-            {
-                "message": {
-                    "role": "assistant",
-                    "content": "Valid Ollama response",
-                },
-                "choices": [],  # Empty choices array
-            }
-        )
-
-    monkeypatch.setattr("app.services.llm_client.requests.post", fake_post)
-
-    client = LLMClient(base_url="https://example.test/api")
-    response = client.chat([{"role": "user", "content": "Ping"}])
-
-    assert response == "Valid Ollama response"

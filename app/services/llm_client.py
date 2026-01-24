@@ -1,12 +1,4 @@
-"""Client helpers for interacting with OpenWebUI/Ollama compatible APIs.
-
-This client supports both:
-- OpenAI-compatible endpoints (e.g., /v1/chat/completions) with "choices" array
-- Ollama native endpoints (e.g., /api/chat) with "message" object directly
-
-While the OpenAI-compatible format is recommended for consistency, both formats
-are automatically detected and parsed correctly.
-"""
+"""Client helpers for interacting with OpenWebUI/Ollama compatible APIs."""
 from __future__ import annotations
 
 import base64
@@ -79,19 +71,9 @@ def _format_truncation_hint(payload: Mapping[str, object]) -> str | None:
 
 
 def _extract_response_text(payload: Mapping[str, object]) -> str:
-    # Try Ollama native format first (e.g., /api/chat endpoint)
-    # Response: {"message": {"role": "assistant", "content": "..."}, "done": true}
-    message = payload.get("message")
-    if isinstance(message, Mapping):
-        content_text = _coerce_content_to_text(message.get("content"))
-        if content_text:
-            return content_text
-    
-    # Try OpenAI-compatible format (e.g., /v1/chat/completions endpoint)
-    # Response: {"choices": [{"message": {"role": "assistant", "content": "..."}}]}
     choices = payload.get("choices")
     if not isinstance(choices, Sequence) or not choices:
-        raise LLMClientError("LLM API response did not include any choices or message")
+        raise LLMClientError("LLM API response did not include any choices")
     first_choice = choices[0]
     finish_reason: str | None = None
     if isinstance(first_choice, Mapping):
