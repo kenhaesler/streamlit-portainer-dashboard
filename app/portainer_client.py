@@ -14,6 +14,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.exceptions import InsecureRequestWarning
 from urllib3.util.retry import Retry
 
+from app.tls import get_ca_bundle_path
 LOGGER = logging.getLogger(__name__)
 
 
@@ -125,7 +126,7 @@ class PortainerClient:
     base_url: str
     api_key: str
     timeout: tuple[float, float] = (5.0, 30.0)
-    verify_ssl: bool = True
+    verify_ssl: bool | str = True
     session_factory: Callable[[], requests.Session] = field(
         default=requests.Session,
         repr=False,
@@ -138,7 +139,11 @@ class PortainerClient:
             self.base_url = f"{self.base_url}/api"
         if not self.api_key:
             raise ValueError("Portainer API key is required")
-        if not self.verify_ssl:
+        if self.verify_ssl is True:
+            ca_bundle_path = get_ca_bundle_path()
+            if ca_bundle_path:
+                self.verify_ssl = ca_bundle_path
+        if self.verify_ssl is False:
             LOGGER.warning(
                 "SSL verification disabled for Portainer client targeting %s",
                 self.base_url,

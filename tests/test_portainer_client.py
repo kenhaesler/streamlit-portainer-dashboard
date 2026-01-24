@@ -21,6 +21,7 @@ from app.portainer_client import (
     normalise_endpoint_images,
     normalise_endpoint_stacks,
 )
+from app.tls import CA_BUNDLE_ENV_VAR
 
 
 def test_list_edge_endpoints_requests_status(monkeypatch):
@@ -41,6 +42,17 @@ def test_list_edge_endpoints_requests_status(monkeypatch):
 
     assert captured["path"] == "/endpoints"
     assert captured["params"] == {"edge": "true", "status": "true"}
+
+
+def test_portainer_client_uses_dashboard_ca_bundle(monkeypatch, tmp_path: Path) -> None:
+    bundle = tmp_path / "ca.pem"
+    bundle.write_text("cert-data")
+    monkeypatch.setenv(CA_BUNDLE_ENV_VAR, str(bundle))
+
+    client = PortainerClient(base_url="https://portainer.example", api_key="token", verify_ssl=True)
+
+    assert client.verify_ssl == str(bundle.resolve())
+    assert client._session.verify == str(bundle.resolve())
 
 
 def test_list_stacks_for_endpoint_merges_edge_payloads(monkeypatch):
