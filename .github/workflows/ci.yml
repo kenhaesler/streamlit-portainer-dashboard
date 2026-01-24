@@ -22,11 +22,10 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install pytest
 
-      - name: Verify Streamlit app starts
-        run: |
-          chmod +x scripts/check_app_starts.sh
-          scripts/check_app_starts.sh
+      - name: Run tests
+        run: pytest -q
   docker:
     runs-on: ubuntu-latest
     steps:
