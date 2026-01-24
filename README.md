@@ -11,6 +11,54 @@ A streamlit application that pulls information from the Portainer API and visual
 - [LLM context management](docs/llm_context_management.md) – explains how prompt construction and trimming works inside the assistant.
 - [Portainer data audit](docs/portainer_data_audit.md) – details the telemetry surfaced for compliance reviews.
 
+## Supply Chain Security
+
+### Software Bill of Materials (SBOM)
+
+This project automatically generates a Software Bill of Materials (SBOM) for all Docker images built through the CI/CD pipeline. The SBOM provides a comprehensive inventory of all software components, libraries, and dependencies included in the container image, helping you:
+
+- **Identify vulnerabilities** – Cross-reference dependencies against known security databases
+- **Track licenses** – Ensure compliance with open source licensing requirements
+- **Audit supply chain** – Understand the complete software composition of deployed images
+- **Facilitate incident response** – Quickly determine if a newly-disclosed vulnerability affects your deployment
+
+#### How SBOMs are Generated
+
+The GitHub Actions workflow automatically generates SBOM attestations using Docker BuildKit during the build process. Each pushed image includes:
+
+- **SBOM attestation** – A complete inventory of software packages and their versions
+- **Provenance attestation** – Metadata about how the image was built, including source repository, build arguments, and build environment
+
+These attestations are stored alongside the image in the container registry and can be inspected using Docker's attestation tools.
+
+#### Accessing the SBOM
+
+To inspect the SBOM for a specific image, use the Docker CLI:
+
+```bash
+# View the SBOM for the latest image
+docker buildx imagetools inspect kenhaesler/streamlit-portainer-dashboard:latest --format "{{ json .SBOM }}"
+
+# View the provenance attestation
+docker buildx imagetools inspect kenhaesler/streamlit-portainer-dashboard:latest --format "{{ json .Provenance }}"
+```
+
+For a more user-friendly format, you can use the `docker scout` command:
+
+```bash
+docker scout sbom kenhaesler/streamlit-portainer-dashboard:latest
+```
+
+#### Continuous Security Monitoring
+
+The SBOM is regenerated with every build, ensuring that it always reflects the current state of dependencies. This enables:
+
+- Automated vulnerability scanning in CI/CD
+- Integration with security monitoring tools
+- Compliance reporting for audits and certifications
+
+For more information about Docker attestations and SBOM generation, see the [Docker documentation on attestations](https://docs.docker.com/build/ci/github-actions/attestations/).
+
 ## Configuration
 
 The application is configured via environment variables:
