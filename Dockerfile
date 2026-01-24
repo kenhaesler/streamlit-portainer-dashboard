@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
-# --- Build stage (3.12, DHI dev image) ---
-FROM dhi.io/python:3.12.12-debian12-dev AS build-stage
+# --- Build stage (3.14, DHI dev image) ---
+FROM dhi.io/python:3.14.0-debian12-dev AS build-stage
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -19,8 +19,8 @@ COPY app ./app
 # Ensure the Streamlit configuration directory is writable by the runtime user
 RUN chown -R 65532:65532 ./.streamlit
 
-# --- Runtime stage (3.12, DHI nonroot image) ---
-FROM dhi.io/python:3.12.12-debian12 AS runtime-stage
+# --- Runtime stage (3.14, DHI nonroot image) ---
+FROM dhi.io/python:3.14.0-debian12 AS runtime-stage
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

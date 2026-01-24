@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from datetime import datetime
 import json
 import os
-from typing import Any, Dict, Iterable, List, Mapping
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 import pandas as pd
 import requests
@@ -54,10 +55,10 @@ def build_logs_query(
     container_name: str | None = None,
     search_term: str | None = None,
     size: int = 200,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Return the Elasticsearch DSL query used to fetch logs."""
 
-    must_clauses: List[Dict[str, Any]] = [
+    must_clauses: list[dict[str, Any]] = [
         {"exists": {"field": "container.name"}},
         {"term": {"data_stream.dataset": "docker-container_logs"}},
         {"term": {"host.hostname.keyword": hostname}},
@@ -69,7 +70,7 @@ def build_logs_query(
     if search_term:
         must_clauses.append({"match_phrase": {"message": search_term}})
 
-    query: Dict[str, Any] = {
+    query: dict[str, Any] = {
         "size": max(1, min(size, 1000)),
         "sort": [{"@timestamp": {"order": "desc"}}],
         "query": {
@@ -184,7 +185,7 @@ class KibanaClient:
         hits = payload.get("hits", {})
         records_raw: Iterable[Mapping[str, Any]] = hits.get("hits", [])  # type: ignore[assignment]
 
-        entries: List[KibanaLogEntry] = []
+        entries: list[KibanaLogEntry] = []
         for record in records_raw:
             source = record.get("_source", {})
             if not isinstance(source, Mapping):

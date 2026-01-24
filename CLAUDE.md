@@ -69,7 +69,7 @@ Context trimming via `LLM_MAX_TOKENS` and `max_context_tokens` prevents oversize
 
 ## Development Guidelines
 
-- **Python 3.12** with type hints; use `from __future__ import annotations`
+- **Python 3.14** with type hints; use built-in generics (`list`, `dict`) instead of `typing.List`, `typing.Dict`
 - Keep UI code in `app/pages/` or `app/components/`; use `dashboard_state.py` for state
 - Place external integrations in `app/services/` (no reimplemented HTTP calls)
 - Mock HTTP requests in tests (see existing patterns in `tests/`)
@@ -99,7 +99,7 @@ Kibana: `KIBANA_LOGS_ENDPOINT`, `KIBANA_API_KEY`
 
 ## Container Details
 
-- Docker Hardened Images (DHI) base: `dhi.io/python:3.12.12-debian12` runtime, `dhi.io/python:3.12.12-debian12-dev` build stage
+- Docker Hardened Images (DHI) base: `dhi.io/python:3.14.0-debian12` runtime, `dhi.io/python:3.14.0-debian12-dev` build stage
 - Non-root user (UID 65532)
 - Volume mount at `/app/.streamlit` for persistence
 - Health check on `http://127.0.0.1:8501/_stcore/health`

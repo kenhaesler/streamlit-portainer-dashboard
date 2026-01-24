@@ -7,7 +7,8 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 
 __all__ = [
     "PortainerEnvironment",
@@ -66,10 +67,10 @@ def _build_environment(name: str, *, prefix: str | None = None) -> PortainerEnvi
     )
 
 
-def get_configured_environments() -> List[PortainerEnvironment]:
+def get_configured_environments() -> list[PortainerEnvironment]:
     """Return all configured Portainer environments from environment variables."""
 
-    configured: List[PortainerEnvironment] = []
+    configured: list[PortainerEnvironment] = []
     raw_environments = os.getenv("PORTAINER_ENVIRONMENTS", "").strip()
     if raw_environments:
         names: Iterable[str] = (

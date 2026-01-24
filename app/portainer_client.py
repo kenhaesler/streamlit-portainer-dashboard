@@ -5,7 +5,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Callable, Dict, Iterable, List, Optional, Tuple
+from collections.abc import Callable, Iterable
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -39,7 +39,7 @@ def _coerce_int(value: object) -> int | None:
     return None
 
 
-def _first_present(mapping: Dict[str, object], *keys: str) -> object:
+def _first_present(mapping: dict[str, object], *keys: str) -> object:
     """Return the first value present for ``keys`` in ``mapping``.
 
     Unlike using ``or`` to coalesce values, this helper treats ``0`` and
@@ -56,7 +56,7 @@ def _first_present(mapping: Dict[str, object], *keys: str) -> object:
     return None
 
 
-def _stack_targets_endpoint(stack: Dict[str, object], endpoint_id: int) -> bool:
+def _stack_targets_endpoint(stack: dict[str, object], endpoint_id: int) -> bool:
     """Return ``True`` when a stack is assigned to the provided endpoint."""
 
     endpoint_keys = ("EndpointId", "EndpointID", "endpointId", "endpointID")
@@ -89,7 +89,7 @@ def _stack_targets_endpoint(stack: Dict[str, object], endpoint_id: int) -> bool:
     return False
 
 
-def _stack_has_endpoint_metadata(stack: Dict[str, object]) -> bool:
+def _stack_has_endpoint_metadata(stack: dict[str, object]) -> bool:
     """Return ``True`` when the stack embeds any endpoint assignment metadata."""
 
     endpoint_keys = ("EndpointId", "EndpointID", "endpointId", "endpointID")
@@ -153,7 +153,7 @@ class PortainerClient:
         self._configure_session()
 
     @property
-    def _headers(self) -> Dict[str, str]:
+    def _headers(self) -> dict[str, str]:
         return {"X-API-Key": self.api_key}
 
     def _configure_session(self) -> None:
@@ -189,7 +189,7 @@ class PortainerClient:
     ) -> None:
         self.close()
 
-    def _request(self, path: str, *, params: Optional[Dict[str, object]] = None) -> object:
+    def _request(self, path: str, *, params: dict[str, object] | None = None) -> object:
         url = f"{self.base_url}{path}"
         try:
             response = self._session.get(
@@ -209,7 +209,7 @@ class PortainerClient:
         self,
         path: str,
         *,
-        json: Optional[Dict[str, object]] = None,
+        json: dict[str, object] | None = None,
     ) -> requests.Response:
         url = f"{self.base_url}{path}"
         try:
@@ -224,11 +224,11 @@ class PortainerClient:
         return response
 
     @staticmethod
-    def _extract_filename(header_value: Optional[str]) -> Optional[str]:
+    def _extract_filename(header_value: str | None) -> str | None:
         if not header_value:
             return None
         parts = [part.strip() for part in header_value.split(";")]
-        filename: Optional[str] = None
+        filename: str | None = None
         for part in parts:
             if not part:
                 continue
@@ -248,22 +248,22 @@ class PortainerClient:
             filename = re.sub(r"[\\/]+", "-", filename).strip()
         return filename or None
 
-    def create_backup(self, *, password: Optional[str] = None) -> Tuple[bytes, Optional[str]]:
-        payload: Dict[str, object] = {}
+    def create_backup(self, *, password: str | None = None) -> tuple[bytes, str | None]:
+        payload: dict[str, object] = {}
         if password:
             payload["password"] = password
         response = self._post("/backup", json=payload or {})
         filename = self._extract_filename(response.headers.get("Content-Disposition"))
         return response.content, filename
 
-    def list_edge_endpoints(self) -> List[Dict[str, object]]:
+    def list_edge_endpoints(self) -> list[dict[str, object]]:
         params = {"edge": "true", "status": "true"}
         data = self._request("/endpoints", params=params)
         if not isinstance(data, list):
             raise PortainerAPIError("Unexpected endpoints payload from Portainer")
         return data
 
-    def list_stacks_for_endpoint(self, endpoint_id: int) -> List[Dict[str, object]]:
+    def list_stacks_for_endpoint(self, endpoint_id: int) -> list[dict[str, object]]:
         """Fetch stacks for a given endpoint.
 
         Portainer's API supports both `/stacks` (with an `endpointId` query)
@@ -303,7 +303,7 @@ class PortainerClient:
         endpoint_id: int,
         *,
         include_stopped: bool = False,
-    ) -> List[Dict[str, object]]:
+    ) -> list[dict[str, object]]:
         """Return containers for an endpoint via the Docker API."""
 
         params = {"all": "1" if include_stopped else "0"}
@@ -317,7 +317,7 @@ class PortainerClient:
 
     def inspect_container(
         self, endpoint_id: int, container_id: str
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Return the detailed inspect payload for a container."""
 
         data = self._request(
@@ -329,7 +329,7 @@ class PortainerClient:
 
     def get_container_stats(
         self, endpoint_id: int, container_id: str
-    ) -> Dict[str, object]:
+    ) -> dict[str, object]:
         """Return a non-streaming stats snapshot for a container."""
 
         data = self._request(
@@ -340,7 +340,7 @@ class PortainerClient:
             raise PortainerAPIError("Unexpected container stats payload from Portainer")
         return data
 
-    def get_endpoint_host_info(self, endpoint_id: int) -> Dict[str, object]:
+    def get_endpoint_host_info(self, endpoint_id: int) -> dict[str, object]:
         """Return Docker host metadata for an endpoint."""
 
         data = self._request(f"/endpoints/{endpoint_id}/docker/info")
@@ -348,7 +348,7 @@ class PortainerClient:
             raise PortainerAPIError("Unexpected host info payload from Portainer")
         return data
 
-    def get_endpoint_system_df(self, endpoint_id: int) -> Dict[str, object]:
+    def get_endpoint_system_df(self, endpoint_id: int) -> dict[str, object]:
         """Return Docker disk usage statistics for an endpoint."""
 
         data = self._request(f"/endpoints/{endpoint_id}/docker/system/df")
@@ -356,7 +356,7 @@ class PortainerClient:
             raise PortainerAPIError("Unexpected system df payload from Portainer")
         return data
 
-    def list_volumes_for_endpoint(self, endpoint_id: int) -> List[Dict[str, object]]:
+    def list_volumes_for_endpoint(self, endpoint_id: int) -> list[dict[str, object]]:
         """Return all Docker volumes defined on an endpoint."""
 
         data = self._request(f"/endpoints/{endpoint_id}/docker/volumes")
@@ -370,7 +370,7 @@ class PortainerClient:
             raise PortainerAPIError("Unexpected volumes payload from Portainer")
         return [item for item in volumes if isinstance(item, dict)]
 
-    def list_images_for_endpoint(self, endpoint_id: int) -> List[Dict[str, object]]:
+    def list_images_for_endpoint(self, endpoint_id: int) -> list[dict[str, object]]:
         """Return image metadata for an endpoint."""
 
         data = self._request(f"/endpoints/{endpoint_id}/docker/images/json")
@@ -388,19 +388,19 @@ class PortainerClient:
 
 
 def normalise_endpoint_stacks(
-    endpoints: Iterable[Dict[str, object]],
-    stacks_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+    endpoints: Iterable[dict[str, object]],
+    stacks_by_endpoint: dict[int, Iterable[dict[str, object]]],
 ) -> pd.DataFrame:
     """Return a normalised dataframe mapping endpoints to stacks."""
 
-    def _normalise_stack_list(value: Iterable[Dict[str, object]] | object) -> List[Dict[str, object]]:
+    def _normalise_stack_list(value: Iterable[dict[str, object]] | object) -> list[dict[str, object]]:
         if isinstance(value, dict):
             return [value]
         if isinstance(value, (list, tuple)):
             return list(value)
         return []
 
-    records: List[Dict[str, object]] = []
+    records: list[dict[str, object]] = []
     for endpoint in endpoints:
         endpoint_id = int(
             _first_present(endpoint, "Id", "id") or 0
@@ -462,11 +462,11 @@ def normalise_endpoint_stacks(
 
 
 def normalise_endpoint_metadata(
-    endpoints: Iterable[Dict[str, object]]
+    endpoints: Iterable[dict[str, object]]
 ) -> pd.DataFrame:
     """Return a dataframe with enriched endpoint metadata."""
 
-    records: List[Dict[str, object]] = []
+    records: list[dict[str, object]] = []
     for endpoint in endpoints:
         endpoint_id = int(_first_present(endpoint, "Id", "id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
@@ -492,7 +492,7 @@ def normalise_endpoint_metadata(
                 "LastCheckIn",
             )
         )
-        last_check_iso: Optional[str]
+        last_check_iso: str | None
         last_check_iso = None
         if isinstance(last_check_in, (int, float)):
             try:
@@ -506,7 +506,7 @@ def normalise_endpoint_metadata(
                 last_check_iso = last_check_in
         url_value = endpoint.get("URL") or endpoint.get("Url") or endpoint.get("url")
 
-        def _parse_hostname(value: object) -> Optional[str]:
+        def _parse_hostname(value: object) -> str | None:
             if not isinstance(value, str):
                 return None
             candidate = value.strip()
@@ -566,12 +566,12 @@ def normalise_endpoint_metadata(
 
 
 def normalise_endpoint_containers(
-    endpoints: Iterable[Dict[str, object]],
-    containers_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+    endpoints: Iterable[dict[str, object]],
+    containers_by_endpoint: dict[int, Iterable[dict[str, object]]],
 ) -> pd.DataFrame:
     """Return a normalised dataframe mapping endpoints to containers."""
 
-    records: List[Dict[str, object]] = []
+    records: list[dict[str, object]] = []
     for endpoint in endpoints:
         endpoint_id = int(_first_present(endpoint, "Id", "id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
@@ -587,7 +587,7 @@ def normalise_endpoint_containers(
             status = container.get("Status")
             restart_count = container.get("RestartCount")
             created_raw = container.get("Created")
-            created_at: Optional[str]
+            created_at: str | None
             created_at = None
             if isinstance(created_raw, (int, float)):
                 created_at = pd.to_datetime(created_raw, unit="s", utc=True).isoformat()
@@ -650,10 +650,10 @@ def normalise_endpoint_containers(
 
 
 def normalise_container_details(
-    endpoints: Iterable[Dict[str, object]],
-    containers_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
-    inspect_payloads: Dict[int, Dict[str, Dict[str, object]]],
-    stats_payloads: Dict[int, Dict[str, Dict[str, object]]],
+    endpoints: Iterable[dict[str, object]],
+    containers_by_endpoint: dict[int, Iterable[dict[str, object]]],
+    inspect_payloads: dict[int, dict[str, dict[str, object]]],
+    stats_payloads: dict[int, dict[str, dict[str, object]]],
 ) -> pd.DataFrame:
     """Return enriched container records including inspect/stats data."""
 
@@ -661,7 +661,7 @@ def normalise_container_details(
         int(_first_present(endpoint, "Id", "id") or 0): endpoint
         for endpoint in endpoints
     }
-    records: List[Dict[str, object]] = []
+    records: list[dict[str, object]] = []
     for endpoint_id, containers in containers_by_endpoint.items():
         endpoint = endpoint_lookup.get(endpoint_id, {})
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
@@ -741,8 +741,8 @@ def normalise_container_details(
             precpu_stats = stats_data.get("precpu_stats")
             if not isinstance(precpu_stats, dict):
                 precpu_stats = {}
-            cpu_delta: Optional[float] = None
-            system_delta: Optional[float] = None
+            cpu_delta: float | None = None
+            system_delta: float | None = None
             if cpu_stats and precpu_stats:
                 total_usage = cpu_stats.get("cpu_usage", {}).get("total_usage")
                 pre_total = precpu_stats.get("cpu_usage", {}).get("total_usage")
@@ -756,7 +756,7 @@ def normalise_container_details(
                 except (TypeError, ValueError):
                     cpu_delta = None
                     system_delta = None
-            cpu_percentage: Optional[float] = None
+            cpu_percentage: float | None = None
             if cpu_delta and system_delta and system_delta > 0:
                 percpu = cpu_stats.get("cpu_usage", {}).get("percpu_usage")
                 cpu_count = len(percpu) if isinstance(percpu, list) and percpu else 1
@@ -766,7 +766,7 @@ def normalise_container_details(
                 memory_stats = {}
             memory_usage = memory_stats.get("usage")
             memory_limit = memory_stats.get("limit")
-            memory_percent: Optional[float] = None
+            memory_percent: float | None = None
             try:
                 if memory_usage is not None and memory_limit:
                     memory_percent = (float(memory_usage) / float(memory_limit)) * 100.0
@@ -821,9 +821,9 @@ def normalise_container_details(
 
 
 def normalise_endpoint_host_metrics(
-    endpoints: Iterable[Dict[str, object]],
-    info_payloads: Dict[int, Dict[str, object]],
-    system_payloads: Dict[int, Dict[str, object]],
+    endpoints: Iterable[dict[str, object]],
+    info_payloads: dict[int, dict[str, object]],
+    system_payloads: dict[int, dict[str, object]],
 ) -> pd.DataFrame:
     """Return host-level capacity information for endpoints."""
 
@@ -831,7 +831,7 @@ def normalise_endpoint_host_metrics(
         int(_first_present(endpoint, "Id", "id") or 0): endpoint
         for endpoint in endpoints
     }
-    records: List[Dict[str, object]] = []
+    records: list[dict[str, object]] = []
     for endpoint_id, endpoint in endpoint_lookup.items():
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
         info = info_payloads.get(endpoint_id, {})
@@ -937,10 +937,10 @@ def normalise_endpoint_host_metrics(
 
 
 def normalise_endpoint_volumes(
-    endpoints: Iterable[Dict[str, object]],
-    volumes_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+    endpoints: Iterable[dict[str, object]],
+    volumes_by_endpoint: dict[int, Iterable[dict[str, object]]],
 ) -> pd.DataFrame:
-    records: List[Dict[str, object]] = []
+    records: list[dict[str, object]] = []
     endpoint_lookup = {
         int(_first_present(endpoint, "Id", "id") or 0): endpoint
         for endpoint in endpoints
@@ -989,10 +989,10 @@ def normalise_endpoint_volumes(
 
 
 def normalise_endpoint_images(
-    endpoints: Iterable[Dict[str, object]],
-    images_by_endpoint: Dict[int, Iterable[Dict[str, object]]],
+    endpoints: Iterable[dict[str, object]],
+    images_by_endpoint: dict[int, Iterable[dict[str, object]]],
 ) -> pd.DataFrame:
-    records: List[Dict[str, object]] = []
+    records: list[dict[str, object]] = []
     endpoint_lookup = {
         int(_first_present(endpoint, "Id", "id") or 0): endpoint
         for endpoint in endpoints

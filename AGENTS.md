@@ -10,7 +10,7 @@ Welcome! This repository powers the Streamlit Portainer dashboard. Follow these 
 - Shell utilities live in `scripts/`; the `check_app_starts.sh` script bootstraps the Streamlit server for smoke testing.
 
 ## Development workflow
-- Prefer Python 3.12 (matching the Dockerfile) and keep code type-hinted. The codebase already imports `from __future__ import annotations` in most modules—follow suit for new files.
+- Prefer Python 3.14 (matching the Dockerfile) and keep code type-hinted. Use built-in generics (`list`, `dict`, `tuple`) instead of `typing.List`, `typing.Dict`, `typing.Tuple`. Use `X | None` instead of `Optional[X]`. Import `Callable`, `Iterable`, `Mapping`, `Sequence` from `collections.abc` instead of `typing`.
 - Run formatting/linters that ship with the repository (currently none). Stay consistent with the existing style—standard library first, third-party next, local imports last.
 - Write tests with `pytest`. Use `pytest -q` for the unit suite. When you add new behaviour that touches Portainer interactions, make sure to mock HTTP requests just like the existing tests do.
 - Use `scripts/check_app_starts.sh` for a quick smoke test after substantial UI changes. It expects the Streamlit dependencies to be installed in the current environment.
