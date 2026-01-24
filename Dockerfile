@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # --- Build stage (3.14, DHI dev image) ---
-FROM dhi.io/python:3.14.0-debian12-dev AS build-stage
+FROM dhi.io/python:3.14.2-debian13-dev AS build-stage
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
@@ -20,7 +20,7 @@ COPY app ./app
 RUN chown -R 65532:65532 ./.streamlit
 
 # --- Runtime stage (3.14, DHI nonroot image) ---
-FROM dhi.io/python:3.14.0-debian12 AS runtime-stage
+FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

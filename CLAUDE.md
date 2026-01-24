@@ -99,7 +99,7 @@ Kibana: `KIBANA_LOGS_ENDPOINT`, `KIBANA_API_KEY`
 
 ## Container Details
 
-- Docker Hardened Images (DHI) base: `dhi.io/python:3.14.0-debian12` runtime, `dhi.io/python:3.14.0-debian12-dev` build stage
+- Docker Hardened Images (DHI) base: `dhi.io/python:3.14.2-debian13` runtime, `dhi.io/python:3.14.2-debian13-dev` build stage
 - Non-root user (UID 65532)
 - Volume mount at `/app/.streamlit` for persistence
 - Health check on `http://127.0.0.1:8501/_stcore/health`
