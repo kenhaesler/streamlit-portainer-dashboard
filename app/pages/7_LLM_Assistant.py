@@ -583,7 +583,7 @@ with assistant_tab:
         value=int(st.session_state.get("llm_max_requests", 3)),
         help="Higher values allow deeper dives at the cost of longer response times.",
     )
-    submit = st.button("Analyse with AI", width="stretch")
+    submit = st.button("Analyse with AI", width="stretch", key="llm_assistant_submit")
 
     for turn in conversation:
         with st.chat_message("user"):
