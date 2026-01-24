@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Iterable, MutableMapping
+from collections.abc import Callable, Iterable, MutableMapping
 
 from ..settings import PortainerEnvironment, get_configured_environments, load_environments, save_environments
 

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable, Iterable
+from collections.abc import Callable, Iterable
 
 from ..services.backup_scheduler import maybe_run_scheduled_backups
 

@@ -6,7 +6,7 @@ import datetime as _dt
 import os
 import re
 from pathlib import Path
-from typing import Mapping, Optional
+from collections.abc import Mapping
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from app.portainer_client import PortainerClient  # type: ignore[import-not-found]
@@ -39,7 +39,7 @@ def _ensure_backup_directory() -> Path:
     return directory
 
 
-def default_backup_password() -> Optional[str]:
+def default_backup_password() -> str | None:
     """Return the configured default password for Portainer backups."""
 
     value = os.getenv(_BACKUP_PASSWORD_ENV_VAR)
@@ -71,7 +71,7 @@ def _unique_path(path: Path) -> Path:
 
 
 def create_environment_backup(
-    environment: Mapping[str, object], *, password: Optional[str] = None
+    environment: Mapping[str, object], *, password: str | None = None
 ) -> Path:
     """Create a backup for ``environment`` and store it on disk."""
 
@@ -85,7 +85,7 @@ def create_environment_backup(
     directory = _ensure_backup_directory()
     env_name = str(environment.get("name", "portainer")) or "portainer"
     prefix = _sanitise_component(env_name)
-    timestamp = _dt.datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
+    timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     if filename:
         base_name = Path(filename).name
     else:

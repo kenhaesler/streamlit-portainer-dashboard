@@ -11,7 +11,7 @@ import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, List, Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 
 try:  # pragma: no cover - import shim for Streamlit runtime
     from ..file_locking import FileLock, Timeout  # type: ignore[import-not-found]
@@ -420,7 +420,7 @@ def update_schedule_interval(interval_seconds: int) -> ScheduleSnapshot:
 
 def maybe_run_scheduled_backups(
     environments: Iterable[Mapping[str, object]],
-) -> List[Path]:
+) -> list[Path]:
     """Create backups when the configured schedule is due.
 
     Parameters
@@ -434,7 +434,7 @@ def maybe_run_scheduled_backups(
     envs_list = list(environments)
 
     schedule_updated = False
-    result: List[Path] = []
+    result: list[Path] = []
 
     try:
         with _acquire_schedule_lock():
@@ -502,8 +502,8 @@ def maybe_run_scheduled_backups(
                 )
                 return []
 
-            generated: List[Path] = []
-            errors: List[str] = []
+            generated: list[Path] = []
+            errors: list[str] = []
             password = default_backup_password()
             for environment in envs_list:
                 try:
