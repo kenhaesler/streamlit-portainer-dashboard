@@ -8,8 +8,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-RUN pip install --no-cache-dir \
+# Upgrade pip to fix CVE-2025-8869, then install dependencies
+RUN pip install --no-cache-dir --upgrade pip>=25.3 && \
+    pip install --no-cache-dir \
     streamlit>=1.40.0 \
     plotly>=5.24.0 \
     websockets>=13.0 \

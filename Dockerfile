@@ -11,7 +11,10 @@ WORKDIR /app
 
 RUN python -m venv /app/venv
 
-# Install dependencies from pyproject.toml
+# Upgrade pip to fix CVE-2025-8869
+RUN pip install --no-cache-dir --upgrade pip>=25.3
+
+# Install dependencies from pyproject.toml (backend only, no streamlit)
 COPY pyproject.toml .
 RUN pip install --no-cache-dir .
 

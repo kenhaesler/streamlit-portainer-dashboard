@@ -1,17 +1,41 @@
 services:
-  streamlit-portainer-dashboard:
-    build: .
+  # FastAPI Backend
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
     ports:
-      - "8501:8501"
+      - "8000:8000"
     env_file:
       - .env
     environment:
-      DASHBOARD_USERNAME: ${DASHBOARD_USERNAME:?Set dashboard username}
-      DASHBOARD_KEY: ${DASHBOARD_KEY:?Set dashboard key}
-      LLM_BEARER_TOKEN: ${LLM_BEARER_TOKEN:-}
-    volumes:
-      - streamlit_portainer_envs:/app/.streamlit
-    restart: unless-stopped
-volumes:
-  streamlit_portainer_envs:
-    name: streamlit_portainer_envs
+      - DASHBOARD_SESSION_BACKEND=sqlite
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - dashboard-net
+
+  # Streamlit Frontend
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    ports:
+      - "8502:8502"
+    environment:
+      - FASTAPI_BACKEND_URL=http://backend:8000
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - dashboard-net
+
+networks:
+  dashboard-net:
+    driver: bridge
