@@ -1,0 +1,77 @@
+<div id="agent-versions-chart-container"></div>
+<script>
+(function() {
+    const versions = {{ versions | tojson }};
+
+    const container = document.getElementById('agent-versions-chart-container');
+    const parentHeight = container.parentElement.clientHeight || 280;
+
+    if (versions.length === 0) {
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; height:${parentHeight}px; color:#9ca3af;">
+                No agent version data available
+            </div>
+        `;
+        return;
+    }
+
+    // Clean up labels - show "Local" instead of "Unknown" for non-edge endpoints
+    const labels = versions.map(v => {
+        const ver = v[0];
+        if (!ver || ver === 'Unknown' || ver === 'N/A') return 'Local';
+        return ver;
+    });
+    const counts = versions.map(v => v[1]);
+    const maxCount = Math.max(...counts);
+
+    // Generate colors - gradient based on version
+    const colors = labels.map((_, i) => {
+        const hue = 195 + (i * 20); // Docker blue variations
+        return `hsl(${hue}, 80%, 55%)`;
+    });
+
+    const isDark = document.documentElement.classList.contains('dark');
+    const fontColor = isDark ? '#f3f4f6' : '#1f2937';
+    const gridColor = isDark ? '#374151' : '#e5e7eb';
+
+    const data = [{
+        x: labels,
+        y: counts,
+        type: 'bar',
+        marker: {
+            color: colors,
+            line: { color: isDark ? '#1f2937' : '#ffffff', width: 1 }
+        },
+        text: counts.map(c => c.toString()),
+        textposition: 'outside',
+        textfont: { size: 12, color: fontColor },
+        hovertemplate: '<b>%{x}</b><br>%{y} endpoint(s)<extra></extra>'
+    }];
+
+    const layout = {
+        height: parentHeight,
+        xaxis: {
+            tickangle: 0,
+            tickfont: { size: 12 },
+            showgrid: false
+        },
+        yaxis: {
+            title: { text: 'Endpoints', font: { size: 11 }, standoff: 10 },
+            tickfont: { size: 11 },
+            gridcolor: gridColor,
+            dtick: maxCount <= 5 ? 1 : Math.ceil(maxCount / 5),
+            rangemode: 'tozero',
+            range: [0, maxCount * 1.2]
+        },
+        margin: { t: 25, b: 40, l: 45, r: 15 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: fontColor },
+        bargap: 0.4
+    };
+
+    const config = { responsive: true, displayModeBar: false };
+
+    Plotly.newPlot(container, data, layout, config);
+})();
+</script>

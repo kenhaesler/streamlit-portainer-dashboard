@@ -1,0 +1,67 @@
+<div id="endpoint-status-chart-container"></div>
+<script>
+(function() {
+    const online = {{ online_count }};
+    const offline = {{ offline_count }};
+    const total = online + offline;
+
+    const container = document.getElementById('endpoint-status-chart-container');
+    const parentHeight = container.parentElement.clientHeight || 280;
+
+    if (total === 0) {
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; height:${parentHeight}px; color:#9ca3af;">
+                No endpoints found
+            </div>
+        `;
+        return;
+    }
+
+    const isDark = document.documentElement.classList.contains('dark');
+
+    const data = [{
+        values: [online, offline],
+        labels: ['Online', 'Offline'],
+        type: 'pie',
+        hole: 0.4,
+        marker: {
+            colors: ['#10B981', '#EF4444'],
+            line: { color: isDark ? '#1f2937' : '#ffffff', width: 2 }
+        },
+        textinfo: 'percent',
+        textposition: 'inside',
+        textfont: { size: 14, color: '#ffffff' },
+        hovertemplate: '<b>%{label}</b><br>%{value} endpoints<br>%{percent}<extra></extra>',
+        domain: { x: [0.1, 0.9], y: [0, 0.85] }
+    }];
+
+    const layout = {
+        height: parentHeight,
+        showlegend: true,
+        legend: {
+            orientation: 'h',
+            x: 0.5,
+            xanchor: 'center',
+            y: 0.98,
+            font: { size: 12 }
+        },
+        margin: { t: 35, b: 5, l: 5, r: 5 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: {
+            color: isDark ? '#f3f4f6' : '#1f2937'
+        },
+        annotations: [{
+            text: `<b>${total}</b><br>Total`,
+            x: 0.5,
+            y: 0.42,
+            font: { size: 16, color: isDark ? '#f3f4f6' : '#1f2937' },
+            showarrow: false
+        }]
+    };
+
+    const config = { responsive: true, displayModeBar: false };
+
+    Plotly.newPlot(container, data, layout, config);
+})();
+</script>

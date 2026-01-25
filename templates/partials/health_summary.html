@@ -1,0 +1,18 @@
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Total Running</p>
+        <p class="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">{{ total_containers }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Healthy</p>
+        <p class="mt-2 text-3xl font-semibold text-green-600">{{ healthy_containers }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Unhealthy</p>
+        <p class="mt-2 text-3xl font-semibold text-red-600">{{ unhealthy_containers }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">No Health Check</p>
+        <p class="mt-2 text-3xl font-semibold text-gray-600 dark:text-gray-400">{{ no_healthcheck }}</p>
+    </div>
+</div>

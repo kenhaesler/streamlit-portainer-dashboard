@@ -97,11 +97,17 @@
         <!-- Charts Tab -->
         <div x-show="activeTab === 'charts'" x-cloak class="p-6">
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div id="status-chart" class="h-80" hx-get="/partials/charts/endpoint-status" hx-trigger="revealed" hx-swap="innerHTML">
-                    <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+                <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-hidden">
+                    <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Endpoint Status</h3>
+                    <div id="status-chart" style="height: 280px;" hx-get="/partials/charts/endpoint-status" hx-trigger="revealed" hx-swap="innerHTML">
+                        <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+                    </div>
                 </div>
-                <div id="version-chart" class="h-80" hx-get="/partials/charts/agent-versions" hx-trigger="revealed" hx-swap="innerHTML">
-                    <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+                <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 overflow-hidden">
+                    <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Agent Versions</h3>
+                    <div id="version-chart" style="height: 280px;" hx-get="/partials/charts/agent-versions" hx-trigger="revealed" hx-swap="innerHTML">
+                        <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+                    </div>
                 </div>
             </div>
         </div>

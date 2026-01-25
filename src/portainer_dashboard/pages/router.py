@@ -69,14 +69,14 @@ async def fleet_page(
     return HTMLResponse(content=content)
 
 
-@router.get("/health", response_class=HTMLResponse, response_model=None)
+@router.get("/container-health", response_class=HTMLResponse, response_model=None)
 async def health_page(
     request: Request,
     jinja: JinjaEnvDep,
     user: OptionalUserDep,
 ) -> Response:
     """Render the container health page."""
-    redirect = _require_auth(user, "/health")
+    redirect = _require_auth(user, "/container-health")
     if redirect:
         return redirect
 
@@ -84,7 +84,7 @@ async def health_page(
     content = await template.render_async(
         request=request,
         user=user,
-        current_path="/health",
+        current_path="/container-health",
     )
     return HTMLResponse(content=content)
 

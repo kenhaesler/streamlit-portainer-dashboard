@@ -18,9 +18,9 @@
     </div>
 
     <!-- Image size chart -->
-    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Image Size Distribution</h2>
-        <div id="image-size-chart" class="h-80" hx-get="/partials/charts/image-sizes" hx-trigger="load" hx-swap="innerHTML">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 overflow-hidden">
+        <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Image Size Distribution (Top 10)</h2>
+        <div id="image-size-chart" style="height: 380px;" hx-get="/partials/charts/image-sizes" hx-trigger="load" hx-swap="innerHTML">
             <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
         </div>
     </div>

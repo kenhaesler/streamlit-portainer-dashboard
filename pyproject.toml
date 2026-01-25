@@ -2,7 +2,6 @@
 name = "portainer-dashboard"
 version = "2.0.0"
 description = "FastAPI dashboard for Portainer infrastructure management"
-readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12"
 dependencies = [
@@ -20,6 +19,10 @@ dependencies = [
     "tenacity>=9.0.0",
     "filelock>=3.20.0",
     "itsdangerous>=2.2.0",
+    # Streamlit UI dependencies
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
+    "websockets>=13.0",
 ]
 
 [project.optional-dependencies]

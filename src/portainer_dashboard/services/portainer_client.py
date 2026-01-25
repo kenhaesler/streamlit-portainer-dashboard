@@ -211,8 +211,16 @@ class AsyncPortainerClient:
         return response.content, filename
 
     async def list_edge_endpoints(self) -> list[dict[str, object]]:
+        """List only edge endpoints."""
         params = {"edge": "true", "status": "true"}
         data = await self._request("/endpoints", params=params)
+        if not isinstance(data, list):
+            raise PortainerAPIError("Unexpected endpoints payload from Portainer")
+        return data
+
+    async def list_all_endpoints(self) -> list[dict[str, object]]:
+        """List all endpoints (including local Docker environments)."""
+        data = await self._request("/endpoints")
         if not isinstance(data, list):
             raise PortainerAPIError("Unexpected endpoints payload from Portainer")
         return data

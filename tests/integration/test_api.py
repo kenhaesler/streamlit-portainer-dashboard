@@ -110,7 +110,7 @@ async def test_api_endpoints_with_auth(
         mock_instance = AsyncMock()
         mock_instance.__aenter__ = AsyncMock(return_value=mock_instance)
         mock_instance.__aexit__ = AsyncMock(return_value=None)
-        mock_instance.list_edge_endpoints = AsyncMock(
+        mock_instance.list_all_endpoints = AsyncMock(
             return_value=mock_portainer_endpoints
         )
         mock_client.return_value = mock_instance

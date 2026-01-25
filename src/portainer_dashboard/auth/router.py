@@ -11,6 +11,7 @@ from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Requ
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from portainer_dashboard.auth.dependencies import (
+    CurrentUserDep,
     SESSION_COOKIE_NAME,
     OptionalUserDep,
     get_session_storage,
@@ -140,6 +141,30 @@ async def logout(
     response = RedirectResponse(url="/auth/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
+
+
+@router.get("/session")
+async def get_session_status(user: CurrentUserDep) -> dict:
+    """Get current session status including time remaining."""
+    now = datetime.now(timezone.utc)
+    settings = get_settings()
+
+    # Calculate session expiry
+    session_timeout = user.session_timeout or settings.auth.session_timeout
+    expires_at = user.last_active + session_timeout
+    seconds_remaining = max(0, int((expires_at - now).total_seconds()))
+    minutes_remaining = seconds_remaining // 60
+
+    return {
+        "username": user.username,
+        "auth_method": user.auth_method,
+        "authenticated_at": user.authenticated_at.isoformat(),
+        "last_active": user.last_active.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "seconds_remaining": seconds_remaining,
+        "minutes_remaining": minutes_remaining,
+        "session_timeout_minutes": int(session_timeout.total_seconds() // 60),
+    }
 
 
 @router.get("/oidc/login")

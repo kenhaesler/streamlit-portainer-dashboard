@@ -85,7 +85,7 @@ class TestAuthSettings:
         """Test default values."""
         settings = AuthSettings()
         assert settings.provider == "static"
-        assert settings.session_timeout is None
+        assert settings.session_timeout == timedelta(minutes=60)  # Default 60 min
 
     def test_session_timeout(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test session timeout parsing."""
@@ -94,10 +94,10 @@ class TestAuthSettings:
         assert settings.session_timeout == timedelta(minutes=30)
 
     def test_session_timeout_zero(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test zero session timeout."""
+        """Test zero session timeout falls back to default."""
         monkeypatch.setenv("DASHBOARD_SESSION_TIMEOUT_MINUTES", "0")
         settings = AuthSettings()
-        assert settings.session_timeout is None
+        assert settings.session_timeout == timedelta(minutes=60)  # Falls back to 60 min
 
 
 class TestCacheSettings:

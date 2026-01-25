@@ -48,7 +48,7 @@ async def list_containers(
         client = create_portainer_client(env)
         try:
             async with client:
-                endpoints = await client.list_edge_endpoints()
+                endpoints = await client.list_all_endpoints()
 
                 for ep in endpoints:
                     ep_id = int(ep.get("Id") or ep.get("id") or 0)

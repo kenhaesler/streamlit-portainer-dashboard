@@ -87,7 +87,7 @@ class AuthSettings(BaseSettings):
     )
 
     auth_provider: Literal["static", "oidc"] = "static"
-    session_timeout_minutes: int | None = None
+    session_timeout_minutes: int = 60  # Default: 60 minutes
 
     @property
     def provider(self) -> Literal["static", "oidc"]:
@@ -95,10 +95,10 @@ class AuthSettings(BaseSettings):
         return self.auth_provider
 
     @property
-    def session_timeout(self) -> timedelta | None:
+    def session_timeout(self) -> timedelta:
         """Return session timeout as timedelta."""
-        if self.session_timeout_minutes is None or self.session_timeout_minutes <= 0:
-            return None
+        if self.session_timeout_minutes <= 0:
+            return timedelta(minutes=60)  # Fallback to 60 min
         return timedelta(minutes=self.session_timeout_minutes)
 
 

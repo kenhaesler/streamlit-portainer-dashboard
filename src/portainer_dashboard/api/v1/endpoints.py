@@ -43,7 +43,7 @@ async def _get_endpoints_for_environment(env_name: str | None = None) -> list[En
         client = create_portainer_client(env)
         try:
             async with client:
-                raw_endpoints = await client.list_edge_endpoints()
+                raw_endpoints = await client.list_all_endpoints()
                 all_endpoints.extend(raw_endpoints)
         except PortainerAPIError as exc:
             LOGGER.error("Failed to fetch endpoints from %s: %s", env.name, exc)

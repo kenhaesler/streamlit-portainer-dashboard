@@ -34,6 +34,7 @@ ENV PATH="/app/venv/bin:$PATH"
 ENV DASHBOARD_SESSION_BACKEND=sqlite
 ENV DASHBOARD_SESSION_DB_PATH=/app/data/sessions.db
 ENV PORTAINER_CACHE_DIR=/app/data/cache
+ENV PYTHONPATH=/app/src
 
 WORKDIR /app
 
