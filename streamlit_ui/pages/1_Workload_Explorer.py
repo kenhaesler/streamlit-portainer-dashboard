@@ -25,7 +25,15 @@ def main():
     require_auth()
     render_sidebar()
 
-    st.title("🐳 Workload Explorer")
+    # Title with refresh button
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.title("🐳 Workload Explorer")
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_workload"):
+            st.cache_data.clear()
+            st.rerun()
+
     st.markdown("Inspect container distribution across endpoints")
 
     client = get_api_client()

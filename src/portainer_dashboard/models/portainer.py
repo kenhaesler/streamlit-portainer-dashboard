@@ -65,9 +65,15 @@ class ContainerDetails(BaseModel):
     memory_usage: int | None = None
     memory_limit: int | None = None
     memory_percent: float | None = None
-    mounts: str | None = None
-    networks: str | None = None
-    labels: str | None = None
+    environment: list[str] | None = None  # ["KEY=value", ...]
+    networks: dict[str, Any] | None = None  # Network settings
+    mounts: list[dict[str, Any]] | None = None  # Volume mounts
+    labels: dict[str, str] | None = None  # Container labels
+    restart_policy: str | None = None
+    privileged: bool | None = None
+    image: str | None = None
+    state: str | None = None
+    status: str | None = None
 
 
 class HostMetrics(BaseModel):
@@ -127,6 +133,17 @@ class PortainerDataResponse(BaseModel):
     is_stale: bool = False
 
 
+class ContainerLogsResponse(BaseModel):
+    """Container logs response."""
+
+    endpoint_id: int
+    container_id: str
+    container_name: str | None = None
+    logs: str
+    tail: int
+    timestamps: bool
+
+
 class BackupRequest(BaseModel):
     """Backup creation request."""
 
@@ -147,6 +164,7 @@ __all__ = [
     "BackupResponse",
     "Container",
     "ContainerDetails",
+    "ContainerLogsResponse",
     "Endpoint",
     "HostMetrics",
     "Image",

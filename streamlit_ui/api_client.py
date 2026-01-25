@@ -160,6 +160,25 @@ class APIClient:
         result = self.get(f"/api/v1/containers/{endpoint_id}/{container_id}")
         return result if isinstance(result, dict) else None
 
+    def get_container_logs(
+        self,
+        endpoint_id: int,
+        container_id: str,
+        *,
+        tail: int = 500,
+        timestamps: bool = True,
+        since_minutes: int | None = None,
+    ) -> dict | None:
+        """Get container logs from Docker API via Portainer."""
+        params = {
+            "tail": str(tail),
+            "timestamps": str(timestamps).lower(),
+        }
+        if since_minutes is not None:
+            params["since_minutes"] = str(since_minutes)
+        result = self.get(f"/api/v1/containers/{endpoint_id}/{container_id}/logs", params=params)
+        return result if isinstance(result, dict) else None
+
     def get_host_metrics(self, endpoint_id: int) -> dict | None:
         """Get host metrics for an endpoint."""
         result = self.get(f"/api/v1/endpoints/{endpoint_id}/host-metrics")

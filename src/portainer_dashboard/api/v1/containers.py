@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
 from portainer_dashboard.auth.dependencies import CurrentUserDep
 from portainer_dashboard.config import get_settings
-from portainer_dashboard.models.portainer import Container, ContainerDetails
+from portainer_dashboard.models.portainer import Container, ContainerDetails, ContainerLogsResponse
 from portainer_dashboard.services.portainer_client import (
     AsyncPortainerClient,
     PortainerAPIError,
@@ -113,6 +114,16 @@ async def get_container_details(
                 if not isinstance(health, dict):
                     health = {}
 
+                config = inspect_data.get("Config") or {}
+                if not isinstance(config, dict):
+                    config = {}
+                host_config = inspect_data.get("HostConfig") or {}
+                if not isinstance(host_config, dict):
+                    host_config = {}
+                network_settings = inspect_data.get("NetworkSettings") or {}
+                if not isinstance(network_settings, dict):
+                    network_settings = {}
+
                 # Calculate CPU percentage
                 cpu_stats = stats_data.get("cpu_stats") or {}
                 precpu_stats = stats_data.get("precpu_stats") or {}
@@ -138,6 +149,10 @@ async def get_container_details(
                 if memory_usage and memory_limit:
                     memory_percent = (float(memory_usage) / float(memory_limit)) * 100.0
 
+                # Extract restart policy
+                restart_policy = host_config.get("RestartPolicy", {})
+                restart_policy_name = restart_policy.get("Name") if isinstance(restart_policy, dict) else None
+
                 return ContainerDetails(
                     endpoint_id=endpoint_id,
                     endpoint_name=None,
@@ -150,9 +165,69 @@ async def get_container_details(
                     memory_usage=memory_usage,
                     memory_limit=memory_limit,
                     memory_percent=memory_percent,
-                    mounts=None,
-                    networks=None,
-                    labels=None,
+                    environment=config.get("Env"),
+                    networks=network_settings.get("Networks"),
+                    mounts=inspect_data.get("Mounts"),
+                    labels=config.get("Labels"),
+                    restart_policy=restart_policy_name,
+                    privileged=host_config.get("Privileged"),
+                    image=config.get("Image"),
+                    state=state.get("Status"),
+                    status=state.get("Status"),
+                )
+        except PortainerAPIError:
+            continue
+
+    raise HTTPException(status_code=404, detail="Container not found")
+
+
+@router.get("/{endpoint_id}/{container_id}/logs", response_model=ContainerLogsResponse)
+async def get_container_logs(
+    endpoint_id: int,
+    container_id: str,
+    user: CurrentUserDep,
+    tail: Annotated[int, Query(ge=1, le=10000, description="Number of lines to return")] = 500,
+    timestamps: Annotated[bool, Query(description="Include timestamps")] = True,
+    since_minutes: Annotated[int | None, Query(ge=1, le=1440, description="Return logs since N minutes ago")] = None,
+    environment: Annotated[str | None, Query(description="Environment name")] = None,
+) -> ContainerLogsResponse:
+    """Get container logs directly from Docker API via Portainer."""
+    settings = get_settings()
+    environments = settings.portainer.get_configured_environments()
+
+    if environment:
+        environments = [e for e in environments if e.name == environment]
+
+    since_timestamp = None
+    if since_minutes is not None:
+        since_timestamp = int(time.time()) - (since_minutes * 60)
+
+    for env in environments:
+        client = create_portainer_client(env)
+        try:
+            async with client:
+                # Get container name for the response
+                try:
+                    inspect_data = await client.inspect_container(endpoint_id, container_id)
+                    container_name = inspect_data.get("Name", "").lstrip("/")
+                except PortainerAPIError:
+                    container_name = None
+
+                logs = await client.get_container_logs(
+                    endpoint_id,
+                    container_id,
+                    tail=tail,
+                    timestamps=timestamps,
+                    since=since_timestamp,
+                )
+
+                return ContainerLogsResponse(
+                    endpoint_id=endpoint_id,
+                    container_id=container_id,
+                    container_name=container_name,
+                    logs=logs,
+                    tail=tail,
+                    timestamps=timestamps,
                 )
         except PortainerAPIError:
             continue

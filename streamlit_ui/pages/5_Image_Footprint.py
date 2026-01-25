@@ -24,7 +24,15 @@ def main():
     require_auth()
     render_sidebar()
 
-    st.title("📦 Image Footprint")
+    # Title with refresh button
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.title("📦 Image Footprint")
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_image"):
+            st.cache_data.clear()
+            st.rerun()
+
     st.markdown("Analyze container image distribution across your infrastructure")
 
     client = get_api_client()

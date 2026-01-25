@@ -6,6 +6,7 @@ import sys
 from datetime import datetime
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(__file__).rsplit("pages", 1)[0])
@@ -226,7 +227,15 @@ def main() -> None:
     require_auth()
     render_sidebar()
 
-    st.title("🤖 AI Infrastructure Monitor")
+    # Title with refresh button
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.title("🤖 AI Infrastructure Monitor")
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_monitor"):
+            st.cache_data.clear()
+            st.rerun()
+
     st.markdown("Real-time AI-powered monitoring insights for your infrastructure")
 
     client = get_api_client()
@@ -308,6 +317,30 @@ def main() -> None:
                 ]
 
                 st.caption(f"Showing {len(filtered)} of {len(all_insights)} insights")
+
+                # CSV Export
+                if filtered:
+                    export_data = []
+                    for insight in filtered:
+                        export_data.append({
+                            "Timestamp": insight.get("timestamp", ""),
+                            "Severity": insight.get("severity", ""),
+                            "Category": insight.get("category", ""),
+                            "Title": insight.get("title", ""),
+                            "Description": insight.get("description", ""),
+                            "Affected Resources": ", ".join(insight.get("affected_resources", [])[:10]),
+                            "Recommended Action": insight.get("recommended_action", ""),
+                        })
+                    export_df = pd.DataFrame(export_data)
+                    csv = export_df.to_csv(index=False)
+                    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    st.download_button(
+                        "📥 Download Insights CSV",
+                        csv,
+                        f"monitoring_insights_{timestamp_str}.csv",
+                        "text/csv",
+                        use_container_width=False,
+                    )
 
                 for insight in filtered:
                     render_insight_card(insight)

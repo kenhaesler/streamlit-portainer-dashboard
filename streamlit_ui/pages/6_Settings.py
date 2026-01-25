@@ -117,6 +117,26 @@ def main():
 
         st.markdown("---")
 
+        # Restore Instructions
+        st.markdown("#### Restore Instructions")
+        st.info("""
+**To restore a Portainer backup:**
+
+1. **Download the backup file** from your backup storage location
+2. **Deploy a fresh Portainer instance** with an empty data volume
+3. During **initial setup**, select "Restore Portainer from backup"
+4. **Upload the downloaded** `.tar.gz` backup file
+5. **Enter the backup password** if one was set during creation
+
+**Important Notes:**
+- Restores can **only be performed on fresh Portainer installations**
+- The restore feature is only available during the initial setup wizard
+- Existing Portainer instances cannot import backups directly
+- For more details, see [Portainer Documentation](https://docs.portainer.io/admin/settings#backup-portainer)
+        """)
+
+        st.markdown("---")
+
         # Backup list
         st.markdown("#### Backup History")
 

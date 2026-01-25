@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -31,12 +33,28 @@ def get_health_status(status: str) -> str:
     return "no_healthcheck"
 
 
+def mask_sensitive_value(key: str, value: str) -> str:
+    """Mask sensitive environment variable values."""
+    sensitive_keywords = ["PASSWORD", "SECRET", "KEY", "TOKEN", "CREDENTIAL", "API_KEY", "AUTH"]
+    if any(kw in key.upper() for kw in sensitive_keywords):
+        return "********"
+    return value
+
+
 def main():
     """Container health page."""
     require_auth()
     render_sidebar()
 
-    st.title("💚 Container Health")
+    # Title with refresh button
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.title("💚 Container Health")
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_health"):
+            st.cache_data.clear()
+            st.rerun()
+
     st.markdown("Monitor container health status and alerts")
 
     client = get_api_client()
@@ -242,8 +260,123 @@ def main():
         display_df.columns = [c.replace("_", " ").title() for c in display_df.columns]
 
         st.dataframe(display_df, use_container_width=True, hide_index=True, height=400)
+
+        # CSV Export
+        csv = filtered_df.to_csv(index=False)
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.download_button(
+            "📥 Download CSV",
+            csv,
+            f"container_health_{timestamp_str}.csv",
+            "text/csv",
+            use_container_width=False,
+        )
     else:
         st.info("No containers match the current filters")
+
+    # Container Details Section
+    st.markdown("---")
+    st.markdown("### 🔍 Container Details")
+    st.caption("Select a container to view environment variables, networks, and mounts")
+
+    if not running_containers.empty:
+        # Build container selection options
+        container_options = {}
+        for _, row in running_containers.iterrows():
+            endpoint_name = row.get("endpoint_name", "Unknown")
+            container_name = row.get("container_name", "Unknown")
+            endpoint_id = row.get("endpoint_id")
+            container_id = row.get("container_id")
+            if endpoint_id and container_id:
+                label = f"{container_name} @ {endpoint_name}"
+                container_options[label] = (endpoint_id, container_id, container_name)
+
+        if container_options:
+            selected_label = st.selectbox(
+                "Select container",
+                options=[""] + list(container_options.keys()),
+                key="container_details_select",
+            )
+
+            if selected_label and selected_label in container_options:
+                endpoint_id, container_id, container_name = container_options[selected_label]
+
+                with st.spinner("Loading container details..."):
+                    details = client.get_container_details(endpoint_id, container_id)
+
+                if details:
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        # Environment Variables
+                        with st.expander("🔐 Environment Variables", expanded=False):
+                            env_vars = details.get("environment") or []
+                            if env_vars:
+                                for env in env_vars:
+                                    if "=" in env:
+                                        key, val = env.split("=", 1)
+                                        masked_val = mask_sensitive_value(key, val)
+                                        st.code(f"{key}={masked_val}", language=None)
+                                    else:
+                                        st.code(env, language=None)
+                            else:
+                                st.info("No environment variables")
+
+                        # Labels
+                        with st.expander("🏷️ Labels", expanded=False):
+                            labels = details.get("labels") or {}
+                            if labels:
+                                for key, val in labels.items():
+                                    st.text(f"{key}: {val}")
+                            else:
+                                st.info("No labels")
+
+                    with col2:
+                        # Networks
+                        with st.expander("🌐 Networks", expanded=False):
+                            networks = details.get("networks") or {}
+                            if networks:
+                                for net_name, net_info in networks.items():
+                                    st.markdown(f"**{net_name}**")
+                                    if isinstance(net_info, dict):
+                                        ip = net_info.get("IPAddress", "N/A")
+                                        gateway = net_info.get("Gateway", "N/A")
+                                        mac = net_info.get("MacAddress", "N/A")
+                                        st.text(f"  IP: {ip}")
+                                        st.text(f"  Gateway: {gateway}")
+                                        st.text(f"  MAC: {mac}")
+                            else:
+                                st.info("No network configuration")
+
+                        # Mounts
+                        with st.expander("💾 Mounts", expanded=False):
+                            mounts = details.get("mounts") or []
+                            if mounts:
+                                for mount in mounts:
+                                    if isinstance(mount, dict):
+                                        source = mount.get("Source", "N/A")
+                                        dest = mount.get("Destination", "N/A")
+                                        mode = mount.get("Mode", "rw")
+                                        st.text(f"{source} -> {dest} ({mode})")
+                            else:
+                                st.info("No volume mounts")
+
+                    # Additional info
+                    st.markdown("**Additional Info:**")
+                    info_cols = st.columns(4)
+                    with info_cols[0]:
+                        st.metric("Restart Policy", details.get("restart_policy") or "N/A")
+                    with info_cols[1]:
+                        privileged = details.get("privileged")
+                        st.metric("Privileged", "Yes" if privileged else "No")
+                    with info_cols[2]:
+                        cpu = details.get("cpu_percent")
+                        st.metric("CPU %", f"{cpu:.1f}%" if cpu is not None else "N/A")
+                    with info_cols[3]:
+                        mem = details.get("memory_percent")
+                        st.metric("Memory %", f"{mem:.1f}%" if mem is not None else "N/A")
+                else:
+                    st.error("Failed to load container details")
 
 
 if __name__ == "__main__":

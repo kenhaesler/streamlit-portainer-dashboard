@@ -27,7 +27,15 @@ def main():
     require_auth()
     render_sidebar()
 
-    st.title("🚀 Fleet Overview")
+    # Title with refresh button
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.title("🚀 Fleet Overview")
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_fleet"):
+            st.cache_data.clear()
+            st.rerun()
+
     st.markdown("Monitor your edge agents, stacks, and container distribution")
 
     client = get_api_client()

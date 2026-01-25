@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -71,7 +73,15 @@ def main():
     require_auth()
     render_sidebar()
 
-    st.title("🐳 Portainer Dashboard")
+    # Title with refresh button
+    col1, col2 = st.columns([6, 1])
+    with col1:
+        st.title("🐳 Portainer Dashboard")
+    with col2:
+        if st.button("🔄 Refresh", use_container_width=True, key="refresh_home"):
+            st.cache_data.clear()
+            st.rerun()
+
     st.markdown("Infrastructure overview and monitoring")
 
     client = get_api_client()
@@ -197,6 +207,22 @@ def main():
             st.dataframe(display_df, use_container_width=True, hide_index=True)
         else:
             st.dataframe(df_containers.head(10), use_container_width=True, hide_index=True)
+
+        # CSV Export - Summary data
+        summary_data = {
+            "Metric": ["Total Endpoints", "Online Endpoints", "Total Containers", "Running Containers", "Stopped Containers", "Unique Images"],
+            "Value": [total_endpoints, online_endpoints, total_containers, running_containers, stopped, unique_images],
+        }
+        summary_df = pd.DataFrame(summary_data)
+        csv = summary_df.to_csv(index=False)
+        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        st.download_button(
+            "📥 Download Summary CSV",
+            csv,
+            f"dashboard_summary_{timestamp_str}.csv",
+            "text/csv",
+            use_container_width=False,
+        )
     else:
         st.info("No containers found")
 

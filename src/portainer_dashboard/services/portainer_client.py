@@ -287,6 +287,59 @@ class AsyncPortainerClient:
             )
         return data
 
+    async def get_container_logs(
+        self,
+        endpoint_id: int,
+        container_id: str,
+        *,
+        tail: int = 500,
+        timestamps: bool = True,
+        since: int | None = None,
+    ) -> str:
+        """Fetch container logs from Docker API via Portainer.
+
+        Args:
+            endpoint_id: The Portainer endpoint ID.
+            container_id: The container ID or name.
+            tail: Number of lines to return from the end of the logs.
+            timestamps: Whether to include timestamps in each log line.
+            since: Only return logs since this Unix timestamp.
+
+        Returns:
+            The container log output as a string.
+        """
+        params = {
+            "stdout": "true",
+            "stderr": "true",
+            "tail": str(tail),
+            "timestamps": "true" if timestamps else "false",
+        }
+        if since is not None:
+            params["since"] = str(since)
+
+        try:
+            response = await self._client.get(
+                f"/endpoints/{endpoint_id}/docker/containers/{container_id}/logs",
+                params=params,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PortainerAPIError(str(exc)) from exc
+
+        # Docker logs API returns raw text, may include special characters
+        # Strip any Docker stream headers (first 8 bytes per frame)
+        text = response.text
+        # Clean up the output by removing Docker stream header bytes
+        lines = []
+        for line in text.split("\n"):
+            # Docker multiplexed streams have 8-byte headers
+            # Check if line starts with binary header and clean it
+            if len(line) > 8 and line[0] in "\x00\x01\x02":
+                lines.append(line[8:])
+            else:
+                lines.append(line)
+        return "\n".join(lines)
+
     async def get_container_stats(
         self, endpoint_id: int, container_id: str
     ) -> dict[str, object]:

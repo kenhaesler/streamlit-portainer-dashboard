@@ -94,6 +94,26 @@ async def _fetch_container_stats(
         return None
 
 
+async def _fetch_container_logs(
+    client, endpoint_id: int, container_id: str, tail: int = 50
+) -> str | None:
+    """Fetch recent logs for a container, with timeout."""
+    try:
+        logs = await asyncio.wait_for(
+            client.get_container_logs(
+                endpoint_id,
+                container_id,
+                tail=tail,
+                timestamps=True,
+            ),
+            timeout=10.0,
+        )
+        return logs if logs and logs.strip() else None
+    except (PortainerAPIError, asyncio.TimeoutError) as exc:
+        LOGGER.debug("Failed to get logs for container %s: %s", container_id, exc)
+        return None
+
+
 async def _build_context() -> str:
     """Build a context string with current infrastructure data."""
     settings = get_settings()
@@ -193,6 +213,33 @@ async def _build_context() -> str:
                         if stats:
                             container_stats[cid] = stats
 
+                # Identify stopped/unhealthy containers that need logs
+                stopped_container_ids: list[tuple[int, str, str]] = []
+                for _, row in df_containers.iterrows():
+                    state = row.get("state", "")
+                    status = row.get("status", "")
+                    cid = row.get("container_id")
+                    ep_id = row.get("endpoint_id")
+                    name = row.get("container_name", "unknown")
+
+                    # Fetch logs for stopped, exited, or unhealthy containers
+                    if cid and ep_id and state in ("exited", "dead", "created"):
+                        stopped_container_ids.append((ep_id, cid, name))
+                    elif cid and ep_id and "unhealthy" in status.lower():
+                        stopped_container_ids.append((ep_id, cid, name))
+
+                # Fetch logs for stopped/unhealthy containers (limit to 5 to avoid timeout)
+                container_logs: dict[str, str] = {}
+                if stopped_container_ids:
+                    logs_tasks = [
+                        _fetch_container_logs(client, ep_id, cid, tail=50)
+                        for ep_id, cid, _ in stopped_container_ids[:5]
+                    ]
+                    logs_results = await asyncio.gather(*logs_tasks)
+                    for (_, cid, _), logs in zip(stopped_container_ids[:5], logs_results):
+                        if logs:
+                            container_logs[cid] = logs
+
                 # Add container details
                 if not df_containers.empty:
                     context_parts.append("\n### Containers:")
@@ -227,6 +274,15 @@ async def _build_context() -> str:
                                     f"  - Memory: {mem_used}MB / {mem_limit}MB ({mem_percent}%)"
                                 )
 
+                        # Add logs for stopped/unhealthy containers
+                        if cid and cid in container_logs:
+                            logs = container_logs[cid]
+                            # Truncate logs to last 20 lines for context
+                            log_lines = logs.strip().split("\n")[-20:]
+                            truncated_logs = "\n".join(log_lines)
+                            context_parts.append(f"  - **Recent Logs:**")
+                            context_parts.append(f"```\n{truncated_logs}\n```")
+
                 # Add stack details
                 if not df_stacks.empty and unique_stacks > 0:
                     context_parts.append("\n### Stacks:")
@@ -252,16 +308,19 @@ async def _build_context() -> str:
 
 def _build_system_prompt(context: str) -> str:
     """Build the system prompt with infrastructure context."""
-    return f"""You are a helpful assistant for managing Portainer infrastructure. You have access to the current state of the infrastructure:
+    return f"""You are a helpful assistant for managing Portainer infrastructure. You have access to the current state of the infrastructure, including container logs for stopped or unhealthy containers:
 
 {context}
 
 When answering questions:
 1. Be concise and direct
 2. Use the provided infrastructure context to answer questions
-3. If you don't have enough information, say so
-4. Format responses with markdown when helpful
-5. For lists of containers or endpoints, use tables when appropriate"""
+3. When a container is stopped or unhealthy, check the "Recent Logs" section for that container to diagnose the issue
+4. Analyze log output to identify errors, exceptions, or failure reasons
+5. If you don't have enough information, say so
+6. Format responses with markdown when helpful
+7. For lists of containers or endpoints, use tables when appropriate
+8. When diagnosing container failures, look for: error messages, stack traces, exit codes, permission issues, missing files, connection failures, or OOM kills"""
 
 
 @router.websocket("/ws/llm/chat")
