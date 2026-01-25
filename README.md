@@ -92,6 +92,11 @@ The application is configured via environment variables:
 - `KIBANA_API_KEY` – Optional. API key sent via the `Authorization: ApiKey <token>` header when querying Kibana. Required when `KIBANA_LOGS_ENDPOINT` is set.
 - `KIBANA_VERIFY_SSL` – Optional. Defaults to `true`. Set to `false` to skip TLS verification when connecting to Kibana with self-signed certificates.
 - `KIBANA_TIMEOUT_SECONDS` – Optional. Request timeout (in seconds) for Kibana log queries. Defaults to 30 seconds when unset or invalid.
+- `MONITORING_ENABLED` – Optional. Defaults to `true`. Set to `false` to disable the AI-powered infrastructure monitoring feature.
+- `MONITORING_INTERVAL_MINUTES` – Optional. How often the monitoring service analyzes infrastructure. Defaults to 5 minutes.
+- `MONITORING_MAX_INSIGHTS_STORED` – Optional. Maximum number of insights to keep in memory. Defaults to 100.
+- `MONITORING_INCLUDE_SECURITY_SCAN` – Optional. Defaults to `true`. Enables scanning for elevated container capabilities.
+- `MONITORING_INCLUDE_IMAGE_CHECK` – Optional. Defaults to `true`. Enables checking for outdated container images.
 
 When `DASHBOARD_AUTH_PROVIDER` is unset or set to `static`, both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be provided. The app blocks access and displays an error until those credentials are configured. When `DASHBOARD_AUTH_PROVIDER=oidc`, configure the matching `DASHBOARD_OIDC_*` variables instead—the dashboard redirects users through the standard authorization-code flow, discovers the provider endpoints via the well-known document, and validates ID tokens against the advertised JWKS before establishing a session.
 
@@ -121,13 +126,11 @@ accent colour is overridden, so the interface remains readable in either mode.
 
 ### Logging
 
-The dashboard configures Python's logging system on import so messages from both the app and its
+The dashboard configures Python's logging system on startup so messages from both the app and its
 dependencies are emitted to the console. Diagnostic output up to `WARNING` is routed to standard
 output, while anything `ERROR` and above is sent to standard error. Set the `DASHBOARD_LOG_LEVEL`
-environment variable (for example `DEBUG` or `TRACE`) to increase verbosity when troubleshooting; the
-value is resolved using the aliases defined in [`app/logging_setup.py`](app/logging_setup.py) so
-common synonyms such as `verbose` are accepted. No additional Streamlit switches are required—logs
-become visible as soon as the app starts.
+environment variable (for example `DEBUG` or `INFO`) to adjust verbosity when troubleshooting.
+No additional switches are required—logs become visible as soon as the app starts.
 
 ### Trusting internal certificate authorities
 
@@ -233,6 +236,23 @@ The **Edge agent logs** page surfaces container logs collected in Kibana/Elastic
 current Portainer filters so you can drill into a specific subset of environments or endpoints before issuing a log
 query. Specify a time window (15 minutes to 24 hours), optional container name or message search term and download the
 results as CSV for further analysis.
+
+### AI Infrastructure Monitor
+
+The **AI Monitor** page provides real-time AI-powered insights about your infrastructure. The monitoring service runs
+in the background every 5 minutes (configurable via `MONITORING_INTERVAL_MINUTES`) and analyzes:
+
+- **Resource usage** – High CPU/memory consumption across containers
+- **Availability** – Unhealthy containers, offline endpoints
+- **Security** – Containers with elevated privileges (NET_ADMIN, SYS_ADMIN, SYS_PTRACE, etc.)
+- **Images** – Outdated container images with available updates
+- **Optimization** – Unused resources and efficiency recommendations
+
+When an LLM endpoint is configured (`LLM_API_ENDPOINT`), the monitoring service uses AI to generate human-readable
+insights with recommended actions. Without an LLM, the service falls back to rule-based analysis.
+
+Insights are delivered in real-time via WebSocket and displayed in the AI Monitor dashboard. Historical insights
+are stored in memory (up to `MONITORING_MAX_INSIGHTS_STORED`) and can be filtered by severity level.
 
 ## Usage
 

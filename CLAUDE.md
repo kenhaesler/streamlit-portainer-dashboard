@@ -2,6 +2,13 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Documentation Sync Reminder
+
+When making significant changes to the codebase (new features, architectural changes, new environment variables), also update:
+- **README.md** - User-facing documentation, configuration options
+- **CONTRIBUTING.md** - Developer guidelines, module paths
+- **AGENTS.md** - AI agent guidelines, project layout
+
 ## Build & Run Commands
 
 ```bash
@@ -44,10 +51,12 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 
 **Backend (src/portainer_dashboard/):**
 - **`main.py`** - FastAPI app factory with lifespan management
-- **`api/v1/`** - REST API endpoints (endpoints, containers, stacks, backup, logs)
+- **`api/v1/`** - REST API endpoints (endpoints, containers, stacks, backup, logs, monitoring)
 - **`auth/`** - Static + OIDC authentication with session management
-- **`services/`** - Portainer client, LLM client, Kibana client, backup service
+- **`services/`** - Portainer client, LLM client, Kibana client, backup service, monitoring service
 - **`websocket/llm_chat.py`** - WebSocket streaming for LLM responses
+- **`websocket/monitoring_insights.py`** - WebSocket for real-time monitoring insights
+- **`scheduler/`** - APScheduler for background monitoring tasks
 - **`config.py`** - Pydantic settings from environment variables
 - **`core/session.py`** - SQLite-backed session storage
 
@@ -103,6 +112,11 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 
 **Kibana:**
 - `KIBANA_LOGS_ENDPOINT`, `KIBANA_API_KEY`
+
+**AI Monitoring:**
+- `MONITORING_ENABLED` - Enable/disable AI monitoring (default: true)
+- `MONITORING_INTERVAL_MINUTES` - Analysis interval (default: 5)
+- `MONITORING_MAX_INSIGHTS_STORED` - Max insights in memory (default: 100)
 
 ## Container Details
 

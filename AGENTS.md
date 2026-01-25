@@ -2,11 +2,28 @@
 
 > Stick to Python best practices whenever possible. For additional guidance, refer to [this best practices guide](https://gist.github.com/ruimaranhao/4e18cbe3dad6f68040c32ed6709090a3).
 
-Welcome! This repository powers the Streamlit Portainer dashboard. Follow these tips when working inside this project:
+Welcome! This repository powers the Streamlit Portainer dashboard with a hybrid FastAPI + Streamlit architecture. Follow these tips when working inside this project:
 
 ## Project layout
-- The Streamlit entry point is `app/Home.py`. Additional pages live under `app/pages/` and shared helpers inside `app/`.
-- Tests reside in the `tests/` package and cover the Portainer client, backup helpers, and LLM integration.
+
+**Backend (FastAPI):**
+- Entry point is `src/portainer_dashboard/main.py`
+- API routes in `src/portainer_dashboard/api/v1/`
+- Services in `src/portainer_dashboard/services/`
+- WebSocket handlers in `src/portainer_dashboard/websocket/`
+- Background scheduler in `src/portainer_dashboard/scheduler/`
+- Configuration in `src/portainer_dashboard/config.py`
+
+**Frontend (Streamlit):**
+- Entry point is `streamlit_ui/Home.py`
+- Additional pages in `streamlit_ui/pages/`
+- Shared helpers in `streamlit_ui/shared.py`
+- API client in `streamlit_ui/api_client.py`
+
+**Tests:**
+- Tests reside in the `tests/` package and cover the Portainer client, backup helpers, LLM integration, and monitoring services.
+
+**Scripts:**
 - Shell utilities live in `scripts/`; the `check_app_starts.sh` script bootstraps the Streamlit server for smoke testing.
 
 ## Development workflow
@@ -23,8 +40,9 @@ Welcome! This repository powers the Streamlit Portainer dashboard. Follow these 
 - When you adjust UI flows or authentication, pair the unit tests with a manual smoke test via `scripts/check_app_starts.sh` to confirm the app still boots and the login flow works as expected.
 
 ## Environment & configuration
-- Streamlit configuration and cached Portainer data live under `.streamlit/`. When your changes touch persistence or caching, verify they respect the `PORTAINER_CACHE_*` variables described in `README.md`.
-- Authentication relies on the `DASHBOARD_USERNAME` and `DASHBOARD_KEY` environment variables. Tests should not depend on real credentials—mock them via `monkeypatch` if necessary.
+- Streamlit configuration lives under `.streamlit/`. Data directories are configured via environment variables.
+- Authentication relies on the `DASHBOARD_USERNAME` and `DASHBOARD_KEY` environment variables (or OIDC). Tests should not depend on real credentials—mock them via `monkeypatch` if necessary.
+- AI Monitoring is configured via `MONITORING_*` environment variables (enabled, interval, max insights).
 
 ## Pull request expectations
 - Update the documentation when you add new environment variables, UI pages, or background jobs.

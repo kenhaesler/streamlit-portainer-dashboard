@@ -6,13 +6,19 @@ Thanks for investing time in improving the Streamlit Portainer dashboard! This p
 
 1. Review the [module boundaries guide](docs/module_boundaries.md) to understand how pages, services, and shared helpers interact.
 2. Skim the existing documentation in `docs/` to see whether your change touches related operational guidance.
-3. Set up a Python 3.12 environment and install the dependencies listed in `requirements.txt`.
+3. Set up a Python 3.14 environment and install the dependencies listed in `requirements.txt`.
+
+## Architecture
+
+This is a hybrid FastAPI + Streamlit dashboard:
+- **Backend:** `src/portainer_dashboard/` - FastAPI application
+- **Frontend:** `streamlit_ui/` - Streamlit UI pages
 
 ## Development tips
 
-- Keep new Streamlit UI in `app/pages/` (or `app/components/` for reusable fragments) and use `app/dashboard_state.py` to coordinate shared state.
-- Place external integrations and background jobs in `app/services/`, ensuring callers interact with the service instead of reimplementing HTTP requests.
-- Extend `app/config/` or `app/settings.py` when introducing new configuration sources so tests and documentation stay consistent.
+- Keep new Streamlit UI in `streamlit_ui/pages/` and use `streamlit_ui/shared.py` for reusable components.
+- Place external integrations and background jobs in `src/portainer_dashboard/services/`, ensuring callers interact with the service instead of reimplementing HTTP requests.
+- Extend `src/portainer_dashboard/config.py` when introducing new configuration sources so tests and documentation stay consistent.
 - Add or update tests under `tests/` when you change behaviour, especially when touching Portainer, Kibana, or LLM integrations.
 
 ## Pull request checklist
