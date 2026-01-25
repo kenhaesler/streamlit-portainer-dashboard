@@ -257,6 +257,10 @@ class MonitoringSettings(BaseSettings):
     max_insights_stored: int = 100
     include_security_scan: bool = True
     include_image_check: bool = True
+    include_log_analysis: bool = True
+    log_tail_lines: int = 100
+    max_containers_for_logs: int = 10
+    log_fetch_timeout: float = 10.0
     elevated_capabilities: list[str] = Field(
         default_factory=lambda: [
             "NET_ADMIN",
