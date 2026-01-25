@@ -1,0 +1,69 @@
+<div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700">
+            <tr>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Reference
+                </th>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Endpoint
+                </th>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Size
+                </th>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Created
+                </th>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Dangling
+                </th>
+            </tr>
+        </thead>
+        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            {% for image in images %}
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <td class="px-6 py-4">
+                    <div class="text-sm font-medium text-gray-900 dark:text-white truncate max-w-[300px]" title="{{ image.reference }}">
+                        {{ image.reference or '<none>' }}
+                    </div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[300px]">
+                        {{ image.image_id[:12] if image.image_id else '-' }}
+                    </div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {{ image.endpoint_name or '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {% if image.size %}
+                    {{ (image.size / 1024 / 1024) | round(1) }} MB
+                    {% else %}
+                    -
+                    {% endif %}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {{ image.created_at or '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    {% if image.dangling %}
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200">
+                        Dangling
+                    </span>
+                    {% else %}
+                    <span class="text-gray-400">-</span>
+                    {% endif %}
+                </td>
+            </tr>
+            {% else %}
+            <tr>
+                <td colspan="5" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                    No images found
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
+    Showing {{ images|length }} images
+</div>

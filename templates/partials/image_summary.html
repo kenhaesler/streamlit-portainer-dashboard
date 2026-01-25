@@ -1,0 +1,18 @@
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Total Images</p>
+        <p class="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">{{ total_images }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Total Size</p>
+        <p class="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">{{ total_size_gb }} GB</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Unique Repos</p>
+        <p class="mt-2 text-3xl font-semibold text-gray-900 dark:text-white">{{ unique_repos }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <p class="text-sm font-medium text-gray-500 dark:text-gray-400">Dangling Images</p>
+        <p class="mt-2 text-3xl font-semibold {% if dangling_count > 0 %}text-yellow-600{% else %}text-gray-900 dark:text-white{% endif %}">{{ dangling_count }}</p>
+    </div>
+</div>

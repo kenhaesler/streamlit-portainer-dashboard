@@ -1,0 +1,55 @@
+<div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead class="bg-gray-50 dark:bg-gray-700">
+            <tr>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Stack Name
+                </th>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Endpoint
+                </th>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Status
+                </th>
+                <th scope="col" class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">
+                    Type
+                </th>
+            </tr>
+        </thead>
+        <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+            {% for stack in stacks %}
+            {% if stack.stack_name %}
+            <tr class="hover:bg-gray-50 dark:hover:bg-gray-700">
+                <td class="px-6 py-4 whitespace-nowrap">
+                    <div class="text-sm font-medium text-gray-900 dark:text-white">{{ stack.stack_name }}</div>
+                    <div class="text-xs text-gray-500 dark:text-gray-400">ID: {{ stack.stack_id }}</div>
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {{ stack.endpoint_name or '-' }}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap">
+                    {% if stack.stack_status == 1 %}
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
+                        Active
+                    </span>
+                    {% else %}
+                    <span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300">
+                        Inactive
+                    </span>
+                    {% endif %}
+                </td>
+                <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+                    {% if stack.stack_type == 1 %}Swarm{% elif stack.stack_type == 2 %}Compose{% else %}{{ stack.stack_type or '-' }}{% endif %}
+                </td>
+            </tr>
+            {% endif %}
+            {% else %}
+            <tr>
+                <td colspan="4" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                    No stacks found
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>

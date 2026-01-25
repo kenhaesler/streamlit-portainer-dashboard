@@ -1,0 +1,70 @@
+[project]
+name = "portainer-dashboard"
+version = "2.0.0"
+description = "FastAPI dashboard for Portainer infrastructure management"
+license = { text = "MIT" }
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "jinja2>=3.1.0",
+    "python-multipart>=0.0.18",
+    "authlib>=1.4.0",
+    "PyJWT>=2.10.0",
+    "apscheduler>=3.11.0",
+    "pandas>=2.3.0",
+    "tenacity>=9.0.0",
+    "filelock>=3.20.0",
+    "itsdangerous>=2.2.0",
+    # Streamlit UI dependencies
+    "streamlit>=1.40.0",
+    "plotly>=5.24.0",
+    "websockets>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.24.0",
+    "pytest-cov>=6.0.0",
+    "httpx[http2]>=0.28.0",
+    "ruff>=0.8.0",
+    "mypy>=1.14.0",
+    "pandas-stubs>=2.2.0",
+]
+
+[project.scripts]
+portainer-dashboard = "portainer_dashboard.main:run"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/portainer_dashboard"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["pandas.*", "plotly.*"]
+ignore_missing_imports = true

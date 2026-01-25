@@ -1,0 +1,188 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Workload Explorer - Portainer Dashboard{% endblock %}
+{% block page_title %}Workload Explorer{% endblock %}
+
+{% block content %}
+<div x-data="workloadExplorer()" class="space-y-6">
+    <!-- KPI Summary Cards -->
+    <div id="workload-summary" hx-get="/partials/workload-summary" hx-trigger="load" hx-swap="innerHTML">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {% for i in range(4) %}
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 animate-pulse">
+                <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4"></div>
+                <div class="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Container Distribution Chart -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-medium text-gray-900 dark:text-white">Container Distribution by Endpoint</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400">Click on a bar to filter the table below</p>
+            </div>
+            <button
+                x-show="selectedEndpoint"
+                @click="clearSelection()"
+                class="px-3 py-1 text-sm bg-red-100 dark:bg-red-900 text-red-700 dark:text-red-300 rounded hover:bg-red-200 dark:hover:bg-red-800 transition-colors"
+            >
+                Clear filter: <span x-text="selectedEndpointName"></span> &times;
+            </button>
+        </div>
+        <div class="p-6 overflow-hidden">
+            <div id="workload-chart" style="height: 300px;" hx-get="/partials/charts/workload-distribution" hx-trigger="load" hx-swap="innerHTML">
+                <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filters -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+        <div class="flex flex-wrap items-center gap-4">
+            <div class="flex-1 min-w-[200px]">
+                <input
+                    type="text"
+                    name="search"
+                    placeholder="Search containers..."
+                    hx-get="/partials/tables/containers"
+                    hx-trigger="keyup changed delay:300ms"
+                    hx-target="#containers-table"
+                    hx-include="[name='state-filter'], [name='endpoint-filter'], [name='include-stopped']"
+                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-portainer-500 focus:border-portainer-500 dark:bg-gray-700 dark:text-white"
+                >
+            </div>
+            <select
+                name="state-filter"
+                hx-get="/partials/tables/containers"
+                hx-trigger="change"
+                hx-target="#containers-table"
+                hx-include="[name='search'], [name='endpoint-filter'], [name='include-stopped']"
+                class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+            >
+                <option value="">All States</option>
+                <option value="running">Running</option>
+                <option value="exited">Exited</option>
+                <option value="paused">Paused</option>
+                <option value="restarting">Restarting</option>
+            </select>
+            <select
+                x-model="selectedEndpoint"
+                @change="filterByEndpoint()"
+                name="endpoint-filter"
+                id="endpoint-filter-select"
+                hx-get="/partials/tables/containers"
+                hx-trigger="change"
+                hx-target="#containers-table"
+                hx-include="[name='search'], [name='state-filter'], [name='include-stopped']"
+                class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+            >
+                <option value="">All Endpoints</option>
+                <!-- Populated by JS from chart data -->
+            </select>
+            <label class="flex items-center">
+                <input
+                    type="checkbox"
+                    name="include-stopped"
+                    value="true"
+                    hx-get="/partials/tables/containers"
+                    hx-trigger="change"
+                    hx-target="#containers-table"
+                    hx-include="[name='search'], [name='state-filter'], [name='endpoint-filter']"
+                    class="rounded border-gray-300 text-portainer-600 focus:ring-portainer-500"
+                    checked
+                >
+                <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Include stopped</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Containers table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">
+                Containers
+                <span x-show="selectedEndpointName" class="text-sm font-normal text-gray-500">
+                    - filtered by <span x-text="selectedEndpointName" class="font-medium text-portainer-600"></span>
+                </span>
+            </h2>
+            <div class="flex items-center gap-2">
+                <span class="htmx-indicator">
+                    <div class="spinner"></div>
+                </span>
+                <button
+                    hx-get="/partials/tables/containers"
+                    hx-target="#containers-table"
+                    hx-swap="innerHTML"
+                    hx-include="[name='search'], [name='state-filter'], [name='endpoint-filter'], [name='include-stopped']"
+                    class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                    Refresh
+                </button>
+            </div>
+        </div>
+        <div id="containers-table" hx-get="/partials/tables/containers?include-stopped=true" hx-trigger="load" hx-swap="innerHTML">
+            <div class="p-6">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(10) %}
+                    <div class="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function workloadExplorer() {
+    return {
+        selectedEndpoint: '',
+        selectedEndpointName: '',
+        endpoints: [],
+
+        init() {
+            // Listen for endpoint selection from chart
+            window.addEventListener('endpoint-selected', (e) => {
+                this.selectEndpoint(e.detail.id, e.detail.name);
+            });
+        },
+
+        selectEndpoint(id, name) {
+            this.selectedEndpoint = id.toString();
+            this.selectedEndpointName = name;
+
+            // Update the dropdown
+            const select = document.getElementById('endpoint-filter-select');
+            if (select) {
+                select.value = this.selectedEndpoint;
+                // Trigger HTMX request
+                htmx.trigger(select, 'change');
+            }
+        },
+
+        clearSelection() {
+            this.selectedEndpoint = '';
+            this.selectedEndpointName = '';
+
+            const select = document.getElementById('endpoint-filter-select');
+            if (select) {
+                select.value = '';
+                htmx.trigger(select, 'change');
+            }
+        },
+
+        filterByEndpoint() {
+            // Update the name when dropdown changes
+            const select = document.getElementById('endpoint-filter-select');
+            if (select && select.selectedIndex > 0) {
+                this.selectedEndpointName = select.options[select.selectedIndex].text;
+            } else {
+                this.selectedEndpointName = '';
+            }
+        }
+    };
+}
+</script>
+{% endblock %}

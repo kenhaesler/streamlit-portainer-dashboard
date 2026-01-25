@@ -1,0 +1,124 @@
+<div id="workload-distribution-chart-container"></div>
+<script>
+(function() {
+    const endpoints = {{ endpoints | tojson }};
+
+    const container = document.getElementById('workload-distribution-chart-container');
+    const parentHeight = container.parentElement.clientHeight || 300;
+
+    if (endpoints.length === 0) {
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; height:${parentHeight}px; color:#9ca3af;">
+                No endpoint data available
+            </div>
+        `;
+        return;
+    }
+
+    // Populate the endpoint filter dropdown
+    const select = document.getElementById('endpoint-filter-select');
+    if (select) {
+        // Clear existing options except the first one
+        while (select.options.length > 1) {
+            select.remove(1);
+        }
+        // Add endpoint options
+        endpoints.forEach(ep => {
+            const option = document.createElement('option');
+            option.value = ep.id;
+            option.text = ep.name + (ep.online ? '' : ' (offline)');
+            select.add(option);
+        });
+    }
+
+    const names = endpoints.map(ep => ep.name);
+    const runningCounts = endpoints.map(ep => ep.running);
+    const stoppedCounts = endpoints.map(ep => ep.stopped);
+    const ids = endpoints.map(ep => ep.id);
+
+    const isDark = document.documentElement.classList.contains('dark');
+    const fontColor = isDark ? '#f3f4f6' : '#1f2937';
+    const gridColor = isDark ? '#374151' : '#e5e7eb';
+
+    const data = [
+        {
+            name: 'Running',
+            x: names,
+            y: runningCounts,
+            type: 'bar',
+            marker: { color: '#10B981' },
+            customdata: ids,
+            hovertemplate: '<b>%{x}</b><br>Running: %{y}<extra></extra>'
+        },
+        {
+            name: 'Stopped',
+            x: names,
+            y: stoppedCounts,
+            type: 'bar',
+            marker: { color: '#6B7280' },
+            customdata: ids,
+            hovertemplate: '<b>%{x}</b><br>Stopped: %{y}<extra></extra>'
+        }
+    ];
+
+    const layout = {
+        height: parentHeight,
+        barmode: 'stack',
+        showlegend: true,
+        legend: {
+            orientation: 'h',
+            x: 0.5,
+            xanchor: 'center',
+            y: 1.02,
+            font: { size: 11 }
+        },
+        xaxis: {
+            tickangle: names.length > 5 ? -45 : 0,
+            tickfont: { size: 11 },
+            showgrid: false
+        },
+        yaxis: {
+            title: { text: 'Containers', font: { size: 11 }, standoff: 10 },
+            tickfont: { size: 11 },
+            gridcolor: gridColor,
+            rangemode: 'tozero'
+        },
+        margin: { t: 30, b: names.length > 5 ? 100 : 50, l: 50, r: 20 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: fontColor },
+        bargap: 0.3,
+        hovermode: 'closest'
+    };
+
+    const config = {
+        responsive: true,
+        displayModeBar: false
+    };
+
+    Plotly.newPlot(container, data, layout, config);
+
+    // Add click handler for interactivity
+    container.on('plotly_click', function(data) {
+        if (data.points && data.points.length > 0) {
+            const point = data.points[0];
+            const endpointId = point.customdata;
+            const endpointName = point.x;
+
+            // Dispatch custom event for Alpine.js to handle
+            window.dispatchEvent(new CustomEvent('endpoint-selected', {
+                detail: { id: endpointId, name: endpointName }
+            }));
+        }
+    });
+
+    // Change cursor on hover
+    container.on('plotly_hover', function() {
+        container.style.cursor = 'pointer';
+    });
+
+    container.on('plotly_unhover', function() {
+        container.style.cursor = 'default';
+    });
+})();
+</script>
