@@ -3,7 +3,31 @@
 <img width="1860" height="1049" alt="image" src="https://github.com/user-attachments/assets/b2200e6e-0d41-423f-b8ee-e67d882b571b" />
 
 
-A streamlit application that pulls information from the Portainer API and visualizes everything.
+A hybrid FastAPI + Streamlit application that pulls information from the Portainer API and visualizes everything. Designed for IT administrators managing Docker infrastructure across distributed environments.
+
+## Features
+
+### Dashboard Pages
+
+- **Home** – KPI overview with endpoint status and container state charts
+- **Workload Explorer** – Container distribution across endpoints with interactive filtering
+- **Fleet Overview** – Edge agent monitoring, stack management, and visual analytics
+- **Container Health** – Health status monitoring, alerts, and detailed container inspection
+- **Image Footprint** – Image distribution analysis with treemap and sunburst visualizations
+- **Settings** – Connection management, backup creation, and restore instructions
+- **LLM Assistant** – AI-powered infrastructure analysis with natural language queries
+- **Edge Agent Logs** – Container log exploration via Kibana/Elasticsearch integration
+- **AI Monitor** – Real-time AI-powered monitoring insights with automated analysis
+- **Container Logs** *(New in v3.0)* – Direct Docker log access via Portainer API
+- **Network Topology** *(New in v3.0)* – Interactive visualization of container network connections
+
+### Quality-of-Life Features (v3.0)
+
+- **Container Environment Variables** – View env vars, networks, mounts, and labels in Container Health
+- **CSV Export** – Download buttons on all data tables for easy reporting
+- **Refresh Buttons** – Manual data refresh available on every page
+- **LLM Log Integration** – Assistant automatically fetches logs for stopped/unhealthy containers to diagnose issues
+- **Backup Restore Documentation** – Clear step-by-step restore instructions in Settings
 
 ## Architecture & contributor docs
 
@@ -229,6 +253,20 @@ captures a compact summary of what was shared with the model.
 the LLM to provide a final answer that reuses the supplied JSON context. The response is displayed alongside the
 plan and downloadable datasets so operators can audit exactly what was sent.
 
+### Container Logs (Direct Docker Access)
+
+The **Container Logs** page provides direct access to Docker container logs via the Portainer API, without requiring
+Kibana/Elasticsearch. This is useful for quick debugging when you need to check why a container stopped or is
+misbehaving:
+
+- Select an endpoint and container from dropdown menus
+- Configure tail lines (100-5000) and time range (15 minutes to 24 hours)
+- Toggle timestamp display
+- Download logs as a text file for offline analysis
+
+The LLM assistant also uses this capability to automatically fetch logs for stopped or unhealthy containers, enabling
+it to diagnose issues when you ask questions like "Why did container X stop?"
+
 ### Edge agent log explorer
 
 The **Edge agent logs** page surfaces container logs collected in Kibana/Elasticsearch. Configure the
@@ -253,6 +291,19 @@ insights with recommended actions. Without an LLM, the service falls back to rul
 
 Insights are delivered in real-time via WebSocket and displayed in the AI Monitor dashboard. Historical insights
 are stored in memory (up to `MONITORING_MAX_INSIGHTS_STORED`) and can be filtered by severity level.
+
+### Network Topology
+
+The **Network Topology** page visualizes container network connections across your infrastructure:
+
+- **Interactive Graph** – Containers displayed as nodes, networks as diamond hubs, with edges showing connections
+- **Color Coding** – Running containers in green, stopped in gray, networks in blue
+- **Filtering** – Filter by endpoint or network name to focus on specific segments
+- **Hover Details** – View container name, endpoint, state, image, and IP addresses
+- **Connections Table** – Tabular view of all network connections with CSV export
+
+This visualization helps identify network isolation issues, understand container communication patterns, and
+document infrastructure topology.
 
 ## Usage
 
