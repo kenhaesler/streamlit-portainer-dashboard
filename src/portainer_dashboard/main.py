@@ -37,6 +37,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     Handles startup and shutdown events for the application.
     """
+    from portainer_dashboard.scheduler import shutdown_scheduler, start_scheduler
+
     settings = get_settings()
     setup_logging(settings)
     LOGGER.info("Starting Portainer Dashboard v%s", __version__)
@@ -49,9 +51,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     LOGGER.info("Auth provider: %s", settings.auth.provider)
     LOGGER.info("Session backend: %s", settings.session.backend)
     LOGGER.info("Cache enabled: %s", settings.cache.enabled)
+    LOGGER.info("AI Monitoring enabled: %s", settings.monitoring.enabled)
+
+    # Start the monitoring scheduler
+    if settings.monitoring.enabled:
+        await start_scheduler()
 
     yield
 
+    # Shutdown the monitoring scheduler
+    shutdown_scheduler(wait=False)
     LOGGER.info("Shutting down Portainer Dashboard")
 
 
@@ -104,11 +113,15 @@ def create_app() -> FastAPI:
     from portainer_dashboard.pages.router import router as pages_router
     from portainer_dashboard.partials.router import router as partials_router
     from portainer_dashboard.websocket.llm_chat import router as websocket_router
+    from portainer_dashboard.websocket.monitoring_insights import (
+        router as monitoring_ws_router,
+    )
 
     app.include_router(auth_router)
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(partials_router, prefix="/partials")
     app.include_router(websocket_router)
+    app.include_router(monitoring_ws_router)
     app.include_router(pages_router)
 
     return app

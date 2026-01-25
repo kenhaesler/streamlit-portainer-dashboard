@@ -244,6 +244,33 @@ class SessionSettings(BaseSettings):
         return Path(v).expanduser()
 
 
+class MonitoringSettings(BaseSettings):
+    """AI monitoring service configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MONITORING_",
+        extra="ignore",
+    )
+
+    enabled: bool = True
+    interval_minutes: int = 5
+    max_insights_stored: int = 100
+    include_security_scan: bool = True
+    include_image_check: bool = True
+    elevated_capabilities: list[str] = Field(
+        default_factory=lambda: [
+            "NET_ADMIN",
+            "SYS_ADMIN",
+            "SYS_PTRACE",
+            "SYS_RAWIO",
+            "SYS_MODULE",
+            "DAC_OVERRIDE",
+            "SETUID",
+            "SETGID",
+        ]
+    )
+
+
 class ServerSettings(BaseSettings):
     """Server configuration."""
 
@@ -270,6 +297,7 @@ class Settings(BaseSettings):
     kibana: KibanaSettings = Field(default_factory=KibanaSettings)
     session: SessionSettings = Field(default_factory=SessionSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
+    monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
 
     @model_validator(mode="after")
     def validate_oidc_when_enabled(self) -> "Settings":
@@ -311,6 +339,7 @@ __all__ = [
     "ConfigurationError",
     "KibanaSettings",
     "LLMSettings",
+    "MonitoringSettings",
     "OIDCSettings",
     "PortainerEnvironmentSettings",
     "PortainerSettings",

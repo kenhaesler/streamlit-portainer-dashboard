@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Annotated
+import math
+from typing import Annotated, Any
 
 from fastapi import APIRouter, HTTPException, Query
 
@@ -18,6 +19,17 @@ from portainer_dashboard.services.portainer_client import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _sanitize_record(record: dict[str, Any]) -> dict[str, Any]:
+    """Replace NaN/inf values with None for Pydantic compatibility."""
+    sanitized = {}
+    for key, value in record.items():
+        if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+            sanitized[key] = None
+        else:
+            sanitized[key] = value
+    return sanitized
 
 router = APIRouter()
 
@@ -69,7 +81,7 @@ async def list_containers(
             continue
 
     df = normalise_endpoint_containers(all_endpoints, containers_by_endpoint)
-    return [Container(**row) for row in df.to_dict("records")]
+    return [Container(**_sanitize_record(row)) for row in df.to_dict("records")]
 
 
 @router.get("/{endpoint_id}/{container_id}", response_model=ContainerDetails)
