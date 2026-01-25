@@ -388,13 +388,20 @@ class DataCollector:
                     )
 
                     for ep in endpoints:
+                        ep_id = int(ep.get("Id") or ep.get("id") or 0)
+                        ep_name = ep.get("Name") or ep.get("name")
                         ep_data = {
-                            "endpoint_id": int(ep.get("Id") or ep.get("id") or 0),
-                            "endpoint_name": ep.get("Name") or ep.get("name"),
+                            "endpoint_id": ep_id,
+                            "endpoint_name": ep_name,
                             "endpoint_status": ep.get("Status") or ep.get("status"),
                             "environment": env.name,
                         }
                         all_endpoints.append(ep_data)
+
+                        # Add endpoint info to containers for remediation lookup
+                        for c in containers_by_endpoint.get(ep_id, []):
+                            c["_endpoint_id"] = ep_id
+                            c["_endpoint_name"] = ep_name
 
             except PortainerAPIError as exc:
                 LOGGER.error(
@@ -431,6 +438,8 @@ class DataCollector:
                 "image": c.get("Image"),
                 "state": c.get("State"),
                 "status": c.get("Status"),
+                "endpoint_id": c.get("_endpoint_id"),
+                "endpoint_name": c.get("_endpoint_name"),
             }
             for c in all_containers
         ]

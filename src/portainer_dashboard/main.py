@@ -38,6 +38,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Handles startup and shutdown events for the application.
     """
     from portainer_dashboard.scheduler import shutdown_scheduler, start_scheduler
+    from portainer_dashboard.core.telemetry import setup_telemetry, shutdown_telemetry
 
     settings = get_settings()
     setup_logging(settings)
@@ -47,17 +48,33 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.cache.directory.mkdir(parents=True, exist_ok=True)
     if settings.session.backend == "sqlite":
         settings.session.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.metrics.enabled:
+        settings.metrics.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.remediation.enabled:
+        settings.remediation.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.tracing.enabled:
+        settings.tracing.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
     LOGGER.info("Auth provider: %s", settings.auth.provider)
     LOGGER.info("Session backend: %s", settings.session.backend)
     LOGGER.info("Cache enabled: %s", settings.cache.enabled)
     LOGGER.info("AI Monitoring enabled: %s", settings.monitoring.enabled)
+    LOGGER.info("Metrics collection enabled: %s", settings.metrics.enabled)
+    LOGGER.info("Remediation enabled: %s", settings.remediation.enabled)
+    LOGGER.info("Tracing enabled: %s", settings.tracing.enabled)
+
+    # Setup distributed tracing
+    if settings.tracing.enabled:
+        await setup_telemetry(app, settings.tracing)
 
     # Start the monitoring scheduler
     if settings.monitoring.enabled:
         await start_scheduler()
 
     yield
+
+    # Shutdown telemetry
+    shutdown_telemetry()
 
     # Shutdown the monitoring scheduler
     shutdown_scheduler(wait=False)
@@ -116,12 +133,16 @@ def create_app() -> FastAPI:
     from portainer_dashboard.websocket.monitoring_insights import (
         router as monitoring_ws_router,
     )
+    from portainer_dashboard.websocket.remediation import (
+        router as remediation_ws_router,
+    )
 
     app.include_router(auth_router)
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(partials_router, prefix="/partials")
     app.include_router(websocket_router)
     app.include_router(monitoring_ws_router)
+    app.include_router(remediation_ws_router)
     app.include_router(pages_router)
 
     return app

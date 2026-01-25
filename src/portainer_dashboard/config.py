@@ -275,6 +275,75 @@ class MonitoringSettings(BaseSettings):
     )
 
 
+class MetricsSettings(BaseSettings):
+    """Time-series metrics collection configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="MONITORING_METRICS_",
+        extra="ignore",
+    )
+
+    enabled: bool = True
+    retention_hours: int = 168  # 7 days
+    collection_interval_seconds: int = 60
+    sqlite_path: Path = Field(default_factory=lambda: PROJECT_ROOT / ".data" / "metrics.db")
+    anomaly_detection_enabled: bool = True
+    zscore_threshold: float = 3.0
+    moving_average_window: int = 30
+    min_samples_for_detection: int = 10
+
+    @field_validator("sqlite_path", mode="before")
+    @classmethod
+    def expand_metrics_path(cls, v: str | Path | None) -> Path:
+        if v is None:
+            return PROJECT_ROOT / ".data" / "metrics.db"
+        return Path(v).expanduser()
+
+
+class RemediationSettings(BaseSettings):
+    """Self-healing remediation action configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="REMEDIATION_",
+        extra="ignore",
+    )
+
+    enabled: bool = True
+    auto_suggest: bool = True  # Auto-generate suggestions from insights
+    max_pending_actions: int = 100
+    action_timeout_seconds: int = 60
+    sqlite_path: Path = Field(default_factory=lambda: PROJECT_ROOT / ".data" / "actions.db")
+
+    @field_validator("sqlite_path", mode="before")
+    @classmethod
+    def expand_actions_path(cls, v: str | Path | None) -> Path:
+        if v is None:
+            return PROJECT_ROOT / ".data" / "actions.db"
+        return Path(v).expanduser()
+
+
+class TracingSettings(BaseSettings):
+    """OpenTelemetry distributed tracing configuration."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="TRACING_",
+        extra="ignore",
+    )
+
+    enabled: bool = True
+    service_name: str = "portainer-dashboard"
+    sqlite_path: Path = Field(default_factory=lambda: PROJECT_ROOT / ".data" / "traces.db")
+    retention_hours: int = 24
+    sample_rate: float = 1.0
+
+    @field_validator("sqlite_path", mode="before")
+    @classmethod
+    def expand_traces_path(cls, v: str | Path | None) -> Path:
+        if v is None:
+            return PROJECT_ROOT / ".data" / "traces.db"
+        return Path(v).expanduser()
+
+
 class ServerSettings(BaseSettings):
     """Server configuration."""
 
@@ -302,6 +371,9 @@ class Settings(BaseSettings):
     session: SessionSettings = Field(default_factory=SessionSettings)
     server: ServerSettings = Field(default_factory=ServerSettings)
     monitoring: MonitoringSettings = Field(default_factory=MonitoringSettings)
+    metrics: MetricsSettings = Field(default_factory=MetricsSettings)
+    remediation: RemediationSettings = Field(default_factory=RemediationSettings)
+    tracing: TracingSettings = Field(default_factory=TracingSettings)
 
     @model_validator(mode="after")
     def validate_oidc_when_enabled(self) -> "Settings":
@@ -343,15 +415,18 @@ __all__ = [
     "ConfigurationError",
     "KibanaSettings",
     "LLMSettings",
+    "MetricsSettings",
     "MonitoringSettings",
     "OIDCSettings",
     "PortainerEnvironmentSettings",
     "PortainerSettings",
     "PROJECT_ROOT",
+    "RemediationSettings",
     "SessionSettings",
     "ServerSettings",
     "Settings",
     "StaticAuthSettings",
+    "TracingSettings",
     "get_settings",
     "reload_settings",
 ]

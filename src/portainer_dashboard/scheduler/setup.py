@@ -25,6 +25,41 @@ _scheduler: AsyncIOScheduler | None = None
 _monitoring_service: MonitoringService | None = None
 
 
+async def _purge_old_metrics() -> None:
+    """Purge old metrics and traces based on retention settings."""
+    settings = get_settings()
+
+    if settings.metrics.enabled:
+        try:
+            from portainer_dashboard.services.metrics_store import get_metrics_store
+            store = await get_metrics_store()
+            deleted = store.purge_old_metrics(settings.metrics.retention_hours)
+            if deleted > 0:
+                LOGGER.info("Purged %d old metrics", deleted)
+        except Exception as exc:
+            LOGGER.warning("Failed to purge old metrics: %s", exc)
+
+    if settings.tracing.enabled:
+        try:
+            from portainer_dashboard.services.trace_store import get_trace_store
+            store = await get_trace_store()
+            deleted = store.purge_old_traces(settings.tracing.retention_hours)
+            if deleted > 0:
+                LOGGER.info("Purged %d old traces", deleted)
+        except Exception as exc:
+            LOGGER.warning("Failed to purge old traces: %s", exc)
+
+    if settings.remediation.enabled:
+        try:
+            from portainer_dashboard.services.actions_store import get_actions_store
+            store = await get_actions_store()
+            deleted = store.purge_old_actions(days=30)
+            if deleted > 0:
+                LOGGER.info("Purged %d old actions", deleted)
+        except Exception as exc:
+            LOGGER.warning("Failed to purge old actions: %s", exc)
+
+
 async def _run_monitoring_job() -> None:
     """Execute the monitoring analysis job."""
     global _monitoring_service
@@ -89,6 +124,17 @@ async def create_scheduler() -> AsyncIOScheduler | None:
         "Scheduled AI monitoring analysis every %d minutes",
         interval_minutes,
     )
+
+    # Add purge job for metrics, traces, and actions (runs every hour)
+    _scheduler.add_job(
+        _purge_old_metrics,
+        trigger=IntervalTrigger(hours=1),
+        id="data_purge",
+        name="Data Retention Purge",
+        replace_existing=True,
+    )
+
+    LOGGER.info("Scheduled data retention purge every hour")
 
     return _scheduler
 

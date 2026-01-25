@@ -189,13 +189,172 @@ class APIClient:
         params = {}
         if environment:
             params["environment"] = environment
-        result = self.post("/api/v1/backup/trigger", params=params)
+        result = self.post("/api/v1/backup/create", params=params)
         return result if isinstance(result, dict) else None
 
     def get_session_status(self) -> dict | None:
         """Get current session status including time remaining."""
         result = self.get("/auth/session")
         return result if isinstance(result, dict) else None
+
+    # Metrics API
+
+    def get_metrics_status(self) -> dict | None:
+        """Get metrics collection status."""
+        result = self.get("/api/v1/metrics/status")
+        return result if isinstance(result, dict) else None
+
+    def get_metrics_dashboard(self) -> dict | None:
+        """Get metrics dashboard overview."""
+        result = self.get("/api/v1/metrics/dashboard")
+        return result if isinstance(result, dict) else None
+
+    def get_container_metrics(
+        self,
+        container_id: str,
+        metric_type: str | None = None,
+        hours: int = 24,
+        limit: int = 1000,
+    ) -> list[dict]:
+        """Get historical metrics for a container."""
+        params = {"hours": str(hours), "limit": str(limit)}
+        if metric_type:
+            params["metric_type"] = metric_type
+        result = self.get(f"/api/v1/metrics/containers/{container_id}", params=params)
+        return result if isinstance(result, list) else []
+
+    def get_container_metrics_summary(
+        self,
+        container_id: str,
+        metric_type: str = "cpu_percent",
+        hours: int = 24,
+    ) -> dict | None:
+        """Get metrics summary for a container."""
+        params = {"metric_type": metric_type, "hours": str(hours)}
+        result = self.get(f"/api/v1/metrics/containers/{container_id}/summary", params=params)
+        return result if isinstance(result, dict) else None
+
+    def get_anomalies(
+        self,
+        hours: int = 24,
+        limit: int = 100,
+        only_anomalies: bool = True,
+    ) -> list[dict]:
+        """Get anomaly detections."""
+        params = {
+            "hours": str(hours),
+            "limit": str(limit),
+            "only_anomalies": str(only_anomalies).lower(),
+        }
+        result = self.get("/api/v1/metrics/anomalies", params=params)
+        return result if isinstance(result, list) else []
+
+    # Remediation API
+
+    def get_remediation_status(self) -> dict | None:
+        """Get remediation service status."""
+        result = self.get("/api/v1/remediation/status")
+        return result if isinstance(result, dict) else None
+
+    def get_pending_actions(self, limit: int = 100) -> list[dict]:
+        """Get pending remediation actions."""
+        result = self.get("/api/v1/remediation/actions/pending", params={"limit": str(limit)})
+        return result if isinstance(result, list) else []
+
+    def get_approved_actions(self, limit: int = 100) -> list[dict]:
+        """Get approved remediation actions."""
+        result = self.get("/api/v1/remediation/actions/approved", params={"limit": str(limit)})
+        return result if isinstance(result, list) else []
+
+    def get_actions_history(
+        self,
+        status: str | None = None,
+        limit: int = 100,
+    ) -> list[dict]:
+        """Get action history."""
+        params: dict[str, str] = {"limit": str(limit)}
+        if status:
+            params["status"] = status
+        result = self.get("/api/v1/remediation/actions/history", params=params)
+        return result if isinstance(result, list) else []
+
+    def get_actions_summary(self) -> dict | None:
+        """Get actions summary statistics."""
+        result = self.get("/api/v1/remediation/actions/summary")
+        return result if isinstance(result, dict) else None
+
+    def approve_action(self, action_id: str, approved_by: str) -> dict | None:
+        """Approve a pending action."""
+        result = self.post(
+            f"/api/v1/remediation/actions/{action_id}/approve",
+            json={"approved_by": approved_by},
+        )
+        return result if isinstance(result, dict) else None
+
+    def reject_action(
+        self, action_id: str, rejected_by: str, reason: str | None = None
+    ) -> dict | None:
+        """Reject a pending action."""
+        payload: dict[str, str | None] = {"rejected_by": rejected_by}
+        if reason:
+            payload["reason"] = reason
+        result = self.post(
+            f"/api/v1/remediation/actions/{action_id}/reject",
+            json=payload,
+        )
+        return result if isinstance(result, dict) else None
+
+    def execute_action(self, action_id: str) -> dict | None:
+        """Execute an approved action."""
+        result = self.post(f"/api/v1/remediation/actions/{action_id}/execute")
+        return result if isinstance(result, dict) else None
+
+    # Traces API
+
+    def get_tracing_status(self) -> dict | None:
+        """Get tracing status."""
+        result = self.get("/api/v1/traces/status")
+        return result if isinstance(result, dict) else None
+
+    def get_traces_summary(self) -> dict | None:
+        """Get traces summary statistics."""
+        result = self.get("/api/v1/traces/summary")
+        return result if isinstance(result, dict) else None
+
+    def list_traces(
+        self,
+        hours: int = 1,
+        limit: int = 100,
+        http_method: str | None = None,
+        http_route: str | None = None,
+        has_errors: bool | None = None,
+    ) -> list[dict]:
+        """List traces with optional filtering."""
+        params: dict[str, str] = {"hours": str(hours), "limit": str(limit)}
+        if http_method:
+            params["http_method"] = http_method
+        if http_route:
+            params["http_route"] = http_route
+        if has_errors is not None:
+            params["has_errors"] = str(has_errors).lower()
+        result = self.get("/api/v1/traces/", params=params)
+        return result if isinstance(result, list) else []
+
+    def get_trace(self, trace_id: str) -> dict | None:
+        """Get a specific trace with all spans."""
+        result = self.get(f"/api/v1/traces/{trace_id}")
+        return result if isinstance(result, dict) else None
+
+    def get_service_map(self, hours: int = 1) -> dict | None:
+        """Get the service dependency map."""
+        result = self.get("/api/v1/traces/service-map", params={"hours": str(hours)})
+        return result if isinstance(result, dict) else None
+
+    def get_route_stats(self, hours: int = 1, limit: int = 50) -> list[dict]:
+        """Get route statistics."""
+        params = {"hours": str(hours), "limit": str(limit)}
+        result = self.get("/api/v1/traces/routes/stats", params=params)
+        return result if isinstance(result, list) else []
 
 
 # Singleton instance

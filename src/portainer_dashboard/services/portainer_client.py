@@ -399,6 +399,79 @@ class AsyncPortainerClient:
             )
         return data
 
+    async def restart_container(
+        self, endpoint_id: int, container_id: str, *, timeout: int = 10
+    ) -> dict[str, object]:
+        """Restart a container.
+
+        Args:
+            endpoint_id: The Portainer endpoint ID.
+            container_id: The container ID or name.
+            timeout: Seconds to wait before killing the container.
+
+        Returns:
+            A dict with success status.
+        """
+        try:
+            response = await self._client.post(
+                f"/endpoints/{endpoint_id}/docker/containers/{container_id}/restart",
+                params={"t": str(timeout)},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PortainerAPIError(f"Failed to restart container: {exc}") from exc
+        return {"success": True, "action": "restart", "container_id": container_id}
+
+    async def start_container(
+        self, endpoint_id: int, container_id: str
+    ) -> dict[str, object]:
+        """Start a stopped container.
+
+        Args:
+            endpoint_id: The Portainer endpoint ID.
+            container_id: The container ID or name.
+
+        Returns:
+            A dict with success status.
+        """
+        try:
+            response = await self._client.post(
+                f"/endpoints/{endpoint_id}/docker/containers/{container_id}/start",
+            )
+            # 304 means container is already started
+            if response.status_code == 304:
+                return {"success": True, "action": "start", "container_id": container_id, "note": "already running"}
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PortainerAPIError(f"Failed to start container: {exc}") from exc
+        return {"success": True, "action": "start", "container_id": container_id}
+
+    async def stop_container(
+        self, endpoint_id: int, container_id: str, *, timeout: int = 10
+    ) -> dict[str, object]:
+        """Stop a running container.
+
+        Args:
+            endpoint_id: The Portainer endpoint ID.
+            container_id: The container ID or name.
+            timeout: Seconds to wait before killing the container.
+
+        Returns:
+            A dict with success status.
+        """
+        try:
+            response = await self._client.post(
+                f"/endpoints/{endpoint_id}/docker/containers/{container_id}/stop",
+                params={"t": str(timeout)},
+            )
+            # 304 means container is already stopped
+            if response.status_code == 304:
+                return {"success": True, "action": "stop", "container_id": container_id, "note": "already stopped"}
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PortainerAPIError(f"Failed to stop container: {exc}") from exc
+        return {"success": True, "action": "stop", "container_id": container_id}
+
 
 def create_portainer_client(
     env: PortainerEnvironmentSettings,
