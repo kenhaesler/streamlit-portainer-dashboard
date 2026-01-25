@@ -1,0 +1,68 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Image Footprint - Portainer Dashboard{% endblock %}
+{% block page_title %}Image Footprint{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Summary cards -->
+    <div id="image-summary" hx-get="/partials/image-summary" hx-trigger="load" hx-swap="innerHTML">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {% for i in range(4) %}
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 animate-pulse">
+                <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4"></div>
+                <div class="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Image size chart -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 overflow-hidden">
+        <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Image Size Distribution (Top 10)</h2>
+        <div id="image-size-chart" style="height: 380px;" hx-get="/partials/charts/image-sizes" hx-trigger="load" hx-swap="innerHTML">
+            <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+        </div>
+    </div>
+
+    <!-- Images table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <div class="flex flex-wrap items-center gap-4">
+                <h2 class="text-lg font-medium text-gray-900 dark:text-white">Images</h2>
+                <div class="flex-1"></div>
+                <input
+                    type="text"
+                    name="search"
+                    placeholder="Search images..."
+                    hx-get="/partials/tables/images"
+                    hx-trigger="keyup changed delay:300ms"
+                    hx-target="#images-table"
+                    class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm dark:bg-gray-700 dark:text-white"
+                >
+                <label class="flex items-center">
+                    <input
+                        type="checkbox"
+                        name="show-dangling"
+                        hx-get="/partials/tables/images"
+                        hx-trigger="change"
+                        hx-target="#images-table"
+                        hx-include="[name='search']"
+                        class="rounded border-gray-300 text-portainer-600 focus:ring-portainer-500"
+                    >
+                    <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Show dangling only</span>
+                </label>
+            </div>
+        </div>
+        <div id="images-table" hx-get="/partials/tables/images" hx-trigger="load" hx-swap="innerHTML">
+            <div class="p-6">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(10) %}
+                    <div class="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

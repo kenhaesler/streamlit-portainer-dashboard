@@ -1,0 +1,62 @@
+<div id="image-sizes-chart-container"></div>
+<script>
+(function() {
+    const images = {{ images | tojson }};
+
+    const container = document.getElementById('image-sizes-chart-container');
+    const parentHeight = container.parentElement.clientHeight || 380;
+
+    if (images.length === 0) {
+        container.innerHTML = `
+            <div style="display:flex; align-items:center; justify-content:center; height:${parentHeight}px; color:#9ca3af;">
+                No image data available
+            </div>
+        `;
+        return;
+    }
+
+    // Truncate long image names and reverse for display
+    const labels = images.map(img => {
+        const name = img.name;
+        return name.length > 25 ? name.substring(0, 22) + '...' : name;
+    }).reverse();
+    const sizes = images.map(img => img.size_mb).reverse();
+
+    const data = [{
+        y: labels,
+        x: sizes,
+        type: 'bar',
+        orientation: 'h',
+        marker: {
+            color: '#6366f1'
+        },
+        hovertemplate: '%{y}: %{x} MB<extra></extra>'
+    }];
+
+    const isDark = document.documentElement.classList.contains('dark');
+    const fontColor = isDark ? '#f3f4f6' : '#1f2937';
+    const gridColor = isDark ? '#374151' : '#e5e7eb';
+
+    const layout = {
+        height: parentHeight,
+        xaxis: {
+            title: { text: 'Size (MB)', font: { size: 12 } },
+            tickfont: { size: 11 },
+            gridcolor: gridColor
+        },
+        yaxis: {
+            tickfont: { size: 10 },
+            automargin: true
+        },
+        margin: { t: 10, b: 40, l: 150, r: 20 },
+        paper_bgcolor: 'transparent',
+        plot_bgcolor: 'transparent',
+        font: { color: fontColor },
+        bargap: 0.2
+    };
+
+    const config = { responsive: true, displayModeBar: false };
+
+    Plotly.newPlot(container, data, layout, config);
+})();
+</script>

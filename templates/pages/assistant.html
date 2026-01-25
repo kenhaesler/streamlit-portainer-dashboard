@@ -1,0 +1,327 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}LLM Assistant - Portainer Dashboard{% endblock %}
+{% block page_title %}LLM Assistant{% endblock %}
+
+{% block content %}
+{% if not llm_configured %}
+<div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6">
+    <div class="flex">
+        <svg class="h-6 w-6 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <div class="ml-3">
+            <h3 class="text-lg font-medium text-yellow-800 dark:text-yellow-200">LLM Not Configured</h3>
+            <p class="mt-2 text-yellow-700 dark:text-yellow-300">
+                To use the LLM assistant, configure the following environment variables:
+            </p>
+            <ul class="mt-2 list-disc list-inside text-yellow-700 dark:text-yellow-300">
+                <li>LLM_API_ENDPOINT - The LLM API endpoint URL</li>
+                <li>LLM_BEARER_TOKEN - (Optional) Authentication token</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% else %}
+
+<!-- Markdown styles for LLM responses -->
+<style>
+.markdown-content h1, .markdown-content h2, .markdown-content h3, .markdown-content h4 {
+    font-weight: 600;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+}
+.markdown-content h1 { font-size: 1.5rem; }
+.markdown-content h2 { font-size: 1.25rem; }
+.markdown-content h3 { font-size: 1.1rem; }
+.markdown-content p { margin-bottom: 0.5rem; }
+.markdown-content ul, .markdown-content ol {
+    margin-left: 1.5rem;
+    margin-bottom: 0.5rem;
+}
+.markdown-content ul { list-style-type: disc; }
+.markdown-content ol { list-style-type: decimal; }
+.markdown-content li { margin-bottom: 0.25rem; }
+.markdown-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.5rem 0;
+    font-size: 0.875rem;
+}
+.markdown-content th, .markdown-content td {
+    border: 1px solid #d1d5db;
+    padding: 0.5rem 0.75rem;
+    text-align: left;
+}
+.dark .markdown-content th, .dark .markdown-content td {
+    border-color: #4b5563;
+}
+.markdown-content th {
+    background-color: #f3f4f6;
+    font-weight: 600;
+}
+.dark .markdown-content th {
+    background-color: #374151;
+}
+.markdown-content code {
+    background-color: #f3f4f6;
+    padding: 0.125rem 0.25rem;
+    border-radius: 0.25rem;
+    font-size: 0.875rem;
+}
+.dark .markdown-content code {
+    background-color: #374151;
+}
+.markdown-content pre {
+    background-color: #1f2937;
+    color: #f3f4f6;
+    padding: 1rem;
+    border-radius: 0.5rem;
+    overflow-x: auto;
+    margin: 0.5rem 0;
+}
+.markdown-content pre code {
+    background-color: transparent;
+    padding: 0;
+}
+.markdown-content blockquote {
+    border-left: 4px solid #d1d5db;
+    padding-left: 1rem;
+    margin: 0.5rem 0;
+    color: #6b7280;
+}
+.dark .markdown-content blockquote {
+    border-color: #4b5563;
+    color: #9ca3af;
+}
+.markdown-content strong { font-weight: 600; }
+.markdown-content em { font-style: italic; }
+.markdown-content a {
+    color: #2563eb;
+    text-decoration: underline;
+}
+.dark .markdown-content a {
+    color: #60a5fa;
+}
+</style>
+
+<!-- Include marked.js for markdown parsing -->
+<script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+
+<div
+    x-data="llmChat()"
+    x-init="connect()"
+    class="flex flex-col h-[calc(100vh-12rem)]"
+>
+    <!-- Chat messages -->
+    <div
+        x-ref="chatContainer"
+        class="flex-1 overflow-y-auto bg-white dark:bg-gray-800 rounded-lg shadow p-4 space-y-4"
+    >
+        <template x-for="message in messages" :key="message.id">
+            <div :class="message.role === 'user' ? 'flex justify-end' : 'flex justify-start'">
+                <div
+                    :class="message.role === 'user'
+                        ? 'bg-portainer-600 text-white'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white'"
+                    class="max-w-[80%] rounded-lg px-4 py-2"
+                >
+                    <!-- User messages as plain text -->
+                    <p x-show="message.role === 'user'" class="whitespace-pre-wrap" x-text="message.content"></p>
+                    <!-- Assistant messages as markdown -->
+                    <div x-show="message.role === 'assistant'" class="markdown-content" x-html="renderMarkdown(message.content)"></div>
+                </div>
+            </div>
+        </template>
+
+        <!-- Streaming message -->
+        <div x-show="streamingMessage" class="flex justify-start">
+            <div class="bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-white max-w-[80%] rounded-lg px-4 py-2">
+                <div class="markdown-content" x-html="renderMarkdown(streamingMessage)"></div>
+                <span class="inline-block w-2 h-4 bg-gray-400 animate-pulse ml-1"></span>
+            </div>
+        </div>
+
+        <!-- Empty state -->
+        <div x-show="messages.length === 0 && !streamingMessage" class="text-center py-12">
+            <svg class="mx-auto h-12 w-12 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+            </svg>
+            <h3 class="mt-2 text-sm font-medium text-gray-900 dark:text-white">No messages yet</h3>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                Ask me anything about your Portainer infrastructure!
+            </p>
+            <div class="mt-4 space-y-2">
+                <p class="text-xs text-gray-400">Example questions:</p>
+                <div class="flex flex-wrap justify-center gap-2">
+                    <button
+                        @click="sendMessage('How many containers are running?')"
+                        class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600"
+                    >
+                        How many containers are running?
+                    </button>
+                    <button
+                        @click="sendMessage('Show me unhealthy containers')"
+                        class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600"
+                    >
+                        Show me unhealthy containers
+                    </button>
+                    <button
+                        @click="sendMessage('Which endpoints are offline?')"
+                        class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 dark:hover:bg-gray-600"
+                    >
+                        Which endpoints are offline?
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Input area -->
+    <div class="mt-4 bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+        <form @submit.prevent="sendMessage(inputMessage)" class="flex gap-4">
+            <input
+                x-model="inputMessage"
+                type="text"
+                placeholder="Ask about your infrastructure..."
+                :disabled="isLoading"
+                class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-portainer-500 focus:border-portainer-500 dark:bg-gray-700 dark:text-white disabled:opacity-50"
+            >
+            <button
+                type="submit"
+                :disabled="isLoading || !inputMessage.trim()"
+                class="px-6 py-2 bg-portainer-600 text-white rounded-lg hover:bg-portainer-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+            >
+                <span x-show="!isLoading">Send</span>
+                <span x-show="isLoading" class="flex items-center">
+                    <div class="spinner mr-2"></div>
+                    Thinking...
+                </span>
+            </button>
+        </form>
+
+        <!-- Connection status -->
+        <div class="mt-2 flex items-center text-sm">
+            <span
+                :class="connected ? 'bg-green-500' : 'bg-red-500'"
+                class="w-2 h-2 rounded-full mr-2"
+            ></span>
+            <span x-text="connected ? 'Connected' : 'Disconnected'" class="text-gray-500 dark:text-gray-400"></span>
+        </div>
+    </div>
+</div>
+
+<script>
+function llmChat() {
+    return {
+        ws: null,
+        connected: false,
+        messages: [],
+        inputMessage: '',
+        streamingMessage: '',
+        isLoading: false,
+        messageId: 0,
+
+        renderMarkdown(content) {
+            if (!content) return '';
+            try {
+                // Configure marked for GFM (GitHub Flavored Markdown) with tables
+                marked.setOptions({
+                    gfm: true,
+                    breaks: true,
+                    tables: true
+                });
+                return marked.parse(content);
+            } catch (e) {
+                console.error('Markdown parse error:', e);
+                return content;
+            }
+        },
+
+        connect() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/llm/chat`;
+
+            this.ws = new WebSocket(wsUrl);
+
+            this.ws.onopen = () => {
+                this.connected = true;
+                console.log('WebSocket connected');
+            };
+
+            this.ws.onclose = () => {
+                this.connected = false;
+                console.log('WebSocket disconnected');
+                // Attempt to reconnect after 3 seconds
+                setTimeout(() => this.connect(), 3000);
+            };
+
+            this.ws.onerror = (error) => {
+                console.error('WebSocket error:', error);
+            };
+
+            this.ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+
+                if (data.type === 'chunk') {
+                    this.streamingMessage += data.content;
+                    this.scrollToBottom();
+                } else if (data.type === 'done') {
+                    if (this.streamingMessage) {
+                        this.messages.push({
+                            id: ++this.messageId,
+                            role: 'assistant',
+                            content: this.streamingMessage
+                        });
+                        this.streamingMessage = '';
+                    }
+                    this.isLoading = false;
+                    this.scrollToBottom();
+                } else if (data.type === 'error') {
+                    this.messages.push({
+                        id: ++this.messageId,
+                        role: 'assistant',
+                        content: `Error: ${data.content}`
+                    });
+                    this.streamingMessage = '';
+                    this.isLoading = false;
+                }
+            };
+        },
+
+        sendMessage(content) {
+            if (!content.trim() || !this.connected || this.isLoading) return;
+
+            this.messages.push({
+                id: ++this.messageId,
+                role: 'user',
+                content: content.trim()
+            });
+
+            this.inputMessage = '';
+            this.isLoading = true;
+            this.streamingMessage = '';
+
+            this.ws.send(JSON.stringify({
+                messages: this.messages.map(m => ({
+                    role: m.role,
+                    content: m.content
+                }))
+            }));
+
+            this.scrollToBottom();
+        },
+
+        scrollToBottom() {
+            this.$nextTick(() => {
+                const container = this.$refs.chatContainer;
+                if (container) {
+                    container.scrollTop = container.scrollHeight;
+                }
+            });
+        }
+    };
+}
+</script>
+{% endif %}
+{% endblock %}
