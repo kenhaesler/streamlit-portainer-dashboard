@@ -1,0 +1,83 @@
+{% extends "layouts/public.html" %}
+
+{% block title %}Login - Portainer Dashboard{% endblock %}
+
+{% block heading %}Sign in to your account{% endblock %}
+{% block subheading %}Infrastructure management dashboard{% endblock %}
+
+{% block content %}
+{% if error %}
+<div class="mb-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-4">
+    <div class="flex">
+        <svg class="h-5 w-5 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p class="ml-3 text-sm text-red-700 dark:text-red-300">{{ error }}</p>
+    </div>
+</div>
+{% endif %}
+
+{% if settings.auth.provider == 'static' %}
+<form action="/auth/login" method="POST" class="space-y-6">
+    <input type="hidden" name="next" value="{{ next_url }}">
+
+    <div>
+        <label for="username" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Username
+        </label>
+        <div class="mt-1">
+            <input
+                id="username"
+                name="username"
+                type="text"
+                autocomplete="username"
+                required
+                class="appearance-none block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-portainer-500 focus:border-portainer-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+            >
+        </div>
+    </div>
+
+    <div>
+        <label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-300">
+            Password
+        </label>
+        <div class="mt-1">
+            <input
+                id="password"
+                name="password"
+                type="password"
+                autocomplete="current-password"
+                required
+                class="appearance-none block w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm placeholder-gray-400 focus:outline-none focus:ring-portainer-500 focus:border-portainer-500 sm:text-sm dark:bg-gray-700 dark:text-white"
+            >
+        </div>
+    </div>
+
+    <div>
+        <button
+            type="submit"
+            class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-portainer-600 hover:bg-portainer-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portainer-500 transition-colors"
+        >
+            Sign in
+        </button>
+    </div>
+</form>
+
+{% elif settings.auth.provider == 'oidc' %}
+<div class="space-y-6">
+    <p class="text-sm text-gray-500 dark:text-gray-400 text-center">
+        Sign in with your organization's identity provider
+    </p>
+
+    <a
+        href="/auth/oidc/login?next={{ next_url }}"
+        class="w-full flex justify-center py-2 px-4 border border-transparent rounded-md shadow-sm text-sm font-medium text-white bg-portainer-600 hover:bg-portainer-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-portainer-500 transition-colors"
+    >
+        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/>
+        </svg>
+        Sign in with SSO
+    </a>
+</div>
+{% endif %}
+{% endblock %}

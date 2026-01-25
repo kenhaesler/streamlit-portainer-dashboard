@@ -1,0 +1,110 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Fleet Overview - Portainer Dashboard{% endblock %}
+{% block page_title %}Fleet Overview{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Filters -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+        <div class="flex flex-wrap items-center gap-4">
+            <div class="flex-1 min-w-[200px]">
+                <input
+                    type="text"
+                    id="search-endpoints"
+                    placeholder="Search endpoints..."
+                    hx-get="/partials/tables/endpoints"
+                    hx-trigger="keyup changed delay:300ms"
+                    hx-target="#endpoints-table"
+                    hx-include="[name='status-filter']"
+                    name="search"
+                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-portainer-500 focus:border-portainer-500 dark:bg-gray-700 dark:text-white"
+                >
+            </div>
+            <select
+                name="status-filter"
+                hx-get="/partials/tables/endpoints"
+                hx-trigger="change"
+                hx-target="#endpoints-table"
+                hx-include="[name='search']"
+                class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-portainer-500 focus:border-portainer-500 dark:bg-gray-700 dark:text-white"
+            >
+                <option value="">All Status</option>
+                <option value="1">Online</option>
+                <option value="2">Offline</option>
+            </select>
+            <button
+                hx-get="/partials/tables/endpoints"
+                hx-target="#endpoints-table"
+                hx-swap="innerHTML"
+                class="px-4 py-2 bg-portainer-600 text-white rounded-md hover:bg-portainer-700 transition-colors"
+            >
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <!-- Tabs -->
+    <div x-data="{ activeTab: 'endpoints' }" class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="border-b border-gray-200 dark:border-gray-700">
+            <nav class="flex -mb-px">
+                <button
+                    @click="activeTab = 'endpoints'"
+                    :class="activeTab === 'endpoints' ? 'border-portainer-500 text-portainer-600 dark:text-portainer-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="py-4 px-6 border-b-2 font-medium text-sm transition-colors"
+                >
+                    Edge Agents
+                </button>
+                <button
+                    @click="activeTab = 'stacks'"
+                    :class="activeTab === 'stacks' ? 'border-portainer-500 text-portainer-600 dark:text-portainer-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="py-4 px-6 border-b-2 font-medium text-sm transition-colors"
+                >
+                    Stacks
+                </button>
+                <button
+                    @click="activeTab = 'charts'"
+                    :class="activeTab === 'charts' ? 'border-portainer-500 text-portainer-600 dark:text-portainer-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'"
+                    class="py-4 px-6 border-b-2 font-medium text-sm transition-colors"
+                >
+                    Charts
+                </button>
+            </nav>
+        </div>
+
+        <!-- Endpoints Tab -->
+        <div x-show="activeTab === 'endpoints'" class="p-6">
+            <div id="endpoints-table" hx-get="/partials/tables/endpoints" hx-trigger="load" hx-swap="innerHTML">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(10) %}
+                    <div class="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Stacks Tab -->
+        <div x-show="activeTab === 'stacks'" x-cloak class="p-6">
+            <div id="stacks-table" hx-get="/partials/tables/stacks" hx-trigger="revealed" hx-swap="innerHTML">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(10) %}
+                    <div class="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+
+        <!-- Charts Tab -->
+        <div x-show="activeTab === 'charts'" x-cloak class="p-6">
+            <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div id="status-chart" class="h-80" hx-get="/partials/charts/endpoint-status" hx-trigger="revealed" hx-swap="innerHTML">
+                    <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+                </div>
+                <div id="version-chart" class="h-80" hx-get="/partials/charts/agent-versions" hx-trigger="revealed" hx-swap="innerHTML">
+                    <div class="h-full bg-gray-100 dark:bg-gray-700 rounded animate-pulse"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

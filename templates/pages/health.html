@@ -1,0 +1,68 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Container Health - Portainer Dashboard{% endblock %}
+{% block page_title %}Container Health{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Health summary cards -->
+    <div id="health-summary" hx-get="/partials/health-summary" hx-trigger="load" hx-swap="innerHTML">
+        <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {% for i in range(4) %}
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 animate-pulse">
+                <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4"></div>
+                <div class="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Alerts section -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">Health Alerts</h2>
+            <span class="htmx-indicator">
+                <div class="spinner"></div>
+            </span>
+        </div>
+        <div id="health-alerts" hx-get="/partials/health-alerts" hx-trigger="load" hx-swap="innerHTML" class="p-6">
+            <div class="animate-pulse space-y-4">
+                {% for i in range(5) %}
+                <div class="h-16 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Container health table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <div class="flex flex-wrap items-center gap-4">
+                <h2 class="text-lg font-medium text-gray-900 dark:text-white">Container Status</h2>
+                <div class="flex-1"></div>
+                <select
+                    name="health-filter"
+                    hx-get="/partials/tables/container-health"
+                    hx-trigger="change"
+                    hx-target="#container-health-table"
+                    class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm text-sm dark:bg-gray-700 dark:text-white"
+                >
+                    <option value="">All Health Status</option>
+                    <option value="healthy">Healthy</option>
+                    <option value="unhealthy">Unhealthy</option>
+                    <option value="none">No Health Check</option>
+                </select>
+            </div>
+        </div>
+        <div id="container-health-table" hx-get="/partials/tables/container-health" hx-trigger="load" hx-swap="innerHTML">
+            <div class="p-6">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(10) %}
+                    <div class="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

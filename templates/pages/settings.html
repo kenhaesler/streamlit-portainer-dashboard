@@ -1,0 +1,143 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Settings - Portainer Dashboard{% endblock %}
+{% block page_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Environments -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">Portainer Environments</h2>
+        </div>
+        <div class="p-6">
+            <div class="space-y-4">
+                {% for env in environments %}
+                <div class="flex items-center justify-between p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+                    <div>
+                        <h3 class="font-medium text-gray-900 dark:text-white">{{ env.name }}</h3>
+                        <p class="text-sm text-gray-500 dark:text-gray-400">{{ env.api_url }}</p>
+                    </div>
+                    <div class="flex items-center space-x-2">
+                        <span class="px-2 py-1 text-xs rounded-full {% if env.verify_ssl %}bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200{% else %}bg-yellow-100 text-yellow-800 dark:bg-yellow-900 dark:text-yellow-200{% endif %}">
+                            {% if env.verify_ssl %}SSL Verified{% else %}SSL Disabled{% endif %}
+                        </span>
+                    </div>
+                </div>
+                {% else %}
+                <p class="text-gray-500 dark:text-gray-400">No environments configured.</p>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
+    <!-- Backup -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">Backup</h2>
+        </div>
+        <div class="p-6">
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                Create a backup of your Portainer configuration. The backup includes all settings, stacks, and configurations.
+            </p>
+            <form
+                hx-post="/api/v1/backup/create"
+                hx-target="#backup-result"
+                hx-swap="innerHTML"
+                class="space-y-4"
+            >
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        Backup Password (optional)
+                    </label>
+                    <input
+                        type="password"
+                        name="password"
+                        placeholder="Enter password to encrypt backup"
+                        class="w-full max-w-md px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+                    >
+                </div>
+                <button
+                    type="submit"
+                    class="px-4 py-2 bg-portainer-600 text-white rounded-md hover:bg-portainer-700 transition-colors"
+                >
+                    Create Backup
+                </button>
+            </form>
+            <div id="backup-result" class="mt-4"></div>
+
+            <!-- Recent backups -->
+            <div class="mt-6">
+                <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Recent Backups</h3>
+                <div id="backup-list" hx-get="/partials/backup-list" hx-trigger="load" hx-swap="innerHTML">
+                    <div class="animate-pulse space-y-2">
+                        {% for i in range(3) %}
+                        <div class="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                        {% endfor %}
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Cache -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">Cache</h2>
+        </div>
+        <div class="p-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <p class="text-sm text-gray-600 dark:text-gray-400">
+                        Cache Status: <span class="font-medium {% if settings.cache.enabled %}text-green-600 dark:text-green-400{% else %}text-gray-600{% endif %}">
+                            {% if settings.cache.enabled %}Enabled{% else %}Disabled{% endif %}
+                        </span>
+                    </p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">
+                        TTL: {{ settings.cache.ttl_seconds }} seconds
+                    </p>
+                </div>
+                <button
+                    hx-post="/api/v1/cache/clear"
+                    hx-swap="none"
+                    hx-on::after-request="alert('Cache cleared successfully')"
+                    class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 transition-colors"
+                >
+                    Clear Cache
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- System Info -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">System Information</h2>
+        </div>
+        <div class="p-6">
+            <dl class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Auth Provider</dt>
+                    <dd class="mt-1 text-sm text-gray-900 dark:text-white">{{ settings.auth.provider }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Session Backend</dt>
+                    <dd class="mt-1 text-sm text-gray-900 dark:text-white">{{ settings.session.backend }}</dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">LLM Configured</dt>
+                    <dd class="mt-1 text-sm text-gray-900 dark:text-white">
+                        {% if settings.llm.api_endpoint %}Yes{% else %}No{% endif %}
+                    </dd>
+                </div>
+                <div>
+                    <dt class="text-sm font-medium text-gray-500 dark:text-gray-400">Kibana Configured</dt>
+                    <dd class="mt-1 text-sm text-gray-900 dark:text-white">
+                        {% if settings.kibana.is_configured %}Yes{% else %}No{% endif %}
+                    </dd>
+                </div>
+            </dl>
+        </div>
+    </div>
+</div>
+{% endblock %}

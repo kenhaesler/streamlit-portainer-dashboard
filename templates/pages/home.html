@@ -1,0 +1,105 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Home - Portainer Dashboard{% endblock %}
+{% block page_title %}Dashboard{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Environment selector -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h2 class="text-lg font-medium text-gray-900 dark:text-white mb-4">Environment Selection</h2>
+        <div class="flex flex-wrap gap-2">
+            {% for env in environments %}
+            <button
+                hx-get="/partials/metrics?environment={{ env.name }}"
+                hx-target="#metrics-container"
+                hx-swap="innerHTML"
+                class="px-4 py-2 rounded-md text-sm font-medium transition-colors
+                       {% if selected_environment == env.name %}
+                       bg-portainer-600 text-white
+                       {% else %}
+                       bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-gray-700 dark:text-gray-300 dark:hover:bg-gray-600
+                       {% endif %}"
+            >
+                {{ env.name }}
+            </button>
+            {% else %}
+            <p class="text-gray-500 dark:text-gray-400">No environments configured</p>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Metrics cards -->
+    <div id="metrics-container" hx-get="/partials/metrics" hx-trigger="load" hx-swap="innerHTML">
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            {% for i in range(4) %}
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 animate-pulse">
+                <div class="h-4 bg-gray-200 dark:bg-gray-700 rounded w-1/2 mb-4"></div>
+                <div class="h-8 bg-gray-200 dark:bg-gray-700 rounded w-1/3"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Quick actions -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <a href="/fleet" class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
+            <div class="flex items-center">
+                <div class="p-3 rounded-full bg-blue-100 dark:bg-blue-900">
+                    <svg class="w-6 h-6 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"/>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-white">Fleet Overview</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">View all edge agents and stacks</p>
+                </div>
+            </div>
+        </a>
+
+        <a href="/health" class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
+            <div class="flex items-center">
+                <div class="p-3 rounded-full bg-green-100 dark:bg-green-900">
+                    <svg class="w-6 h-6 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-white">Container Health</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">Monitor container status and alerts</p>
+                </div>
+            </div>
+        </a>
+
+        <a href="/assistant" class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 hover:shadow-lg transition-shadow">
+            <div class="flex items-center">
+                <div class="p-3 rounded-full bg-purple-100 dark:bg-purple-900">
+                    <svg class="w-6 h-6 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"/>
+                    </svg>
+                </div>
+                <div class="ml-4">
+                    <h3 class="text-lg font-medium text-gray-900 dark:text-white">LLM Assistant</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400">Ask questions about your infrastructure</p>
+                </div>
+            </div>
+        </a>
+    </div>
+
+    <!-- Recent activity -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">Recent Containers</h2>
+        </div>
+        <div id="recent-containers" hx-get="/partials/tables/recent-containers" hx-trigger="load" hx-swap="innerHTML">
+            <div class="p-6">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(5) %}
+                    <div class="h-10 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

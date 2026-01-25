@@ -1,0 +1,102 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Edge Agent Logs - Portainer Dashboard{% endblock %}
+{% block page_title %}Edge Agent Logs{% endblock %}
+
+{% block content %}
+{% if not kibana_configured %}
+<div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-6">
+    <div class="flex">
+        <svg class="h-6 w-6 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"/>
+        </svg>
+        <div class="ml-3">
+            <h3 class="text-lg font-medium text-yellow-800 dark:text-yellow-200">Kibana Not Configured</h3>
+            <p class="mt-2 text-yellow-700 dark:text-yellow-300">
+                To view edge agent logs, configure the following environment variables:
+            </p>
+            <ul class="mt-2 list-disc list-inside text-yellow-700 dark:text-yellow-300">
+                <li>KIBANA_LOGS_ENDPOINT - The Kibana/Elasticsearch endpoint URL</li>
+                <li>KIBANA_API_KEY - API key for authentication</li>
+            </ul>
+        </div>
+    </div>
+</div>
+{% else %}
+<div class="space-y-6">
+    <!-- Filters -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+        <form hx-get="/partials/logs" hx-target="#logs-container" hx-swap="innerHTML" class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Hostname</label>
+                    <select
+                        name="hostname"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+                        hx-get="/partials/endpoint-hostnames"
+                        hx-trigger="load"
+                        hx-swap="innerHTML"
+                    >
+                        <option value="">Select endpoint...</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Container</label>
+                    <input
+                        type="text"
+                        name="container"
+                        placeholder="Container name (optional)"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+                    >
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Time Range</label>
+                    <select
+                        name="time_range"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+                    >
+                        <option value="15m">Last 15 minutes</option>
+                        <option value="1h" selected>Last 1 hour</option>
+                        <option value="6h">Last 6 hours</option>
+                        <option value="24h">Last 24 hours</option>
+                        <option value="7d">Last 7 days</option>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Search</label>
+                    <input
+                        type="text"
+                        name="search"
+                        placeholder="Search logs..."
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+                    >
+                </div>
+            </div>
+            <div class="flex justify-end">
+                <button
+                    type="submit"
+                    class="px-4 py-2 bg-portainer-600 text-white rounded-md hover:bg-portainer-700 transition-colors"
+                >
+                    Fetch Logs
+                </button>
+            </div>
+        </form>
+    </div>
+
+    <!-- Logs container -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">Log Entries</h2>
+            <span class="htmx-indicator">
+                <div class="spinner"></div>
+            </span>
+        </div>
+        <div id="logs-container" class="p-6">
+            <p class="text-gray-500 dark:text-gray-400 text-center py-12">
+                Select an endpoint and click "Fetch Logs" to view log entries.
+            </p>
+        </div>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

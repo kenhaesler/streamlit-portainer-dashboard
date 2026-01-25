@@ -10,14 +10,18 @@ ENV PATH="/app/venv/bin:$PATH"
 WORKDIR /app
 
 RUN python -m venv /app/venv
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
 
-COPY .streamlit ./.streamlit
-COPY app ./app
+# Install dependencies from pyproject.toml
+COPY pyproject.toml .
+RUN pip install --no-cache-dir .
 
-# Ensure the Streamlit configuration directory is writable by the runtime user
-RUN chown -R 65532:65532 ./.streamlit
+# Copy application source
+COPY src ./src
+COPY templates ./templates
+COPY static ./static
+
+# Create data directory for sessions/cache and set ownership
+RUN mkdir -p /app/data && chown -R 65532:65532 /app/data
 
 # --- Runtime stage (3.14, DHI nonroot image) ---
 FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
@@ -26,15 +30,25 @@ ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/venv/bin:$PATH"
 
+# Default configuration
+ENV DASHBOARD_SESSION_BACKEND=sqlite
+ENV DASHBOARD_SESSION_DB_PATH=/app/data/sessions.db
+ENV PORTAINER_CACHE_DIR=/app/data/cache
+
 WORKDIR /app
 
 COPY --from=build-stage /app/venv /app/venv
-COPY --from=build-stage /app/app /app/app
-# Guarantee the runtime user owns the Streamlit configuration directory
-COPY --from=build-stage --chown=65532:65532 /app/.streamlit /app/.streamlit
+COPY --from=build-stage /app/src /app/src
+COPY --from=build-stage /app/templates /app/templates
+COPY --from=build-stage /app/static /app/static
+COPY --from=build-stage --chown=65532:65532 /app/data /app/data
 
-EXPOSE 8501
+# Switch to non-root user
+USER 65532
+
+EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
-    CMD ["python", "-c", "import sys, urllib.request, urllib.error; url='http://127.0.0.1:8501/_stcore/health';\ntry:\n    sys.exit(0 if urllib.request.urlopen(url, timeout=5).getcode() == 200 else 1)\nexcept urllib.error.URLError:\n    sys.exit(1)\n"]
-ENTRYPOINT ["python", "-m", "streamlit", "run", "app/Home.py", "--server.port=8501", "--server.address=0.0.0.0"]
+    CMD ["python", "-c", "import sys, urllib.request, urllib.error; url='http://127.0.0.1:8000/health';\ntry:\n    sys.exit(0 if urllib.request.urlopen(url, timeout=5).getcode() == 200 else 1)\nexcept urllib.error.URLError:\n    sys.exit(1)\n"]
+
+ENTRYPOINT ["python", "-m", "uvicorn", "portainer_dashboard.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -1,0 +1,97 @@
+{% extends "layouts/authenticated.html" %}
+
+{% block title %}Workload Explorer - Portainer Dashboard{% endblock %}
+{% block page_title %}Workload Explorer{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Filters -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+        <div class="flex flex-wrap items-center gap-4">
+            <div class="flex-1 min-w-[200px]">
+                <input
+                    type="text"
+                    name="search"
+                    placeholder="Search containers..."
+                    hx-get="/partials/tables/containers"
+                    hx-trigger="keyup changed delay:300ms"
+                    hx-target="#containers-table"
+                    hx-include="[name='state-filter'], [name='endpoint-filter']"
+                    class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm focus:ring-portainer-500 focus:border-portainer-500 dark:bg-gray-700 dark:text-white"
+                >
+            </div>
+            <select
+                name="state-filter"
+                hx-get="/partials/tables/containers"
+                hx-trigger="change"
+                hx-target="#containers-table"
+                hx-include="[name='search'], [name='endpoint-filter']"
+                class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+            >
+                <option value="">All States</option>
+                <option value="running">Running</option>
+                <option value="exited">Exited</option>
+                <option value="paused">Paused</option>
+                <option value="restarting">Restarting</option>
+            </select>
+            <select
+                name="endpoint-filter"
+                hx-get="/partials/tables/containers"
+                hx-trigger="change"
+                hx-target="#containers-table"
+                hx-include="[name='search'], [name='state-filter']"
+                class="px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md shadow-sm dark:bg-gray-700 dark:text-white"
+            >
+                <option value="">All Endpoints</option>
+            </select>
+            <label class="flex items-center">
+                <input
+                    type="checkbox"
+                    name="include-stopped"
+                    hx-get="/partials/tables/containers"
+                    hx-trigger="change"
+                    hx-target="#containers-table"
+                    hx-include="[name='search'], [name='state-filter'], [name='endpoint-filter']"
+                    class="rounded border-gray-300 text-portainer-600 focus:ring-portainer-500"
+                >
+                <span class="ml-2 text-sm text-gray-700 dark:text-gray-300">Include stopped</span>
+            </label>
+        </div>
+    </div>
+
+    <!-- Containers table -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h2 class="text-lg font-medium text-gray-900 dark:text-white">Containers</h2>
+            <div class="flex items-center gap-2">
+                <span class="htmx-indicator">
+                    <div class="spinner"></div>
+                </span>
+                <button
+                    hx-get="/partials/tables/containers"
+                    hx-target="#containers-table"
+                    hx-swap="innerHTML"
+                    class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                    Refresh
+                </button>
+                <button
+                    hx-get="/api/v1/containers?format=csv"
+                    class="px-3 py-1 text-sm bg-gray-100 dark:bg-gray-700 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                    Export CSV
+                </button>
+            </div>
+        </div>
+        <div id="containers-table" hx-get="/partials/tables/containers" hx-trigger="load" hx-swap="innerHTML">
+            <div class="p-6">
+                <div class="animate-pulse space-y-4">
+                    {% for i in range(10) %}
+                    <div class="h-12 bg-gray-200 dark:bg-gray-700 rounded"></div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
