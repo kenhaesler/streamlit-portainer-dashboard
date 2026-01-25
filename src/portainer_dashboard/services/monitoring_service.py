@@ -37,11 +37,20 @@ Focus on:
 2. Availability: Unhealthy containers, offline endpoints, degraded services
 3. Security: Elevated privileges, dangerous capabilities, privileged containers
 4. Images: Outdated images with available updates
-5. Optimization: Unused resources, potential improvements
+5. Logs: Error patterns in container logs (exceptions, connection failures, OOM, crashes)
+6. Optimization: Unused resources, potential improvements
+
+When analyzing container logs, look for:
+- Exception stack traces and error messages
+- Connection failures (connection refused, timeout, reset)
+- Out of memory (OOM) errors or memory pressure
+- Repeated restart loops or crash patterns
+- Authentication/authorization failures
+- Database connection issues
 
 For each issue found, provide:
 - severity: "critical", "warning", "info", or "optimization"
-- category: "resource", "security", "availability", "image", or "optimization"
+- category: "resource", "security", "availability", "image", "logs", or "optimization"
 - title: Brief descriptive title
 - description: Detailed explanation of the issue
 - affected_resources: List of affected container/endpoint names
@@ -58,6 +67,14 @@ Example response format:
     "description": "Container 'my-app' is running with NET_ADMIN capability which allows network configuration changes",
     "affected_resources": ["my-app"],
     "recommended_action": "Remove NET_ADMIN capability unless required for network debugging"
+  },
+  {
+    "severity": "critical",
+    "category": "logs",
+    "title": "Out of memory errors detected",
+    "description": "Container 'worker' shows OOM killer activity in logs, indicating memory exhaustion",
+    "affected_resources": ["worker"],
+    "recommended_action": "Increase memory limits or investigate memory leaks in the application"
   }
 ]"""
 
@@ -110,6 +127,31 @@ def _build_analysis_prompt(snapshot: InfrastructureSnapshot) -> str:
             status = c.get("status") or ""
             if "unhealthy" in status.lower():
                 parts.append(f"- {c.get('container_name')}: {status}")
+
+    if snapshot.container_logs:
+        parts.append("\n## Container Logs for Analysis")
+        parts.append(
+            f"Logs collected from {len(snapshot.container_logs)} problematic container(s):"
+        )
+        for log_entry in snapshot.container_logs:
+            parts.append(f"\n### Container: {log_entry.container_name}")
+            parts.append(f"Endpoint: {log_entry.endpoint_name}")
+            parts.append(f"State: {log_entry.state}")
+            if log_entry.exit_code is not None:
+                parts.append(f"Exit Code: {log_entry.exit_code}")
+            parts.append(f"Log lines: {log_entry.log_lines}")
+            if log_entry.truncated:
+                parts.append("(logs truncated)")
+            # Limit log content to avoid overwhelming the LLM
+            log_content = log_entry.logs
+            if len(log_content) > 3000:
+                log_content = log_content[-3000:]
+                parts.append("Recent log output (truncated to last 3000 chars):")
+            else:
+                parts.append("Recent log output:")
+            parts.append("```")
+            parts.append(log_content)
+            parts.append("```")
 
     return "\n".join(parts)
 
@@ -226,6 +268,80 @@ def _generate_fallback_insights(snapshot: InfrastructureSnapshot) -> list[Monito
             )
         )
 
+    # Analyze container logs for common error patterns
+    for log_entry in snapshot.container_logs:
+        logs_lower = log_entry.logs.lower()
+
+        # Check for OOM errors
+        if "out of memory" in logs_lower or "oom" in logs_lower or "killed" in logs_lower:
+            insights.append(
+                MonitoringInsight(
+                    severity=InsightSeverity.CRITICAL,
+                    category="logs",
+                    title=f"Memory issues detected in {log_entry.container_name}",
+                    description=(
+                        f"Container {log_entry.container_name} on endpoint {log_entry.endpoint_name} "
+                        f"shows signs of memory exhaustion (OOM) in logs."
+                    ),
+                    affected_resources=[log_entry.container_name],
+                    recommended_action="Increase container memory limits or investigate memory leaks",
+                )
+            )
+            continue  # Skip other checks for this container
+
+        # Check for connection errors
+        if any(
+            pattern in logs_lower
+            for pattern in ["connection refused", "connection reset", "connection timed out", "econnrefused"]
+        ):
+            insights.append(
+                MonitoringInsight(
+                    severity=InsightSeverity.WARNING,
+                    category="logs",
+                    title=f"Connection errors in {log_entry.container_name}",
+                    description=(
+                        f"Container {log_entry.container_name} on endpoint {log_entry.endpoint_name} "
+                        f"shows connection failures in logs. State: {log_entry.state}"
+                    ),
+                    affected_resources=[log_entry.container_name],
+                    recommended_action="Check network connectivity and dependent service availability",
+                )
+            )
+            continue
+
+        # Check for restarting containers
+        if log_entry.state == "restarting":
+            insights.append(
+                MonitoringInsight(
+                    severity=InsightSeverity.WARNING,
+                    category="logs",
+                    title=f"Container {log_entry.container_name} is restarting",
+                    description=(
+                        f"Container {log_entry.container_name} on endpoint {log_entry.endpoint_name} "
+                        f"is in a restart loop. Check logs for crash reasons."
+                    ),
+                    affected_resources=[log_entry.container_name],
+                    recommended_action="Investigate crash cause in logs and fix underlying issue",
+                )
+            )
+            continue
+
+        # Check for non-zero exit codes
+        if log_entry.state == "exited_error" and log_entry.exit_code is not None:
+            insights.append(
+                MonitoringInsight(
+                    severity=InsightSeverity.WARNING,
+                    category="logs",
+                    title=f"Container {log_entry.container_name} exited with error",
+                    description=(
+                        f"Container {log_entry.container_name} on endpoint {log_entry.endpoint_name} "
+                        f"exited with code {log_entry.exit_code}."
+                    ),
+                    affected_resources=[log_entry.container_name],
+                    recommended_action="Review logs to identify the cause of the error exit",
+                )
+            )
+
     return insights
 
 
@@ -302,6 +418,7 @@ class MonitoringService:
             containers_analyzed=snapshot.containers_running + snapshot.containers_stopped,
             security_issues_found=len(snapshot.security_issues),
             outdated_images_found=len(snapshot.outdated_images),
+            containers_with_logs_analyzed=len(snapshot.container_logs),
         )
 
         await self.insights_store.add_report(report)
