@@ -104,6 +104,28 @@ class AssistantTurn:
     results_payload: Mapping[str, Any] | None = None
 
 
+# Context length presets for better UX
+CONTEXT_PRESETS: dict[str, dict[str, Any]] = {
+    "Concise (512 tokens)": {"tokens": 512, "description": "Brief answers, quick insights"},
+    "Standard (1024 tokens)": {"tokens": 1024, "description": "Balanced detail and speed"},
+    "Detailed (2048 tokens)": {"tokens": 2048, "description": "Thorough explanations"},
+    "Extended (4096 tokens)": {"tokens": 4096, "description": "In-depth analysis"},
+    "Maximum (8192 tokens)": {"tokens": 8192, "description": "Comprehensive reports"},
+}
+
+
+def _estimate_tokens(text: str) -> int:
+    """Estimate token count using character-based heuristic (roughly 4 chars per token)."""
+    return max(1, len(text) // 4)
+
+
+def _format_token_count(tokens: int) -> str:
+    """Format token count with K suffix for readability."""
+    if tokens >= 1000:
+        return f"{tokens / 1000:.1f}K"
+    return str(tokens)
+
+
 
 
 
@@ -244,6 +266,26 @@ def _build_data_hub(filters: Mapping[str, pd.DataFrame]) -> LLMDataHub:
     return LLMDataHub(tables, max_rows_per_request=1000)
 
 
+def _trim_history(
+    history: Sequence[AssistantTurn],
+    max_turns: int = 5,
+    max_tokens: int = 4000,
+) -> Sequence[AssistantTurn]:
+    """Trim conversation history to fit within token budget while keeping recent context."""
+    if not history:
+        return []
+    # Start with most recent turns and work backwards
+    trimmed: list[AssistantTurn] = []
+    total_tokens = 0
+    for turn in reversed(history):
+        turn_tokens = _estimate_tokens(turn.question) + _estimate_tokens(turn.answer)
+        if len(trimmed) >= max_turns or total_tokens + turn_tokens > max_tokens:
+            break
+        trimmed.insert(0, turn)
+        total_tokens += turn_tokens
+    return trimmed
+
+
 def _build_research_prompt(
     question: str,
     catalog_json: str,
@@ -262,16 +304,17 @@ def _build_research_prompt(
         }
     ]
     if history:
-        trimmed = history[-3:]
+        trimmed = _trim_history(history, max_turns=3, max_tokens=2000)
         summary_lines = [
             f"Earlier question: {turn.question}\nEarlier answer: {turn.answer}" for turn in trimmed
         ]
-        messages.append(
-            {
-                "role": "system",
-                "content": "\n\n".join(summary_lines),
-            }
-        )
+        if summary_lines:
+            messages.append(
+                {
+                    "role": "system",
+                    "content": "\n\n".join(summary_lines),
+                }
+            )
     messages.append(
         {
             "role": "user",
@@ -305,7 +348,7 @@ def _build_answer_prompt(
         }
     ]
     if history:
-        trimmed = history[-3:]
+        trimmed = _trim_history(history, max_turns=5, max_tokens=4000)
         for turn in trimmed:
             messages.extend(
                 [
@@ -536,23 +579,38 @@ with assistant_tab:
             value=float(st.session_state.get("llm_temperature", 0.2)),
             help="Lower values keep the answer focused on the supplied telemetry.",
         )
-        max_tokens = st.slider(
-            "Maximum answer length",
-            min_value=256,
-            max_value=max_tokens_limit,
-            value=int(st.session_state.get("llm_max_tokens", 1024)),
-            step=256,
+        # Filter presets based on max_tokens_limit from environment
+        available_presets = {
+            name: preset
+            for name, preset in CONTEXT_PRESETS.items()
+            if preset["tokens"] <= max_tokens_limit
+        }
+        if not available_presets:
+            available_presets = {"Standard (1024 tokens)": CONTEXT_PRESETS["Standard (1024 tokens)"]}
+
+        preset_names = list(available_presets.keys())
+        saved_tokens = int(st.session_state.get("llm_max_tokens", 1024))
+        # Find the preset that matches saved tokens, or default to Standard
+        default_preset = "Standard (1024 tokens)"
+        for name, preset in available_presets.items():
+            if preset["tokens"] == saved_tokens:
+                default_preset = name
+                break
+
+        default_index = preset_names.index(default_preset) if default_preset in preset_names else 0
+        selected_preset = st.selectbox(
+            "Response length",
+            options=preset_names,
+            index=default_index,
+            help="Controls how detailed the assistant's response will be.",
         )
+        max_tokens = available_presets[selected_preset]["tokens"]
+        st.caption(f"_{available_presets[selected_preset]['description']}_")
+
         if invalid_max_tokens_limit:
             st.warning(
                 f"{LLM_MAX_TOKENS_ENV_VAR} must be set to an integer; using the default limit of "
                 f"{DEFAULT_MAX_TOKENS_LIMIT:,} tokens."
-            )
-        if max_tokens > LARGE_CONTEXT_WARNING_THRESHOLD:
-            st.warning(
-                "This answer length exceeds 32k tokens. Ensure your model and infrastructure can handle "
-                "large responses and plan for longer runtimes.",
-                icon="⚠️",
             )
         verify_ssl = st.toggle(
             "Require HTTPS certificates",
@@ -571,29 +629,24 @@ with assistant_tab:
     st.markdown(
         "#### What would you like to investigate?"
     )
-    question = st.text_area(
-        "Question",
-        value="",
-        placeholder="e.g. Why are pods in production restarting?",
-    )
-    max_requests = st.slider(
-        "How many dataset requests may the LLM make?",
-        min_value=1,
-        max_value=6,
-        value=int(st.session_state.get("llm_max_requests", 3)),
-        help="Higher values allow deeper dives at the cost of longer response times.",
-    )
-    submit = st.button("Analyse with AI", width="stretch", key="llm_assistant_submit")
 
-    for turn in conversation:
-        with st.chat_message("user"):
-            st.markdown(turn.question)
-        with st.chat_message("assistant"):
-            if turn.plan:
-                st.caption("Data gathering plan")
-                st.markdown(turn.plan)
-            st.markdown(turn.answer)
+    # Use a form to batch input and prevent multiple clicks issue
+    with st.form("llm_question_form", clear_on_submit=True):
+        question = st.text_area(
+            "Question",
+            value="",
+            placeholder="e.g. Why are pods in production restarting?",
+        )
+        max_requests = st.slider(
+            "How many dataset requests may the LLM make?",
+            min_value=1,
+            max_value=6,
+            value=int(st.session_state.get("llm_max_requests", 3)),
+            help="Higher values allow deeper dives at the cost of longer response times.",
+        )
+        submit = st.form_submit_button("Analyse with AI", use_container_width=True)
 
+    # Process submission first, before displaying conversation
     if submit:
         cleaned_question = question.strip()
         endpoint_clean = api_endpoint.strip()
@@ -678,14 +731,14 @@ with assistant_tab:
                 else:
                     answer = answer.strip()
             if answer:
-                turn = AssistantTurn(
+                new_turn = AssistantTurn(
                     question=cleaned_question,
                     answer=answer,
                     plan=plan.plan if plan else plan_text,
                     datasets=executed_requests,
                     results_payload=results_payload,
                 )
-                conversation.append(turn)
+                conversation.append(new_turn)
                 st.session_state["llm_assistant_turns"] = conversation
                 st.session_state["llm_api_endpoint"] = endpoint_clean
                 st.session_state["llm_model"] = model_name
@@ -696,10 +749,39 @@ with assistant_tab:
                 st.session_state["llm_max_tokens"] = max_tokens
                 st.session_state["llm_verify_ssl"] = verify_ssl
                 st.session_state["llm_max_requests"] = max_requests
-                st.rerun()
+
+    # Display conversation history with newest first
+    if conversation:
+        st.markdown("---")
+        st.markdown("### Conversation History")
+        for turn in reversed(conversation):
+            with st.chat_message("assistant"):
+                st.markdown(turn.answer)
+                if turn.datasets:
+                    with st.expander(f"Data queried ({len(turn.datasets)} request{'s' if len(turn.datasets) != 1 else ''})"):
+                        for req in turn.datasets:
+                            st.markdown(f"**{req.table}**" + (f": {req.description}" if req.description else ""))
+                            if req.filters:
+                                st.caption(f"Filters: `{req.filters}`")
+            with st.chat_message("user"):
+                st.markdown(turn.question)
 
 with data_tab:
     st.markdown("### Tables available to the assistant")
+    # Show context size estimation
+    catalog_tokens = _estimate_tokens(catalog_payload)
+    overview_tokens = _estimate_tokens(overview_json)
+    total_context_tokens = catalog_tokens + overview_tokens
+    context_cols = st.columns(3)
+    context_cols[0].metric("Catalog size", f"~{_format_token_count(catalog_tokens)} tokens")
+    context_cols[1].metric("Overview size", f"~{_format_token_count(overview_tokens)} tokens")
+    context_cols[2].metric("Base context", f"~{_format_token_count(total_context_tokens)} tokens")
+    if total_context_tokens > 16000:
+        st.warning(
+            "Large context detected. Consider applying more sidebar filters to reduce data size, "
+            "or ensure your model has a sufficient context window.",
+            icon="⚠️",
+        )
     st.json(catalog)
     for table_name in catalog.keys():
         table_obj = hub.get_table(table_name)
@@ -714,5 +796,11 @@ with data_tab:
         st.dataframe(table_obj.dataframe, hide_index=True, width="stretch")
 
 if conversation and conversation[-1].results_payload:
-    st.markdown("### Last analysis payload sent to the model")
-    st.json(conversation[-1].results_payload)
+    with st.expander("Last analysis payload sent to the model", expanded=False):
+        results_data = conversation[-1].results_payload
+        if isinstance(results_data, Mapping) and "results" in results_data:
+            for result in results_data["results"]:
+                table_name = result.get("label", result.get("table", "Unknown"))
+                record_count = len(result.get("records", []))
+                st.markdown(f"**{table_name}**: {record_count} record{'s' if record_count != 1 else ''}")
+        st.json(results_data)
