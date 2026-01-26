@@ -322,6 +322,18 @@ class MonitoringSettings(BaseSettings):
             "SETGID",
         ]
     )
+    excluded_containers_raw: str = Field(
+        default="portainer,sysdig-host-shield,traefik,portainer_edge_agent",
+        validation_alias="MONITORING_EXCLUDED_CONTAINERS",
+        description="Comma-separated container name patterns to exclude from monitoring (infrastructure containers that run privileged)",
+    )
+
+    @property
+    def excluded_containers(self) -> list[str]:
+        """Return list of container names to exclude from monitoring."""
+        if not self.excluded_containers_raw:
+            return ["portainer", "sysdig-host-shield", "traefik", "portainer_edge_agent"]
+        return [name.strip() for name in self.excluded_containers_raw.split(",") if name.strip()]
 
     @field_validator("enabled", "include_security_scan", "include_image_check", "include_log_analysis", mode="before")
     @classmethod
@@ -356,7 +368,6 @@ class MonitoringSettings(BaseSettings):
         if isinstance(v, float):
             return v
         return float(v)
-
 
 class MetricsSettings(BaseSettings):
     """Time-series metrics collection configuration."""

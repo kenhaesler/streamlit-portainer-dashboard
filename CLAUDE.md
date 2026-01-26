@@ -117,6 +117,7 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 - `MONITORING_ENABLED` - Enable/disable AI monitoring (default: true)
 - `MONITORING_INTERVAL_MINUTES` - Analysis interval (default: 5)
 - `MONITORING_MAX_INSIGHTS_STORED` - Max insights in memory (default: 100)
+- `MONITORING_EXCLUDED_CONTAINERS` - Comma-separated container names to exclude from monitoring (default: portainer,sysdig-host-shield,traefik,portainer_edge_agent)
 
 ## Container Details
 
