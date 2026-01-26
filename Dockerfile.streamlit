@@ -1,12 +1,12 @@
 # Streamlit Frontend Dockerfile
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 WORKDIR /app
 
 # Install system dependencies
 # libsqlite3-0 updated to fix CVE-2025-7709 (integer overflow in FTS5 extension)
+# Note: curl removed to reduce vulnerabilities; using Python-based health check instead
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
     libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
@@ -33,9 +33,9 @@ USER streamlit
 # Expose Streamlit port
 EXPOSE 8502
 
-# Health check
+# Health check (using Python instead of curl to reduce vulnerabilities)
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
-    CMD curl -f http://localhost:8502/_stcore/health || exit 1
+    CMD ["python", "-c", "import sys, urllib.request, urllib.error; url='http://127.0.0.1:8502/_stcore/health';\ntry:\n    sys.exit(0 if urllib.request.urlopen(url, timeout=5).getcode() == 200 else 1)\nexcept urllib.error.URLError:\n    sys.exit(1)\n"]
 
 # Run Streamlit
 CMD ["streamlit", "run", "Home.py", "--server.port=8502", "--server.address=0.0.0.0", "--server.headless=true"]
