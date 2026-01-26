@@ -209,7 +209,7 @@ class PortainerCacheService:
     async def _fetch_containers(
         self, *, include_stopped: bool = False
     ) -> list[dict[str, Any]]:
-        """Fetch all containers from Portainer."""
+        """Fetch all containers from Portainer with parallel endpoint fetching."""
         settings = get_settings()
         environments = settings.portainer.get_configured_environments()
 
@@ -224,22 +224,37 @@ class PortainerCacheService:
             try:
                 async with client:
                     endpoints = await client.list_all_endpoints()
+                    all_endpoints.extend(endpoints)
 
-                    for ep in endpoints:
+                    # Parallel fetch containers for all endpoints
+                    async def fetch_containers_for_endpoint(ep: dict) -> tuple[int, list[dict]]:
                         ep_id = int(ep.get("Id") or ep.get("id") or 0)
-                        all_endpoints.append(ep)
                         try:
                             containers = await client.list_containers_for_endpoint(
                                 ep_id, include_stopped=include_stopped
                             )
-                            containers_by_endpoint[ep_id] = containers
+                            return ep_id, containers
                         except PortainerAPIError as exc:
                             LOGGER.debug(
                                 "Failed to fetch containers for endpoint %d: %s",
                                 ep_id,
                                 exc,
                             )
-                            containers_by_endpoint[ep_id] = []
+                            return ep_id, []
+
+                    # Fetch containers in parallel using asyncio.gather
+                    results = await asyncio.gather(
+                        *[fetch_containers_for_endpoint(ep) for ep in endpoints],
+                        return_exceptions=True
+                    )
+
+                    for result in results:
+                        if isinstance(result, Exception):
+                            LOGGER.debug("Container fetch error: %s", result)
+                            continue
+                        ep_id, containers = result
+                        containers_by_endpoint[ep_id] = containers
+
             except PortainerAPIError as exc:
                 LOGGER.error("Failed to fetch from %s: %s", env.name, exc)
                 continue
@@ -248,7 +263,7 @@ class PortainerCacheService:
         return df.to_dict("records")
 
     async def _fetch_stacks(self) -> list[dict[str, Any]]:
-        """Fetch all stacks from Portainer."""
+        """Fetch all stacks from Portainer with parallel endpoint fetching."""
         settings = get_settings()
         environments = settings.portainer.get_configured_environments()
 
@@ -263,20 +278,35 @@ class PortainerCacheService:
             try:
                 async with client:
                     endpoints = await client.list_all_endpoints()
+                    all_endpoints.extend(endpoints)
 
-                    for ep in endpoints:
+                    # Parallel fetch stacks for all endpoints
+                    async def fetch_stacks_for_endpoint(ep: dict) -> tuple[int, list[dict]]:
                         ep_id = int(ep.get("Id") or ep.get("id") or 0)
-                        all_endpoints.append(ep)
                         try:
                             stacks = await client.list_stacks_for_endpoint(ep_id)
-                            stacks_by_endpoint[ep_id] = stacks
+                            return ep_id, stacks
                         except PortainerAPIError as exc:
                             LOGGER.debug(
                                 "Failed to fetch stacks for endpoint %d: %s",
                                 ep_id,
                                 exc,
                             )
-                            stacks_by_endpoint[ep_id] = []
+                            return ep_id, []
+
+                    # Fetch stacks in parallel using asyncio.gather
+                    results = await asyncio.gather(
+                        *[fetch_stacks_for_endpoint(ep) for ep in endpoints],
+                        return_exceptions=True
+                    )
+
+                    for result in results:
+                        if isinstance(result, Exception):
+                            LOGGER.debug("Stack fetch error: %s", result)
+                            continue
+                        ep_id, stacks = result
+                        stacks_by_endpoint[ep_id] = stacks
+
             except PortainerAPIError as exc:
                 LOGGER.error("Failed to fetch from %s: %s", env.name, exc)
                 continue

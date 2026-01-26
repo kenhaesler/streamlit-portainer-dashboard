@@ -139,28 +139,44 @@ async def _build_context() -> str:
                     f"Total endpoints: {len(endpoints)} ({online_count} online, {offline_count} offline)"
                 )
 
-                # Get containers for each endpoint
-                all_endpoints: list[dict] = []
+                # Get containers and stacks for each endpoint in parallel
+                all_endpoints: list[dict] = list(endpoints[:10])  # Limit to first 10 endpoints for context
                 containers_by_endpoint: dict[int, list[dict]] = {}
                 stacks_by_endpoint: dict[int, list[dict]] = {}
 
-                for ep in endpoints[:10]:  # Limit to first 10 endpoints for context
+                async def fetch_endpoint_data(ep: dict) -> tuple[int, list[dict], list[dict]]:
+                    """Fetch containers and stacks for a single endpoint."""
                     ep_id = int(ep.get("Id") or ep.get("id") or 0)
-                    all_endpoints.append(ep)
+                    containers: list[dict] = []
+                    stacks: list[dict] = []
 
                     try:
                         containers = await client.list_containers_for_endpoint(
                             ep_id, include_stopped=True
                         )
-                        containers_by_endpoint[ep_id] = containers
                     except PortainerAPIError:
-                        containers_by_endpoint[ep_id] = []
+                        pass
 
                     try:
                         stacks = await client.list_stacks_for_endpoint(ep_id)
-                        stacks_by_endpoint[ep_id] = stacks
                     except PortainerAPIError:
-                        stacks_by_endpoint[ep_id] = []
+                        pass
+
+                    return ep_id, containers, stacks
+
+                # Fetch all endpoint data in parallel
+                results = await asyncio.gather(
+                    *[fetch_endpoint_data(ep) for ep in all_endpoints],
+                    return_exceptions=True
+                )
+
+                for result in results:
+                    if isinstance(result, Exception):
+                        LOGGER.debug("Endpoint data fetch error: %s", result)
+                        continue
+                    ep_id, containers, stacks = result
+                    containers_by_endpoint[ep_id] = containers
+                    stacks_by_endpoint[ep_id] = stacks
 
                 df_containers = normalise_endpoint_containers(
                     all_endpoints, containers_by_endpoint

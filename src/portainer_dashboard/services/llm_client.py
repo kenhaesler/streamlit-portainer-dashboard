@@ -1,12 +1,13 @@
-"""Async LLM client with streaming support."""
+"""Async LLM client with streaming support and connection pooling."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import logging
 from collections.abc import AsyncIterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
@@ -14,6 +15,79 @@ import httpx
 from portainer_dashboard.config import LLMSettings, get_settings
 
 LOGGER = logging.getLogger(__name__)
+
+# Connection pool for LLM API clients
+_DEFAULT_MAX_CONNECTIONS = 10
+_DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 5
+_DEFAULT_KEEPALIVE_EXPIRY = 60.0  # LLM connections can be long-lived
+
+
+class LLMClientPool:
+    """Connection pool manager for LLM API clients.
+
+    Maintains pooled connections for better performance on repeated LLM API calls.
+    """
+
+    def __init__(self) -> None:
+        self._clients: dict[str, httpx.AsyncClient] = {}
+        self._lock = asyncio.Lock()
+
+    async def get_client(
+        self,
+        base_url: str,
+        *,
+        timeout: float = 60.0,
+        verify_ssl: bool = True,
+    ) -> httpx.AsyncClient:
+        """Get or create a pooled client for the given base URL."""
+        key = base_url
+
+        async with self._lock:
+            if key not in self._clients:
+                limits = httpx.Limits(
+                    max_connections=_DEFAULT_MAX_CONNECTIONS,
+                    max_keepalive_connections=_DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+                    keepalive_expiry=_DEFAULT_KEEPALIVE_EXPIRY,
+                )
+                self._clients[key] = httpx.AsyncClient(
+                    timeout=timeout,
+                    verify=verify_ssl,
+                    limits=limits,
+                )
+                LOGGER.debug("Created pooled LLM client for %s", base_url)
+
+            return self._clients[key]
+
+    async def close_all(self) -> None:
+        """Close all pooled clients."""
+        async with self._lock:
+            for url, client in self._clients.items():
+                try:
+                    await client.aclose()
+                    LOGGER.debug("Closed pooled LLM client for %s", url)
+                except Exception as exc:
+                    LOGGER.warning("Error closing LLM client for %s: %s", url, exc)
+            self._clients.clear()
+
+
+# Global LLM client pool singleton
+_llm_client_pool: LLMClientPool | None = None
+
+
+def get_llm_client_pool() -> LLMClientPool:
+    """Get or create the global LLM client pool."""
+    global _llm_client_pool
+    if _llm_client_pool is None:
+        _llm_client_pool = LLMClientPool()
+    return _llm_client_pool
+
+
+async def shutdown_llm_client_pool() -> None:
+    """Shutdown the global LLM client pool. Call during application shutdown."""
+    global _llm_client_pool
+    if _llm_client_pool is not None:
+        await _llm_client_pool.close_all()
+        _llm_client_pool = None
 
 
 class LLMClientError(RuntimeError):
@@ -119,13 +193,29 @@ def _extract_response_text(payload: Mapping[str, object]) -> str:
 
 @dataclass
 class AsyncLLMClient:
-    """Async client for OpenAI-compatible LLM endpoints with streaming support."""
+    """Async client for OpenAI-compatible LLM endpoints with streaming support.
+
+    Uses connection pooling by default for better performance on repeated calls.
+    """
 
     base_url: str
     token: str | None = None
     model: str = "gpt-oss"
     timeout: float = 60.0
     verify_ssl: bool = True
+    use_pool: bool = True  # Use connection pooling by default
+    _pooled_client: httpx.AsyncClient | None = field(init=False, repr=False, default=None)
+
+    async def _get_pooled_client(self) -> httpx.AsyncClient:
+        """Get a pooled client for this LLM endpoint."""
+        if self._pooled_client is None:
+            pool = get_llm_client_pool()
+            self._pooled_client = await pool.get_client(
+                self.base_url,
+                timeout=self.timeout,
+                verify_ssl=self.verify_ssl,
+            )
+        return self._pooled_client
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -184,25 +274,37 @@ class AsyncLLMClient:
             stream=False,
             extra_options=extra_options,
         )
-        async with httpx.AsyncClient(
-            timeout=self.timeout, verify=self.verify_ssl
-        ) as client:
-            try:
+
+        try:
+            if self.use_pool:
+                # Use pooled client for better connection reuse
+                client = await self._get_pooled_client()
                 response = await client.post(
                     self.base_url,
                     headers=self._headers(),
                     json=payload,
                 )
-                response.raise_for_status()
-            except httpx.HTTPError as exc:
-                raise LLMClientError(f"Failed to query LLM API: {exc}") from exc
-            try:
-                data = response.json()
-            except ValueError as exc:
-                raise LLMClientError("Invalid JSON response from LLM API") from exc
-            if not isinstance(data, Mapping):
-                raise LLMClientError("Unexpected LLM API response format")
-            return _extract_response_text(data)
+            else:
+                # Legacy: create new client per request
+                async with httpx.AsyncClient(
+                    timeout=self.timeout, verify=self.verify_ssl
+                ) as client:
+                    response = await client.post(
+                        self.base_url,
+                        headers=self._headers(),
+                        json=payload,
+                    )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise LLMClientError(f"Failed to query LLM API: {exc}") from exc
+
+        try:
+            data = response.json()
+        except ValueError as exc:
+            raise LLMClientError("Invalid JSON response from LLM API") from exc
+        if not isinstance(data, Mapping):
+            raise LLMClientError("Unexpected LLM API response format")
+        return _extract_response_text(data)
 
     async def stream_chat(
         self,
@@ -220,10 +322,11 @@ class AsyncLLMClient:
             stream=True,
             extra_options=extra_options,
         )
-        async with httpx.AsyncClient(
-            timeout=self.timeout, verify=self.verify_ssl
-        ) as client:
-            try:
+
+        try:
+            if self.use_pool:
+                # Use pooled client for streaming
+                client = await self._get_pooled_client()
                 async with client.stream(
                     "POST",
                     self.base_url,
@@ -249,8 +352,38 @@ class AsyncLLMClient:
                             content = delta.get("content")
                             if content:
                                 yield content
-            except httpx.HTTPError as exc:
-                raise LLMClientError(f"Failed to stream from LLM API: {exc}") from exc
+            else:
+                # Legacy: create new client per request
+                async with httpx.AsyncClient(
+                    timeout=self.timeout, verify=self.verify_ssl
+                ) as client:
+                    async with client.stream(
+                        "POST",
+                        self.base_url,
+                        headers=self._headers(),
+                        json=payload,
+                    ) as response:
+                        response.raise_for_status()
+                        async for line in response.aiter_lines():
+                            if not line:
+                                continue
+                            if line.startswith("data: "):
+                                data_str = line[6:]
+                                if data_str.strip() == "[DONE]":
+                                    break
+                                try:
+                                    data = json.loads(data_str)
+                                except json.JSONDecodeError:
+                                    continue
+                                choices = data.get("choices", [])
+                                if not choices:
+                                    continue
+                                delta = choices[0].get("delta", {})
+                                content = delta.get("content")
+                                if content:
+                                    yield content
+        except httpx.HTTPError as exc:
+            raise LLMClientError(f"Failed to stream from LLM API: {exc}") from exc
 
 
 def create_llm_client(settings: LLMSettings | None = None) -> AsyncLLMClient | None:
@@ -271,5 +404,8 @@ def create_llm_client(settings: LLMSettings | None = None) -> AsyncLLMClient | N
 __all__ = [
     "AsyncLLMClient",
     "LLMClientError",
+    "LLMClientPool",
     "create_llm_client",
+    "get_llm_client_pool",
+    "shutdown_llm_client_pool",
 ]

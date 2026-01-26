@@ -1,4 +1,10 @@
-"""HTTP client to communicate with the FastAPI backend."""
+"""HTTP client to communicate with the FastAPI backend.
+
+Features:
+- Connection pooling via session state for better performance
+- Streamlit caching for reduced API calls
+- Batch endpoint support for dashboard overview
+"""
 
 from __future__ import annotations
 
@@ -24,32 +30,89 @@ API_TIMEOUT_SESSION = float(os.getenv("STREAMLIT_API_TIMEOUT_SESSION", "10.0"))
 # This provides instant page navigation while backend cache handles freshness
 STREAMLIT_CACHE_TTL = int(os.getenv("STREAMLIT_CACHE_TTL_SECONDS", "60"))
 
+# HTTP connection pool settings
+_HTTP_POOL_MAX_CONNECTIONS = 10
+_HTTP_POOL_MAX_KEEPALIVE = 5
 
 SESSION_COOKIE_NAME = "dashboard_session_token"
+
+
+def _get_shared_client() -> httpx.Client:
+    """Get or create a shared HTTP client stored in session state.
+
+    This provides connection pooling across Streamlit reruns for better
+    performance by reusing TCP connections.
+    """
+    if "_http_client" not in st.session_state:
+        limits = httpx.Limits(
+            max_connections=_HTTP_POOL_MAX_CONNECTIONS,
+            max_keepalive_connections=_HTTP_POOL_MAX_KEEPALIVE,
+        )
+        st.session_state._http_client = httpx.Client(
+            base_url=BACKEND_URL,
+            timeout=API_TIMEOUT,
+            limits=limits,
+        )
+        LOGGER.debug("Created shared HTTP client with connection pooling")
+    return st.session_state._http_client
+
+
+def _make_request(
+    method: str,
+    path: str,
+    *,
+    params: dict | None = None,
+    json: dict | None = None,
+    timeout: float | None = None,
+) -> httpx.Response:
+    """Make an HTTP request using the shared client with cookies."""
+    client = _get_shared_client()
+    cookies = {}
+    session_cookie = get_session_cookie()
+    if session_cookie:
+        cookies[SESSION_COOKIE_NAME] = session_cookie
+
+    return client.request(
+        method,
+        path,
+        params=params,
+        json=json,
+        cookies=cookies,
+        timeout=timeout or API_TIMEOUT,
+    )
 
 
 # Cached API call functions
 # These use st.cache_data with TTL to avoid redundant API calls during page navigation
 
 @st.cache_data(ttl=STREAMLIT_CACHE_TTL, show_spinner=False)
+def _cached_get_dashboard_overview(_session_cookie: str | None) -> dict | None:
+    """Cached fetch for dashboard overview (batch endpoint).
+
+    Fetches endpoints, containers, and stacks in a single API call
+    for better performance.
+    """
+    try:
+        response = _make_request("GET", "/api/v1/dashboard/overview")
+        if response.status_code == 401:
+            return None
+        response.raise_for_status()
+        return response.json()
+    except httpx.HTTPError as e:
+        LOGGER.warning("Cached dashboard overview fetch failed: %s", e)
+        return None
+
+
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL, show_spinner=False)
 def _cached_get_endpoints(_session_cookie: str | None) -> list[dict]:
     """Cached fetch for endpoints."""
     try:
-        cookies = {}
-        if _session_cookie:
-            cookies[SESSION_COOKIE_NAME] = _session_cookie
-
-        with httpx.Client(
-            base_url=BACKEND_URL,
-            cookies=cookies,
-            timeout=API_TIMEOUT,
-        ) as client:
-            response = client.get("/api/v1/endpoints/")
-            if response.status_code == 401:
-                return []
-            response.raise_for_status()
-            result = response.json()
-            return result if isinstance(result, list) else []
+        response = _make_request("GET", "/api/v1/endpoints/")
+        if response.status_code == 401:
+            return []
+        response.raise_for_status()
+        result = response.json()
+        return result if isinstance(result, list) else []
     except httpx.HTTPError as e:
         LOGGER.warning("Cached endpoints fetch failed: %s", e)
         return []
@@ -62,22 +125,13 @@ def _cached_get_containers(
 ) -> list[dict]:
     """Cached fetch for containers."""
     try:
-        cookies = {}
-        if _session_cookie:
-            cookies[SESSION_COOKIE_NAME] = _session_cookie
-
-        with httpx.Client(
-            base_url=BACKEND_URL,
-            cookies=cookies,
-            timeout=API_TIMEOUT,
-        ) as client:
-            params = {"include_stopped": str(include_stopped).lower()}
-            response = client.get("/api/v1/containers/", params=params)
-            if response.status_code == 401:
-                return []
-            response.raise_for_status()
-            result = response.json()
-            return result if isinstance(result, list) else []
+        params = {"include_stopped": str(include_stopped).lower()}
+        response = _make_request("GET", "/api/v1/containers/", params=params)
+        if response.status_code == 401:
+            return []
+        response.raise_for_status()
+        result = response.json()
+        return result if isinstance(result, list) else []
     except httpx.HTTPError as e:
         LOGGER.warning("Cached containers fetch failed: %s", e)
         return []
@@ -87,21 +141,12 @@ def _cached_get_containers(
 def _cached_get_stacks(_session_cookie: str | None) -> list[dict]:
     """Cached fetch for stacks."""
     try:
-        cookies = {}
-        if _session_cookie:
-            cookies[SESSION_COOKIE_NAME] = _session_cookie
-
-        with httpx.Client(
-            base_url=BACKEND_URL,
-            cookies=cookies,
-            timeout=API_TIMEOUT,
-        ) as client:
-            response = client.get("/api/v1/stacks/")
-            if response.status_code == 401:
-                return []
-            response.raise_for_status()
-            result = response.json()
-            return result if isinstance(result, list) else []
+        response = _make_request("GET", "/api/v1/stacks/")
+        if response.status_code == 401:
+            return []
+        response.raise_for_status()
+        result = response.json()
+        return result if isinstance(result, list) else []
     except httpx.HTTPError as e:
         LOGGER.warning("Cached stacks fetch failed: %s", e)
         return []
@@ -311,6 +356,25 @@ class APIClient:
         return self._request("POST", path, **kwargs)
 
     # API Methods
+
+    def get_dashboard_overview(self, use_cache: bool = True) -> dict | None:
+        """Get dashboard overview data (endpoints, containers, stacks) in a single request.
+
+        This is more efficient than calling get_endpoints(), get_containers(),
+        and get_stacks() separately as it uses a single API call with parallel
+        backend fetching.
+
+        Args:
+            use_cache: If True, use Streamlit's cache for faster response.
+
+        Returns:
+            Dictionary containing endpoints, containers, stacks, and metadata.
+        """
+        if use_cache:
+            return _cached_get_dashboard_overview(get_session_cookie())
+
+        result = self.get("/api/v1/dashboard/overview")
+        return result if isinstance(result, dict) else None
 
     def get_endpoints(self, use_cache: bool = True) -> list[dict]:
         """Get all endpoints.
