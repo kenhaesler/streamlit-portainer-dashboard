@@ -10,10 +10,59 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from portainer_dashboard.auth.dependencies import SESSION_COOKIE_NAME
+from portainer_dashboard.config import get_settings
+from portainer_dashboard.core.session import SessionStorage
+from portainer_dashboard.dependencies import get_session_storage
+from portainer_dashboard.models.auth import SessionData
 from portainer_dashboard.models.monitoring import MonitoringInsight, MonitoringReport
 from portainer_dashboard.services.insights_store import get_insights_store
 
 LOGGER = logging.getLogger(__name__)
+
+
+async def _authenticate_websocket(websocket: WebSocket) -> SessionData | None:
+    """Authenticate a WebSocket connection using session cookie.
+
+    Args:
+        websocket: The WebSocket connection to authenticate.
+
+    Returns:
+        SessionData if authenticated, None otherwise.
+    """
+    token = websocket.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+
+    storage: SessionStorage = get_session_storage()
+    record = storage.retrieve(token)
+    if record is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    settings = get_settings()
+
+    session_data = SessionData(
+        token=record.token,
+        username=record.username,
+        auth_method=record.auth_method,
+        authenticated_at=record.authenticated_at,
+        last_active=record.last_active,
+        session_timeout=record.session_timeout or settings.auth.session_timeout,
+    )
+
+    if session_data.is_expired(now):
+        storage.delete(token)
+        return None
+
+    # Update last active time
+    storage.touch(
+        token,
+        last_active=now,
+        session_timeout=session_data.session_timeout,
+    )
+
+    return session_data
 
 router = APIRouter()
 
@@ -133,8 +182,15 @@ async def _handle_client_message(
 @router.websocket("/ws/monitoring/insights")
 async def monitoring_insights_websocket(websocket: WebSocket) -> None:
     """WebSocket endpoint for real-time monitoring insights."""
+    # Authenticate before accepting connection
+    user = await _authenticate_websocket(websocket)
+    if user is None:
+        await websocket.close(code=4001, reason="Not authenticated")
+        LOGGER.warning("Monitoring WebSocket connection rejected: not authenticated")
+        return
+
     await websocket.accept()
-    LOGGER.info("Monitoring WebSocket client connected")
+    LOGGER.info("Monitoring WebSocket client connected for user: %s", user.username)
 
     async with _clients_lock:
         _connected_clients.add(websocket)

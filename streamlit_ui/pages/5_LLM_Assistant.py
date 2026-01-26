@@ -9,7 +9,7 @@ from websockets.exceptions import WebSocketException
 
 import sys
 sys.path.insert(0, str(__file__).rsplit("pages", 1)[0])
-from api_client import get_api_client, BACKEND_URL
+from api_client import get_api_client, get_session_cookie, BACKEND_URL, SESSION_COOKIE_NAME
 from shared import require_auth
 
 
@@ -77,8 +77,14 @@ def stream_llm_response(messages: list[dict]) -> str:
     ws_url = get_websocket_url()
     full_response = ""
 
+    # Build headers with session cookie for authentication
+    additional_headers = {}
+    session_cookie = get_session_cookie()
+    if session_cookie:
+        additional_headers["Cookie"] = f"{SESSION_COOKIE_NAME}={session_cookie}"
+
     try:
-        with ws_connect(ws_url, close_timeout=5) as websocket:
+        with ws_connect(ws_url, close_timeout=5, additional_headers=additional_headers) as websocket:
             # Send the messages
             websocket.send(json.dumps({"messages": messages}))
 

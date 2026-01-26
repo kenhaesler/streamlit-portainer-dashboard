@@ -6,6 +6,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -24,6 +25,48 @@ from portainer_dashboard.core.session import SessionRecord, SessionStorage
 from portainer_dashboard.dependencies import JinjaEnvDep, SessionStorageDep
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _is_safe_redirect_url(url: str) -> bool:
+    """Check if URL is safe for redirect (relative path only).
+
+    Prevents open redirect vulnerabilities by ensuring the redirect URL:
+    - Starts with a single forward slash (relative path)
+    - Does not start with // (protocol-relative URL)
+    - Has no scheme or netloc (not an absolute URL)
+
+    Args:
+        url: The URL to validate.
+
+    Returns:
+        True if the URL is a safe relative path, False otherwise.
+    """
+    if not url:
+        return False
+
+    # Must start with / but not // (protocol-relative)
+    if not url.startswith("/") or url.startswith("//"):
+        return False
+
+    # Parse and ensure no scheme or netloc
+    parsed = urlparse(url)
+    if parsed.scheme or parsed.netloc:
+        return False
+
+    return True
+
+
+def _get_safe_redirect_url(url: str, default: str = "/") -> str:
+    """Get a safe redirect URL, falling back to default if unsafe.
+
+    Args:
+        url: The URL to validate.
+        default: The default URL to use if the provided URL is unsafe.
+
+    Returns:
+        The original URL if safe, otherwise the default.
+    """
+    return url if _is_safe_redirect_url(url) else default
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -94,15 +137,17 @@ async def login_page(
     next: str = "/",
 ) -> HTMLResponse:
     """Render the login page."""
+    safe_next = _get_safe_redirect_url(next)
+
     if user is not None:
-        return RedirectResponse(url=next, status_code=303)
+        return RedirectResponse(url=safe_next, status_code=303)
 
     settings = get_settings()
     template = jinja.get_template("pages/login.html")
     content = await template.render_async(
         request=request,
         settings=settings,
-        next_url=next,
+        next_url=safe_next,
         error=None,
     )
     return HTMLResponse(content=content)
@@ -124,6 +169,7 @@ async def login(
         remember_me: If "on" or "true", creates an extended session (30 days).
     """
     settings = get_settings()
+    safe_next = _get_safe_redirect_url(next)
 
     if settings.auth.provider != "static":
         raise HTTPException(status_code=400, detail="Static auth not enabled")
@@ -133,7 +179,7 @@ async def login(
         content = await template.render_async(
             request=request,
             settings=settings,
-            next_url=next,
+            next_url=safe_next,
             error="Invalid username or password",
         )
         return HTMLResponse(content=content, status_code=401)
@@ -154,7 +200,7 @@ async def login(
         session_timeout=session_timeout,
     )
 
-    response = RedirectResponse(url=next, status_code=303)
+    response = RedirectResponse(url=safe_next, status_code=303)
     _set_session_cookie(response, token, remember_me=is_remember_me)
     return response
 
@@ -222,6 +268,7 @@ async def validate_session(user: OptionalUserDep) -> dict:
 async def oidc_login(next: str = "/") -> RedirectResponse:
     """Initiate OIDC authentication flow."""
     settings = get_settings()
+    safe_next = _get_safe_redirect_url(next)
 
     if settings.auth.provider != "oidc":
         raise HTTPException(status_code=400, detail="OIDC auth not enabled")
@@ -229,10 +276,10 @@ async def oidc_login(next: str = "/") -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
 
-    # Store state for verification
+    # Store state for verification (with validated redirect URL)
     _oidc_state_store[state] = {
         "code_verifier": code_verifier,
-        "next_url": next,
+        "next_url": safe_next,
         "created_at": datetime.now(timezone.utc),
     }
 
@@ -278,7 +325,8 @@ async def oidc_callback(
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     code_verifier = state_data["code_verifier"]
-    next_url = state_data.get("next_url", "/")
+    # Validate redirect URL again (defense in depth)
+    next_url = _get_safe_redirect_url(state_data.get("next_url", "/"))
 
     try:
         client = create_oidc_client()
