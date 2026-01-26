@@ -4,8 +4,10 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # Install system dependencies
+# libsqlite3-0 updated to fix CVE-2025-7709 (integer overflow in FTS5 extension)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    libsqlite3-0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip to fix CVE-2025-8869, then install dependencies
