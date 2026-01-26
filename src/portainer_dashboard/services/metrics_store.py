@@ -1,4 +1,4 @@
-"""SQLite-backed time-series metrics storage."""
+"""SQLite-backed time-series metrics storage with connection pooling."""
 
 from __future__ import annotations
 
@@ -9,6 +9,7 @@ from pathlib import Path
 from threading import RLock
 
 from portainer_dashboard.config import get_settings
+from portainer_dashboard.core.sqlite_pool import SQLiteConnectionPool
 from portainer_dashboard.models.metrics import (
     AnomalyDetection,
     ContainerMetric,
@@ -21,26 +22,25 @@ LOGGER = logging.getLogger(__name__)
 
 
 class SQLiteMetricsStore:
-    """SQLite-backed storage for time-series container metrics."""
+    """SQLite-backed storage for time-series container metrics.
+
+    Uses connection pooling for improved performance on repeated operations.
+    """
 
     def __init__(self, database_path: Path) -> None:
         self._database_path = database_path
         self._lock = RLock()
+        self._pool = SQLiteConnectionPool(database_path)
         self._initialise()
 
     def _connect(self) -> sqlite3.Connection:
-        connection = sqlite3.connect(
-            self._database_path,
-            detect_types=sqlite3.PARSE_DECLTYPES,
-            check_same_thread=False,
-        )
-        connection.row_factory = sqlite3.Row
-        return connection
+        """Get a pooled connection. Prefer using _pool.connection() context manager."""
+        return self._pool.get_connection()
 
     def _initialise(self) -> None:
         with self._lock:
             self._database_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._connect() as connection:
+            with self._pool.transaction() as connection:
                 connection.execute(
                     """
                     CREATE TABLE IF NOT EXISTS metrics (
@@ -104,7 +104,7 @@ class SQLiteMetricsStore:
 
     def store_metric(self, metric: ContainerMetric) -> None:
         """Store a single metric data point."""
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.transaction() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO metrics (
@@ -123,13 +123,12 @@ class SQLiteMetricsStore:
                     metric.value,
                 ),
             )
-            connection.commit()
 
     def store_metrics_batch(self, metrics: list[ContainerMetric]) -> None:
         """Store multiple metrics efficiently."""
         if not metrics:
             return
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.transaction() as connection:
             connection.executemany(
                 """
                 INSERT OR REPLACE INTO metrics (
@@ -151,7 +150,6 @@ class SQLiteMetricsStore:
                     for m in metrics
                 ],
             )
-            connection.commit()
             LOGGER.debug("Stored %d metrics", len(metrics))
 
     def get_metrics(
@@ -182,7 +180,7 @@ class SQLiteMetricsStore:
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
 
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.connection() as connection:
             cursor = connection.execute(query, params)
             rows = cursor.fetchall()
 
@@ -210,7 +208,7 @@ class SQLiteMetricsStore:
         """Get statistical summary for a container's metrics."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.connection() as connection:
             cursor = connection.execute(
                 """
                 SELECT
@@ -283,7 +281,7 @@ class SQLiteMetricsStore:
         count: int = 30,
     ) -> list[float]:
         """Get recent values for anomaly detection."""
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.connection() as connection:
             cursor = connection.execute(
                 """
                 SELECT value FROM metrics
@@ -297,7 +295,7 @@ class SQLiteMetricsStore:
 
     def store_anomaly(self, anomaly: AnomalyDetection) -> None:
         """Store an anomaly detection result."""
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.transaction() as connection:
             connection.execute(
                 """
                 INSERT OR REPLACE INTO anomalies (
@@ -321,7 +319,6 @@ class SQLiteMetricsStore:
                     anomaly.direction,
                 ),
             )
-            connection.commit()
 
     def get_anomalies(
         self,
@@ -342,7 +339,7 @@ class SQLiteMetricsStore:
         query += " ORDER BY timestamp DESC LIMIT ?"
         params.append(limit)
 
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.connection() as connection:
             cursor = connection.execute(query, params)
             rows = cursor.fetchall()
 
@@ -369,7 +366,7 @@ class SQLiteMetricsStore:
         now = datetime.now(timezone.utc)
         cutoff_24h = now - timedelta(hours=24)
 
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.connection() as connection:
             cursor = connection.execute("SELECT COUNT(*) FROM metrics")
             total_metrics = cursor.fetchone()[0]
 
@@ -410,7 +407,7 @@ class SQLiteMetricsStore:
         """Remove metrics older than retention period."""
         cutoff = datetime.now(timezone.utc) - timedelta(hours=retention_hours)
 
-        with self._lock, self._connect() as connection:
+        with self._lock, self._pool.transaction() as connection:
             cursor = connection.execute(
                 "DELETE FROM metrics WHERE timestamp < ?",
                 (self._encode_datetime(cutoff),),
@@ -422,8 +419,6 @@ class SQLiteMetricsStore:
                 (self._encode_datetime(cutoff),),
             )
             anomalies_deleted = cursor.rowcount
-
-            connection.commit()
 
         if metrics_deleted > 0 or anomalies_deleted > 0:
             LOGGER.info(

@@ -1,13 +1,20 @@
-"""Persistent caching utilities for Portainer environment data."""
+"""Persistent caching utilities for Portainer environment data.
+
+Provides a two-tier caching strategy:
+1. In-memory LRU cache for hot data (fast access, no I/O)
+2. File-based cache for persistence across restarts
+"""
 
 from __future__ import annotations
 
 import hashlib
 import json
 import logging
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -22,6 +29,98 @@ _CACHE_LOCK_SUFFIX = ".lock"
 _CACHE_KEY_DERIVATION_SALT = b"portainer-environment-cache"
 _CACHE_KEY_DERIVATION_ROUNDS = 200_000
 _CACHE_LOCK_TIMEOUT_SECONDS = 5.0
+
+# In-memory cache settings
+_MEMORY_CACHE_MAX_SIZE = 100
+_MEMORY_CACHE_TTL_SECONDS = 60  # Short TTL for memory cache
+
+
+class MemoryCache:
+    """Thread-safe in-memory LRU cache with TTL support.
+
+    Provides fast access for frequently requested data without file I/O.
+    """
+
+    def __init__(self, max_size: int = _MEMORY_CACHE_MAX_SIZE, ttl: int = _MEMORY_CACHE_TTL_SECONDS) -> None:
+        self._cache: dict[str, tuple[Any, float]] = {}  # key -> (value, expires_at)
+        self._max_size = max_size
+        self._ttl = ttl
+        self._lock = threading.RLock()
+        self._access_order: list[str] = []  # Track access order for LRU eviction
+
+    def get(self, key: str) -> Any | None:
+        """Get value from cache if present and not expired."""
+        with self._lock:
+            if key not in self._cache:
+                return None
+
+            value, expires_at = self._cache[key]
+            if time.time() > expires_at:
+                # Expired - remove and return None
+                del self._cache[key]
+                if key in self._access_order:
+                    self._access_order.remove(key)
+                return None
+
+            # Update access order (move to end for LRU)
+            if key in self._access_order:
+                self._access_order.remove(key)
+            self._access_order.append(key)
+
+            return value
+
+    def set(self, key: str, value: Any, ttl: int | None = None) -> None:
+        """Store value in cache with TTL."""
+        with self._lock:
+            # Evict oldest entries if at capacity
+            while len(self._cache) >= self._max_size and self._access_order:
+                oldest_key = self._access_order.pop(0)
+                self._cache.pop(oldest_key, None)
+
+            expires_at = time.time() + (ttl if ttl is not None else self._ttl)
+            self._cache[key] = (value, expires_at)
+
+            if key in self._access_order:
+                self._access_order.remove(key)
+            self._access_order.append(key)
+
+    def delete(self, key: str) -> None:
+        """Remove key from cache."""
+        with self._lock:
+            self._cache.pop(key, None)
+            if key in self._access_order:
+                self._access_order.remove(key)
+
+    def clear(self) -> None:
+        """Clear all cached entries."""
+        with self._lock:
+            self._cache.clear()
+            self._access_order.clear()
+
+
+# Global in-memory cache instance
+_memory_cache = MemoryCache()
+
+
+def get_memory_cache() -> MemoryCache:
+    """Get the global memory cache instance."""
+    return _memory_cache
+
+
+@lru_cache(maxsize=32)
+def _hash_api_key_cached(value: str) -> str:
+    """Return a deterministic hash for an API key using PBKDF2 (cached).
+
+    Uses lru_cache to avoid recomputing the expensive PBKDF2 hash
+    (200,000 iterations) for the same API key.
+    """
+    derived = hashlib.pbkdf2_hmac(
+        "sha256",
+        value.encode("utf-8"),
+        _CACHE_KEY_DERIVATION_SALT,
+        _CACHE_KEY_DERIVATION_ROUNDS,
+    )
+    return derived.hex()
 
 
 @dataclass(frozen=True)
@@ -102,14 +201,11 @@ def _ensure_cache_directory(config: CacheSettings | None = None) -> Path:
 
 
 def _hash_api_key(value: str) -> str:
-    """Return a deterministic hash for an API key using PBKDF2."""
-    derived = hashlib.pbkdf2_hmac(
-        "sha256",
-        value.encode("utf-8"),
-        _CACHE_KEY_DERIVATION_SALT,
-        _CACHE_KEY_DERIVATION_ROUNDS,
-    )
-    return derived.hex()
+    """Return a deterministic hash for an API key using PBKDF2.
+
+    Uses internal caching to avoid recomputing the expensive hash.
+    """
+    return _hash_api_key_cached(value)
 
 
 def build_cache_key(
@@ -166,10 +262,24 @@ def load_cache_entry(
     key: str,
     config: CacheSettings | None = None,
 ) -> CacheEntry | None:
-    """Load a cached payload for key when available."""
+    """Load a cached payload for key when available.
+
+    Uses two-tier caching:
+    1. First checks in-memory cache (fast, no I/O)
+    2. Falls back to file cache if not in memory
+    """
     resolved = _resolve_cache_config(config)
     if not is_cache_enabled(resolved):
         return None
+
+    # Check memory cache first (fast path)
+    memory_key = f"cache:{key}"
+    memory_entry = _memory_cache.get(memory_key)
+    if memory_entry is not None:
+        LOGGER.debug("Memory cache hit for %s", key)
+        return memory_entry
+
+    # Fall back to file cache
     path = _cache_path(resolved, key)
     try:
         if not path.exists():
@@ -178,7 +288,11 @@ def load_cache_entry(
         return None
     try:
         with _acquire_cache_lock(path):
-            return _read_payload(path)
+            entry = _read_payload(path)
+            if entry is not None and not entry.is_expired:
+                # Store in memory cache for subsequent fast access
+                _memory_cache.set(memory_key, entry)
+            return entry
     except Timeout:
         LOGGER.warning("Skipping cache read for %s due to lock contention", path)
         return None
@@ -190,6 +304,8 @@ def store_cache_entry(
     config: CacheSettings | None = None,
 ) -> float | None:
     """Persist payload under key respecting the configured TTL.
+
+    Updates both memory cache (for fast access) and file cache (for persistence).
 
     Returns
     -------
@@ -216,23 +332,41 @@ def store_cache_entry(
         "refreshed_at": refreshed_at,
         "payload": payload,
     }
+
+    # Create cache entry for memory cache
+    entry = CacheEntry(payload=payload, refreshed_at=refreshed_at, expires_at=expires_at)
+
+    # Store in memory cache first (fast, always succeeds)
+    memory_key = f"cache:{key}"
+    memory_ttl = min(_MEMORY_CACHE_TTL_SECONDS, ttl) if ttl > 0 else _MEMORY_CACHE_TTL_SECONDS
+    _memory_cache.set(memory_key, entry, ttl=memory_ttl)
+
+    # Persist to file cache
     path = _cache_path(resolved, key)
     try:
         with _acquire_cache_lock(path):
             path.write_text(json.dumps(data), "utf-8")
     except Timeout:
         LOGGER.warning("Unable to persist cache entry %s due to lock contention", path)
-        return None
+        # Memory cache still has the data, so partial success
+        return refreshed_at
     except OSError:
         LOGGER.warning("Unable to persist cache entry %s", path)
-        return None
+        return refreshed_at  # Memory cache still works
+
     return refreshed_at
 
 
 def clear_cache(config: CacheSettings | None = None, key: str | None = None) -> None:
-    """Remove cached payloads."""
+    """Remove cached payloads from both memory and file cache."""
     resolved = _resolve_cache_config(config)
+
     if key is not None:
+        # Clear specific key from memory cache
+        memory_key = f"cache:{key}"
+        _memory_cache.delete(memory_key)
+
+        # Clear from file cache
         path = _cache_path(resolved, key)
         try:
             path.unlink()
@@ -240,6 +374,10 @@ def clear_cache(config: CacheSettings | None = None, key: str | None = None) -> 
             pass
         return
 
+    # Clear all - memory cache
+    _memory_cache.clear()
+
+    # Clear all - file cache
     directory = _cache_directory(resolved)
     try:
         if not directory.exists():
@@ -255,9 +393,11 @@ def clear_cache(config: CacheSettings | None = None, key: str | None = None) -> 
 
 __all__ = [
     "CacheEntry",
+    "MemoryCache",
     "build_cache_key",
     "cache_ttl_seconds",
     "clear_cache",
+    "get_memory_cache",
     "is_cache_enabled",
     "load_cache_entry",
     "store_cache_entry",

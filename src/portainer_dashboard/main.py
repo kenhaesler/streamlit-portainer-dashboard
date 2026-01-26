@@ -100,6 +100,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     # Shutdown the monitoring scheduler
     shutdown_scheduler(wait=False)
+
+    # Shutdown HTTP client pools
+    from portainer_dashboard.services.portainer_client import shutdown_client_pool
+    from portainer_dashboard.services.llm_client import shutdown_llm_client_pool
+
+    await shutdown_client_pool()
+    await shutdown_llm_client_pool()
+
     LOGGER.info("Shutting down Portainer Dashboard")
 
 

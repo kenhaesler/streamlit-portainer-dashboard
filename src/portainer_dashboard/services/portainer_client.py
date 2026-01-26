@@ -1,7 +1,8 @@
-"""Async Portainer API client using httpx."""
+"""Async Portainer API client using httpx with connection pooling."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -15,6 +16,94 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from portainer_dashboard.config import PortainerEnvironmentSettings, get_settings
 
 LOGGER = logging.getLogger(__name__)
+
+# Connection pool limits for better performance
+_DEFAULT_MAX_CONNECTIONS = 20
+_DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 10
+_DEFAULT_KEEPALIVE_EXPIRY = 30.0  # seconds
+
+
+class PortainerClientPool:
+    """Connection pool manager for Portainer API clients.
+
+    Maintains a pool of httpx.AsyncClient instances for connection reuse,
+    significantly reducing TCP/TLS handshake overhead for repeated requests.
+    """
+
+    def __init__(self) -> None:
+        self._clients: dict[str, httpx.AsyncClient] = {}
+        self._lock = asyncio.Lock()
+
+    async def get_client(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        timeout: float = 60.0,
+        verify_ssl: bool = True,
+    ) -> httpx.AsyncClient:
+        """Get or create a pooled client for the given base URL."""
+        # Use base_url as key (API key might change, but URL identifies the server)
+        key = base_url
+
+        async with self._lock:
+            if key not in self._clients:
+                limits = httpx.Limits(
+                    max_connections=_DEFAULT_MAX_CONNECTIONS,
+                    max_keepalive_connections=_DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+                    keepalive_expiry=_DEFAULT_KEEPALIVE_EXPIRY,
+                )
+                self._clients[key] = httpx.AsyncClient(
+                    base_url=base_url,
+                    headers={"X-API-Key": api_key},
+                    timeout=timeout,
+                    verify=verify_ssl,
+                    limits=limits,
+                )
+                LOGGER.debug("Created pooled client for %s", base_url)
+
+            return self._clients[key]
+
+    async def close_all(self) -> None:
+        """Close all pooled clients."""
+        async with self._lock:
+            for url, client in self._clients.items():
+                try:
+                    await client.aclose()
+                    LOGGER.debug("Closed pooled client for %s", url)
+                except Exception as exc:
+                    LOGGER.warning("Error closing client for %s: %s", url, exc)
+            self._clients.clear()
+
+    async def close_client(self, base_url: str) -> None:
+        """Close a specific client."""
+        async with self._lock:
+            if base_url in self._clients:
+                try:
+                    await self._clients[base_url].aclose()
+                except Exception as exc:
+                    LOGGER.warning("Error closing client for %s: %s", base_url, exc)
+                del self._clients[base_url]
+
+
+# Global client pool singleton
+_client_pool: PortainerClientPool | None = None
+
+
+def get_client_pool() -> PortainerClientPool:
+    """Get or create the global client pool."""
+    global _client_pool
+    if _client_pool is None:
+        _client_pool = PortainerClientPool()
+    return _client_pool
+
+
+async def shutdown_client_pool() -> None:
+    """Shutdown the global client pool. Call during application shutdown."""
+    global _client_pool
+    if _client_pool is not None:
+        await _client_pool.close_all()
+        _client_pool = None
 
 
 class PortainerAPIError(RuntimeError):
@@ -111,13 +200,19 @@ def _stack_has_endpoint_metadata(stack: dict[str, object]) -> bool:
 
 @dataclass
 class AsyncPortainerClient:
-    """Async Portainer API client using httpx."""
+    """Async Portainer API client using httpx with connection pooling.
+
+    When use_pool=True (default), uses shared connection pool for better performance.
+    When use_pool=False, creates a new client per context (legacy behavior).
+    """
 
     base_url: str
     api_key: str
     timeout: float = 60.0  # Increased from 30s to handle slow API responses
     verify_ssl: bool = True
+    use_pool: bool = True  # Use connection pooling by default
     _client: httpx.AsyncClient = field(init=False, repr=False)
+    _owns_client: bool = field(init=False, repr=False, default=True)
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -127,16 +222,31 @@ class AsyncPortainerClient:
             raise ValueError("Portainer API key is required")
 
     async def __aenter__(self) -> "AsyncPortainerClient":
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers={"X-API-Key": self.api_key},
-            timeout=self.timeout,
-            verify=self.verify_ssl,
-        )
+        if self.use_pool:
+            # Use pooled client - don't close on exit
+            pool = get_client_pool()
+            self._client = await pool.get_client(
+                self.base_url,
+                self.api_key,
+                timeout=self.timeout,
+                verify_ssl=self.verify_ssl,
+            )
+            self._owns_client = False
+        else:
+            # Create a new client (legacy behavior)
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers={"X-API-Key": self.api_key},
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self._client.aclose()
+        # Only close if we own the client (not pooled)
+        if self._owns_client:
+            await self._client.aclose()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -906,10 +1016,13 @@ def normalise_endpoint_images(
 __all__ = [
     "AsyncPortainerClient",
     "PortainerAPIError",
+    "PortainerClientPool",
     "_determine_edge_agent_status",
     "create_portainer_client",
+    "get_client_pool",
     "normalise_endpoint_containers",
     "normalise_endpoint_images",
     "normalise_endpoint_metadata",
     "normalise_endpoint_stacks",
+    "shutdown_client_pool",
 ]
