@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Query
 from portainer_dashboard.auth.dependencies import CurrentUserDep
 from portainer_dashboard.config import get_settings
 from portainer_dashboard.models.portainer import Container, ContainerDetails, ContainerLogsResponse
+from portainer_dashboard.services.cache_service import get_cache_service
 from portainer_dashboard.services.portainer_client import (
     AsyncPortainerClient,
     PortainerAPIError,
@@ -41,48 +42,35 @@ async def list_containers(
     environment: Annotated[str | None, Query(description="Filter by environment name")] = None,
     endpoint_id: Annotated[int | None, Query(description="Filter by endpoint ID")] = None,
     include_stopped: Annotated[bool, Query(description="Include stopped containers")] = False,
+    refresh: Annotated[bool, Query(description="Force cache refresh")] = False,
 ) -> list[Container]:
     """List all containers across endpoints."""
-    settings = get_settings()
-    environments = settings.portainer.get_configured_environments()
+    cache_service = get_cache_service()
 
-    if not environments:
-        raise HTTPException(status_code=503, detail="No Portainer environments configured")
+    # Use cache service for fetching containers
+    cached_data = await cache_service.get_containers(
+        include_stopped=include_stopped,
+        force_refresh=refresh,
+    )
+    containers_data = cached_data.data
 
-    if environment:
-        environments = [e for e in environments if e.name == environment]
+    if cached_data.from_cache:
+        LOGGER.debug("Serving containers from cache (refreshed_at: %s)", cached_data.refreshed_at)
+
+    if not containers_data:
+        settings = get_settings()
+        environments = settings.portainer.get_configured_environments()
         if not environments:
-            raise HTTPException(status_code=404, detail=f"Environment '{environment}' not found")
+            raise HTTPException(status_code=503, detail="No Portainer environments configured")
 
-    all_endpoints: list[dict] = []
-    containers_by_endpoint: dict[int, list[dict]] = {}
+    # Filter by endpoint_id if specified
+    if endpoint_id is not None:
+        containers_data = [
+            c for c in containers_data
+            if c.get("endpoint_id") == endpoint_id
+        ]
 
-    for env in environments:
-        client = create_portainer_client(env)
-        try:
-            async with client:
-                endpoints = await client.list_all_endpoints()
-
-                for ep in endpoints:
-                    ep_id = int(ep.get("Id") or ep.get("id") or 0)
-                    if endpoint_id is not None and ep_id != endpoint_id:
-                        continue
-
-                    all_endpoints.append(ep)
-                    try:
-                        containers = await client.list_containers_for_endpoint(
-                            ep_id, include_stopped=include_stopped
-                        )
-                        containers_by_endpoint[ep_id] = containers
-                    except PortainerAPIError as exc:
-                        LOGGER.debug("Failed to fetch containers for endpoint %d: %s", ep_id, exc)
-                        containers_by_endpoint[ep_id] = []
-        except PortainerAPIError as exc:
-            LOGGER.error("Failed to fetch from %s: %s", env.name, exc)
-            continue
-
-    df = normalise_endpoint_containers(all_endpoints, containers_by_endpoint)
-    return [Container(**_sanitize_record(row)) for row in df.to_dict("records")]
+    return [Container(**_sanitize_record(row)) for row in containers_data]
 
 
 @router.get("/{endpoint_id}/{container_id}", response_model=ContainerDetails)

@@ -488,6 +488,91 @@ def create_portainer_client(
 # Data normalizers (kept from original implementation)
 
 
+def _determine_edge_agent_status(
+    endpoint: dict[str, object],
+    raw_status: object,
+) -> int:
+    """Determine the actual status for an edge agent.
+
+    Edge agents may report status differently than regular Docker endpoints.
+    This function checks multiple indicators to determine if an edge agent
+    is actually online or offline.
+
+    Returns:
+        1 for Online, 2 for Offline
+    """
+    import time
+
+    # Check endpoint type - Type 4 is Edge Agent, Type 7 is Edge Agent (async)
+    endpoint_type = _coerce_int(_first_present(endpoint, "Type", "type"))
+    is_edge_agent = endpoint_type in (4, 7)
+
+    # If raw status is valid and it's not an edge agent, trust it
+    if not is_edge_agent:
+        if raw_status == 1:
+            return 1
+        if raw_status == 2:
+            return 2
+        # For non-edge, unknown status defaults to offline
+        return 2
+
+    # For edge agents, check the heartbeat/check-in time
+    # EdgeCheckinInterval is in seconds
+    checkin_interval = _coerce_int(
+        _first_present(endpoint, "EdgeCheckinInterval", "edgeCheckinInterval")
+    )
+
+    # Get the last check-in timestamp
+    last_checkin = _first_present(
+        endpoint,
+        "LastCheckInDate",
+        "EdgeLastCheckInDate",
+        "LastCheckIn",
+        "lastCheckInDate",
+    )
+
+    # Convert to Unix timestamp if possible
+    last_checkin_ts: float | None = None
+    if isinstance(last_checkin, (int, float)) and last_checkin > 0:
+        last_checkin_ts = float(last_checkin)
+    elif isinstance(last_checkin, str) and last_checkin:
+        try:
+            parsed = pd.to_datetime(last_checkin, utc=True)
+            if not pd.isna(parsed):
+                last_checkin_ts = parsed.timestamp()
+        except (ValueError, TypeError):
+            pass
+
+    # If we have a last check-in time, use it to determine status
+    if last_checkin_ts is not None:
+        now = time.time()
+        time_since_checkin = now - last_checkin_ts
+
+        # Default check-in interval for edge agents is typically 5 seconds
+        # Consider offline if no check-in for 3x the interval (or 60 seconds if unknown)
+        expected_interval = checkin_interval if checkin_interval and checkin_interval > 0 else 5
+        offline_threshold = max(expected_interval * 3, 60)
+
+        if time_since_checkin <= offline_threshold:
+            return 1  # Online
+        else:
+            return 2  # Offline
+
+    # Check the Heartbeat field if available
+    heartbeat = _first_present(endpoint, "Heartbeat", "heartbeat")
+    if heartbeat is True or heartbeat == 1:
+        return 1
+
+    # Fall back to raw status
+    if raw_status == 1:
+        return 1
+    if raw_status == 2:
+        return 2
+
+    # Edge agents with no status info default to offline
+    return 2
+
+
 def normalise_endpoint_metadata(
     endpoints: list[dict[str, object]]
 ) -> pd.DataFrame:
@@ -496,7 +581,11 @@ def normalise_endpoint_metadata(
     for endpoint in endpoints:
         endpoint_id = int(_first_present(endpoint, "Id", "id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
-        endpoint_status = _first_present(endpoint, "Status", "status")
+        raw_status = _first_present(endpoint, "Status", "status")
+
+        # Use enhanced status detection for edge agents
+        endpoint_status = _determine_edge_agent_status(endpoint, raw_status)
+
         agent = endpoint.get("Agent") or endpoint.get("agent") or {}
         if not isinstance(agent, dict):
             agent = {}
@@ -514,7 +603,6 @@ def normalise_endpoint_metadata(
         last_check_in = _first_present(
             endpoint,
             "LastCheckInDate",
-            "EdgeCheckinInterval",
             "EdgeLastCheckInDate",
             "LastCheckIn",
         )

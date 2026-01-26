@@ -31,12 +31,31 @@ def setup_logging(settings: Settings) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+async def _warm_cache_on_startup() -> None:
+    """Warm the Portainer cache on startup."""
+    from portainer_dashboard.services.cache_service import get_cache_service
+
+    settings = get_settings()
+    if not settings.cache.enabled:
+        LOGGER.info("Cache warming skipped (caching disabled)")
+        return
+
+    try:
+        cache_service = get_cache_service()
+        results = await cache_service.warm_cache()
+        LOGGER.info("Cache warming results: %s", results)
+    except Exception as exc:
+        LOGGER.warning("Cache warming failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan context manager.
 
     Handles startup and shutdown events for the application.
     """
+    import asyncio
+
     from portainer_dashboard.scheduler import shutdown_scheduler, start_scheduler
     from portainer_dashboard.core.telemetry import setup_telemetry, shutdown_telemetry
 
@@ -67,8 +86,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     if settings.tracing.enabled:
         await setup_telemetry(app, settings.tracing)
 
-    # Start the monitoring scheduler
-    if settings.monitoring.enabled:
+    # Warm the cache on startup (run in background to not block startup)
+    asyncio.create_task(_warm_cache_on_startup())
+
+    # Start the scheduler for monitoring and/or cache refresh
+    if settings.monitoring.enabled or settings.cache.enabled:
         await start_scheduler()
 
     yield
