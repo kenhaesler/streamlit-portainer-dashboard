@@ -14,6 +14,12 @@ LOGGER = logging.getLogger(__name__)
 # Backend URL - can be overridden by environment variable
 BACKEND_URL = os.getenv("FASTAPI_BACKEND_URL", "http://localhost:8000")
 
+# API timeout settings (in seconds)
+# Default increased to 60s to handle slow external API responses (Portainer, LLM)
+API_TIMEOUT = float(os.getenv("STREAMLIT_API_TIMEOUT", "60.0"))
+API_TIMEOUT_LOGIN = float(os.getenv("STREAMLIT_API_TIMEOUT_LOGIN", "30.0"))
+API_TIMEOUT_SESSION = float(os.getenv("STREAMLIT_API_TIMEOUT_SESSION", "10.0"))
+
 
 SESSION_COOKIE_NAME = "dashboard_session_token"
 
@@ -86,7 +92,7 @@ class APIClient:
         return httpx.Client(
             base_url=self.base_url,
             cookies=cookies,
-            timeout=30.0,
+            timeout=API_TIMEOUT,
         )
 
     def login(self, username: str, password: str, remember_me: bool = False) -> bool:
@@ -99,7 +105,7 @@ class APIClient:
                         survives browser restarts.
         """
         try:
-            with httpx.Client(base_url=self.base_url, timeout=30.0) as client:
+            with httpx.Client(base_url=self.base_url, timeout=API_TIMEOUT_LOGIN) as client:
                 form_data = {
                     "username": username,
                     "password": password,
@@ -171,7 +177,7 @@ class APIClient:
             with httpx.Client(
                 base_url=self.base_url,
                 cookies={SESSION_COOKIE_NAME: cookie_value},
-                timeout=10.0,
+                timeout=API_TIMEOUT_SESSION,
             ) as client:
                 response = client.get("/auth/validate")
 

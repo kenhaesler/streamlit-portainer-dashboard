@@ -88,7 +88,7 @@ class DataCollector:
     max_containers_for_logs: int = 10
     log_fetch_timeout: float = 10.0
     max_endpoints_per_env: int = 50
-    container_fetch_timeout: float = 30.0
+    container_fetch_timeout: float = 60.0  # Increased from 30s to handle slow API responses
 
     async def collect_endpoint_data(
         self,

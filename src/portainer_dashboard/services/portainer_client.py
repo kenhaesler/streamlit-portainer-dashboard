@@ -115,7 +115,7 @@ class AsyncPortainerClient:
 
     base_url: str
     api_key: str
-    timeout: float = 30.0
+    timeout: float = 60.0  # Increased from 30s to handle slow API responses
     verify_ssl: bool = True
     _client: httpx.AsyncClient = field(init=False, repr=False)
 
@@ -481,6 +481,7 @@ def create_portainer_client(
         base_url=env.api_url,
         api_key=env.api_key,
         verify_ssl=env.verify_ssl,
+        timeout=env.timeout,
     )
 
 
