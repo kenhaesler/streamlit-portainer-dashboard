@@ -50,7 +50,8 @@ jobs:
 
       - name: Start test services
         run: |
-          docker compose -f docker-compose.e2e.yml up -d
+          echo "${{ secrets.DOCKER_PAT }}" | docker login dhi.io -u "${{ vars.DOCKER_USER }}" --password-stdin
+          docker compose -f docker-compose.e2e.yml up -d --build
           echo "Waiting for services to be healthy..."
           sleep 10
 
