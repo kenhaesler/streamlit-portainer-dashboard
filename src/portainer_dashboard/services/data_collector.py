@@ -17,6 +17,7 @@ from portainer_dashboard.models.monitoring import (
 from portainer_dashboard.services.portainer_client import (
     AsyncPortainerClient,
     PortainerAPIError,
+    _determine_edge_agent_status,
     create_portainer_client,
     normalise_endpoint_containers,
     normalise_endpoint_metadata,
@@ -98,9 +99,16 @@ class DataCollector:
         """Collect container data and security issues for a single endpoint."""
         endpoint_id = int(endpoint.get("Id") or endpoint.get("id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
-        endpoint_status = endpoint.get("Status") or endpoint.get("status")
+        # Use _determine_edge_agent_status for proper edge agent detection
+        raw_status = endpoint.get("Status") or endpoint.get("status")
+        endpoint_status = _determine_edge_agent_status(endpoint, raw_status)
 
         if endpoint_status != 1:
+            LOGGER.debug(
+                "Skipping offline endpoint %s (status=%s)",
+                endpoint_name,
+                endpoint_status,
+            )
             return [], []
 
         try:
