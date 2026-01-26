@@ -9,7 +9,7 @@ This assessment evaluates whether the Streamlit Portainer Dashboard is exposed t
 ## Findings
 ### CVE-2023-45853 – MiniZip integer overflow
 - **Upstream issue**: The vulnerability affects the optional MiniZip component distributed alongside zlib through version 1.3, and projects that embed the vulnerable MiniZip sources such as `pyminizip`. Exploitation requires invoking `zipOpenNewFileInZip4_64` with attacker-controlled metadata.【e2462a†L1-L20】
-- **Application usage**: The dashboard's Python dependencies are limited to Streamlit, requests, pandas, plotly, PyYAML, python-dotenv, and a small Streamlit helper. None of these packages bundle or expose MiniZip or `pyminizip`, and the application code does not directly interface with zlib's MiniZip APIs.【F:requirements.txt†L1-L7】
+- **Application usage**: The dashboard's Python dependencies are managed in `pyproject.toml` and include Streamlit, httpx, pandas, plotly, and Pydantic. None of these packages bundle or expose MiniZip or `pyminizip`, and the application code does not directly interface with zlib's MiniZip APIs.
 - **Result**: Not affected. The deployment does not include or call the vulnerable MiniZip code paths, so the CVE is not exploitable in this project.
 
 ### CVE-2025-7458 – SQLite `KeyInfo` integer overflow
@@ -25,9 +25,9 @@ finding to the components that are actually present in the Streamlit Portainer D
 | --- | --- | --- | --- |
 | `libpython3.11-minimal`, `libpython3.11-stdlib`, `python3.11-minimal` | CVE-2025-8194, CVE-2025-4516, CVE-2025-6069 | Not applicable | The container is built from Python 3.12 base images and never installs Python 3.11 runtimes or standard libraries.【F:Dockerfile†L1-L24】 |
 | `pip` 25.2 | CVE-2025-8869 | Removed from runtime image | The build stage now deletes the `pip` binaries and modules after installing the Python dependencies, so the final distroless layer does not include the vulnerable tooling.【F:Dockerfile†L5-L10】 |
-| `libsqlite3-0` | CVE-2025-29088, CVE-2025-7709, CVE-2021-45346 | Not exploitable | Neither the application code nor its declared dependencies use SQLite APIs, so an attacker has no path to trigger SQLite query execution.【F:requirements.txt†L1-L7】【039b84†L1-L1】 |
-| `libexpat1` | CVE-2025-59375, CVE-2023-52426, CVE-2024-28757 | Low risk in current workload | The dashboard does not parse XML documents, so the Expat parser is dormant. Continue to monitor upstream distroless releases for patched builds.【F:requirements.txt†L1-L7】【ea0168†L1-L1】 |
-| `libncursesw6`, `libtinfo6` | CVE-2023-50495, CVE-2025-6141 | Not used | The dashboard is a Streamlit web UI and does not load the curses bindings that depend on these terminal libraries.【F:requirements.txt†L1-L7】 |
+| `libsqlite3-0` | CVE-2025-29088, CVE-2025-7709, CVE-2021-45346 | Not exploitable | Neither the application code nor its declared dependencies use SQLite APIs, so an attacker has no path to trigger SQLite query execution. |
+| `libexpat1` | CVE-2025-59375, CVE-2023-52426, CVE-2024-28757 | Low risk in current workload | The dashboard does not parse XML documents, so the Expat parser is dormant. Continue to monitor upstream distroless releases for patched builds. |
+| `libncursesw6`, `libtinfo6` | CVE-2023-50495, CVE-2025-6141 | Not used | The dashboard is a Streamlit web UI and does not load the curses bindings that depend on these terminal libraries. |
 | `libuuid1`, `libgcc-s1`, `libstdc++6`, `libgomp1`, `libssl3`, `libc6`, Kerberos libraries | Multiple low-severity Debian advisories | Covered by upstream | These shared libraries are inherited from `gcr.io/distroless/python3-debian12:nonroot`. No project code calls their vulnerable entry points, but you should continue to consume the latest distroless images so that upstream security fixes land automatically.【F:Dockerfile†L15-L24】 |
 
 None of the newly reported CVEs expand the attack surface of the current application configuration. Continue to rebuild the

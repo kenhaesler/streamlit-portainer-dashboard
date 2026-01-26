@@ -6,7 +6,7 @@ Thanks for investing time in improving the Streamlit Portainer dashboard! This p
 
 1. Review the [module boundaries guide](docs/module_boundaries.md) to understand how pages, services, and shared helpers interact.
 2. Skim the existing documentation in `docs/` to see whether your change touches related operational guidance.
-3. Set up a Python 3.14 environment and install the dependencies listed in `requirements.txt`.
+3. Set up a Python 3.14 environment and install the dependencies: `pip install -e ".[dev,streamlit]"`
 
 ## Architecture
 
