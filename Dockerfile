@@ -29,6 +29,12 @@ RUN mkdir -p /app/data && chown -R 65532:65532 /app/data
 # --- Runtime stage (3.14, DHI nonroot image) ---
 FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
 
+# Update libsqlite3-0 to fix CVE-2025-7709 (integer overflow in FTS5 extension)
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
+
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 ENV PATH="/app/venv/bin:$PATH"
