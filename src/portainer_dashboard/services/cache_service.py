@@ -25,9 +25,9 @@ from portainer_dashboard.services.portainer_client import (
     AsyncPortainerClient,
     PortainerAPIError,
     create_portainer_client,
-    normalise_endpoint_containers,
-    normalise_endpoint_metadata,
-    normalise_endpoint_stacks,
+    normalise_endpoint_containers_dict,
+    normalise_endpoint_metadata_dict,
+    normalise_endpoint_stacks_dict,
 )
 
 LOGGER = logging.getLogger(__name__)
@@ -202,9 +202,8 @@ class PortainerCacheService:
                 LOGGER.error("Failed to fetch endpoints from %s: %s", env.name, exc)
                 continue
 
-        # Normalise to DataFrame then to dicts
-        df = normalise_endpoint_metadata(all_endpoints)
-        return df.to_dict("records")
+        # Use dict-based normalization (avoids pandas overhead)
+        return normalise_endpoint_metadata_dict(all_endpoints)
 
     async def _fetch_containers(
         self, *, include_stopped: bool = False
@@ -259,8 +258,8 @@ class PortainerCacheService:
                 LOGGER.error("Failed to fetch from %s: %s", env.name, exc)
                 continue
 
-        df = normalise_endpoint_containers(all_endpoints, containers_by_endpoint)
-        return df.to_dict("records")
+        # Use dict-based normalization (avoids pandas overhead)
+        return normalise_endpoint_containers_dict(all_endpoints, containers_by_endpoint)
 
     async def _fetch_stacks(self) -> list[dict[str, Any]]:
         """Fetch all stacks from Portainer with parallel endpoint fetching."""
@@ -311,8 +310,8 @@ class PortainerCacheService:
                 LOGGER.error("Failed to fetch from %s: %s", env.name, exc)
                 continue
 
-        df = normalise_endpoint_stacks(all_endpoints, stacks_by_endpoint)
-        return df.to_dict("records")
+        # Use dict-based normalization (avoids pandas overhead)
+        return normalise_endpoint_stacks_dict(all_endpoints, stacks_by_endpoint)
 
 
 # Singleton instance

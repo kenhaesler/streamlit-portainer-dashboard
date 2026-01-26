@@ -507,11 +507,11 @@ LLM_STREAM_TIMEOUT = 120  # Long-running LLM operations
 7. [x] Implement in-memory LRU cache layer
 8. [x] Create batch dashboard overview endpoint
 
-### Phase 3: Medium Priority Optimizations (2-3 days effort) - PARTIAL
+### Phase 3: Medium Priority Optimizations (2-3 days effort) ✅ COMPLETED
 
-9. [ ] Implement dict-based normalization for caching path
+9. [x] Implement dict-based normalization for caching path
 10. [x] Add Streamlit HTTP client reuse via session state
-11. [ ] Synchronize frontend/backend cache TTLs
+11. [x] Synchronize frontend/backend cache TTLs
 12. [x] Parallelize frontend API calls (via batch endpoint)
 
 ### Phase 4: Infrastructure & Configuration (1 day effort)
