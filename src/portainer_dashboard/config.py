@@ -12,6 +12,32 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _empty_str_to_none(v: str | None) -> str | None:
+    """Convert empty strings to None so Pydantic uses field defaults."""
+    if v == "":
+        return None
+    return v
+
+
+def _empty_str_to_default_bool(v: str | bool | None, default: bool) -> bool:
+    """Convert empty strings to default bool value."""
+    if v == "" or v is None:
+        return default
+    if isinstance(v, bool):
+        return v
+    # Handle string boolean values
+    return v.lower() in {"true", "1", "yes", "on"}
+
+
+def _empty_str_to_default_int(v: str | int | None, default: int) -> int:
+    """Convert empty strings to default int value."""
+    if v == "" or v is None:
+        return default
+    if isinstance(v, int):
+        return v
+    return int(v)
+
+
 class ConfigurationError(RuntimeError):
     """Raised when dashboard configuration is invalid."""
 
@@ -114,10 +140,20 @@ class CacheSettings(BaseSettings):
     ttl_seconds: int = 900
     dir: Path = Field(default_factory=lambda: PROJECT_ROOT / ".data" / "cache")
 
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def handle_empty_enabled(cls, v: str | bool | None) -> bool:
+        return _empty_str_to_default_bool(v, default=True)
+
+    @field_validator("ttl_seconds", mode="before")
+    @classmethod
+    def handle_empty_ttl(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=900)
+
     @field_validator("dir", mode="before")
     @classmethod
     def expand_directory(cls, v: str | Path | None) -> Path:
-        if v is None:
+        if v is None or v == "":
             return PROJECT_ROOT / ".data" / "cache"
         return Path(v).expanduser()
 
@@ -239,7 +275,7 @@ class SessionSettings(BaseSettings):
     @field_validator("sqlite_path", mode="before")
     @classmethod
     def expand_sqlite_path(cls, v: str | Path | None) -> Path:
-        if v is None:
+        if v is None or v == "":
             return PROJECT_ROOT / ".data" / "sessions.db"
         return Path(v).expanduser()
 
@@ -274,6 +310,40 @@ class MonitoringSettings(BaseSettings):
         ]
     )
 
+    @field_validator("enabled", "include_security_scan", "include_image_check", "include_log_analysis", mode="before")
+    @classmethod
+    def handle_empty_bool(cls, v: str | bool | None) -> bool:
+        return _empty_str_to_default_bool(v, default=True)
+
+    @field_validator("interval_minutes", mode="before")
+    @classmethod
+    def handle_empty_interval(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=5)
+
+    @field_validator("max_insights_stored", mode="before")
+    @classmethod
+    def handle_empty_max_insights(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=100)
+
+    @field_validator("log_tail_lines", mode="before")
+    @classmethod
+    def handle_empty_log_tail(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=100)
+
+    @field_validator("max_containers_for_logs", mode="before")
+    @classmethod
+    def handle_empty_max_containers(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=10)
+
+    @field_validator("log_fetch_timeout", mode="before")
+    @classmethod
+    def handle_empty_timeout(cls, v: str | float | None) -> float:
+        if v == "" or v is None:
+            return 10.0
+        if isinstance(v, float):
+            return v
+        return float(v)
+
 
 class MetricsSettings(BaseSettings):
     """Time-series metrics collection configuration."""
@@ -292,10 +362,44 @@ class MetricsSettings(BaseSettings):
     moving_average_window: int = 30
     min_samples_for_detection: int = 10
 
+    @field_validator("enabled", "anomaly_detection_enabled", mode="before")
+    @classmethod
+    def handle_empty_bool(cls, v: str | bool | None) -> bool:
+        return _empty_str_to_default_bool(v, default=True)
+
+    @field_validator("retention_hours", mode="before")
+    @classmethod
+    def handle_empty_retention(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=168)
+
+    @field_validator("collection_interval_seconds", mode="before")
+    @classmethod
+    def handle_empty_interval(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=60)
+
+    @field_validator("moving_average_window", mode="before")
+    @classmethod
+    def handle_empty_window(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=30)
+
+    @field_validator("min_samples_for_detection", mode="before")
+    @classmethod
+    def handle_empty_min_samples(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=10)
+
+    @field_validator("zscore_threshold", mode="before")
+    @classmethod
+    def handle_empty_zscore(cls, v: str | float | None) -> float:
+        if v == "" or v is None:
+            return 3.0
+        if isinstance(v, float):
+            return v
+        return float(v)
+
     @field_validator("sqlite_path", mode="before")
     @classmethod
     def expand_metrics_path(cls, v: str | Path | None) -> Path:
-        if v is None:
+        if v is None or v == "":
             return PROJECT_ROOT / ".data" / "metrics.db"
         return Path(v).expanduser()
 
@@ -314,10 +418,25 @@ class RemediationSettings(BaseSettings):
     action_timeout_seconds: int = 60
     sqlite_path: Path = Field(default_factory=lambda: PROJECT_ROOT / ".data" / "actions.db")
 
+    @field_validator("enabled", "auto_suggest", mode="before")
+    @classmethod
+    def handle_empty_bool(cls, v: str | bool | None) -> bool:
+        return _empty_str_to_default_bool(v, default=True)
+
+    @field_validator("max_pending_actions", mode="before")
+    @classmethod
+    def handle_empty_max_pending(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=100)
+
+    @field_validator("action_timeout_seconds", mode="before")
+    @classmethod
+    def handle_empty_timeout(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=60)
+
     @field_validator("sqlite_path", mode="before")
     @classmethod
     def expand_actions_path(cls, v: str | Path | None) -> Path:
-        if v is None:
+        if v is None or v == "":
             return PROJECT_ROOT / ".data" / "actions.db"
         return Path(v).expanduser()
 
@@ -336,10 +455,29 @@ class TracingSettings(BaseSettings):
     retention_hours: int = 24
     sample_rate: float = 1.0
 
+    @field_validator("enabled", mode="before")
+    @classmethod
+    def handle_empty_enabled(cls, v: str | bool | None) -> bool:
+        return _empty_str_to_default_bool(v, default=True)
+
+    @field_validator("retention_hours", mode="before")
+    @classmethod
+    def handle_empty_retention(cls, v: str | int | None) -> int:
+        return _empty_str_to_default_int(v, default=24)
+
+    @field_validator("sample_rate", mode="before")
+    @classmethod
+    def handle_empty_sample_rate(cls, v: str | float | None) -> float:
+        if v == "" or v is None:
+            return 1.0
+        if isinstance(v, float):
+            return v
+        return float(v)
+
     @field_validator("sqlite_path", mode="before")
     @classmethod
     def expand_traces_path(cls, v: str | Path | None) -> Path:
-        if v is None:
+        if v is None or v == "":
             return PROJECT_ROOT / ".data" / "traces.db"
         return Path(v).expanduser()
 
