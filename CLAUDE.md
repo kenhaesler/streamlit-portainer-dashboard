@@ -58,7 +58,7 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 - **`websocket/monitoring_insights.py`** - WebSocket for real-time monitoring insights
 - **`scheduler/`** - APScheduler for background monitoring tasks
 - **`config.py`** - Pydantic settings from environment variables
-- **`core/session.py`** - SQLite-backed session storage
+- **`core/session.py`** - Session storage (memory, SQLite, or Redis)
 
 **Frontend (streamlit_ui/):**
 - **`Home.py`** - Dashboard entry point with KPIs and charts
@@ -235,6 +235,12 @@ Then create an API key in Portainer UI: Settings → Users → your user → API
 - `DASHBOARD_USERNAME`, `DASHBOARD_KEY` - Static credentials
 - `DASHBOARD_AUTH_PROVIDER` - `static` or `oidc`
 - `DASHBOARD_SESSION_TIMEOUT_MINUTES` - Session timeout (default: 60)
+
+**Session Storage:**
+- `DASHBOARD_SESSION_BACKEND` - `memory`, `sqlite`, or `redis` (default: memory)
+- `DASHBOARD_SESSION_SQLITE_PATH` - SQLite database path (when backend=sqlite)
+- `DASHBOARD_SESSION_REDIS_URL` - Redis connection URL (when backend=redis, default: redis://localhost:6379/0)
+- `DASHBOARD_SESSION_REDIS_KEY_PREFIX` - Key namespace prefix (default: session:)
 
 **Portainer:**
 - `PORTAINER_API_URL`, `PORTAINER_API_KEY`, `PORTAINER_VERIFY_SSL`
