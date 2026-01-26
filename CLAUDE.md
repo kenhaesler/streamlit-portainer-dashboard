@@ -94,6 +94,111 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 - Do not commit while tests are failing
 - Mock credentials via `monkeypatch`
 
+## Local End-to-End Testing
+
+Before committing changes, test the full stack locally with Ollama and Docker Engine.
+
+### Prerequisites
+
+1. **Docker Engine** running locally (Docker Desktop or native Docker)
+2. **Ollama** running locally at `http://localhost:11434`
+3. **Python 3.14** with dependencies installed: `pip install -e ".[dev]"`
+
+### 1. Start Ollama
+
+```bash
+# Ensure Ollama is running
+ollama serve
+
+# Pull a model (if not already available)
+ollama pull llama3.2
+```
+
+### 2. Create Local Environment File
+
+Create a `.env.local` file (do not commit):
+
+```bash
+# Authentication
+DASHBOARD_USERNAME=admin
+DASHBOARD_KEY=localtest
+DASHBOARD_AUTH_PROVIDER=static
+
+# Portainer (use local Docker socket or a test Portainer instance)
+PORTAINER_API_URL=http://localhost:9000/api
+PORTAINER_API_KEY=your_local_portainer_key
+PORTAINER_VERIFY_SSL=false
+
+# LLM - Ollama local
+LLM_API_ENDPOINT=http://localhost:11434/v1/chat/completions
+LLM_MODEL=llama3.2
+LLM_BEARER_TOKEN=
+
+# Disable monitoring for local testing (optional)
+MONITORING_ENABLED=false
+
+# Caching
+PORTAINER_CACHE_ENABLED=true
+PORTAINER_CACHE_TTL_SECONDS=30
+```
+
+### 3. Run Backend Locally
+
+```bash
+# Load environment and start FastAPI
+set -a && source .env.local && set +a
+uvicorn src.portainer_dashboard.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+Or on Windows PowerShell:
+```powershell
+Get-Content .env.local | ForEach-Object { if ($_ -match '^([^#][^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2]) } }
+uvicorn src.portainer_dashboard.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### 4. Run Frontend Locally
+
+In a separate terminal:
+
+```bash
+set -a && source .env.local && set +a
+export BACKEND_URL=http://localhost:8000
+streamlit run streamlit_ui/Home.py --server.port 8502
+```
+
+Or on Windows PowerShell:
+```powershell
+$env:BACKEND_URL = "http://localhost:8000"
+streamlit run streamlit_ui/Home.py --server.port 8502
+```
+
+### 5. Verify Local Stack
+
+1. **Backend health**: `curl http://localhost:8000/health`
+2. **Frontend**: Open `http://localhost:8502` in browser
+3. **Login** with `admin` / `localtest`
+4. **Test LLM**: Navigate to Assistant page and send a test message
+5. **Test Portainer**: Check that endpoints/containers load (requires valid Portainer connection)
+
+### 6. Run Unit Tests
+
+```bash
+pytest tests/unit tests/integration -q
+```
+
+### Local Portainer for Testing (Optional)
+
+If you need a local Portainer instance:
+
+```bash
+docker run -d -p 9000:9000 --name portainer \
+  -v /var/run/docker.sock:/var/run/docker.sock \
+  -v portainer_data:/data \
+  portainer/portainer-ce:latest
+```
+
+Then create an API key in Portainer UI: Settings → Users → your user → API Keys.
+
 ## Key Environment Variables
 
 **Authentication:**
