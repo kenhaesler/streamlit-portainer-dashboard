@@ -28,7 +28,9 @@ API_TIMEOUT_SESSION = float(os.getenv("STREAMLIT_API_TIMEOUT_SESSION", "10.0"))
 
 # Streamlit cache TTL (in seconds) - how long to cache API responses in Streamlit
 # This provides instant page navigation while backend cache handles freshness
-STREAMLIT_CACHE_TTL = int(os.getenv("STREAMLIT_CACHE_TTL_SECONDS", "60"))
+# Default: 300s (5 min) to better align with backend cache TTL (900s/15 min)
+# and reduce redundant API calls while still allowing reasonable freshness
+STREAMLIT_CACHE_TTL = int(os.getenv("STREAMLIT_CACHE_TTL_SECONDS", "300"))
 
 # HTTP connection pool settings
 _HTTP_POOL_MAX_CONNECTIONS = 10
