@@ -24,6 +24,7 @@ from portainer_dashboard.services.portainer_client import (
 )
 from portainer_dashboard.services.security_scanner import (
     SecurityScanner,
+    _is_excluded_container,
     create_security_scanner,
 )
 
@@ -90,6 +91,7 @@ class DataCollector:
     log_fetch_timeout: float = 10.0
     max_endpoints_per_env: int = 50
     container_fetch_timeout: float = 60.0  # Increased from 30s to handle slow API responses
+    excluded_containers: frozenset[str] = frozenset()
 
     async def collect_endpoint_data(
         self,
@@ -199,9 +201,20 @@ class DataCollector:
         endpoint_id = int(endpoint.get("Id") or endpoint.get("id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
 
-        # Find problematic containers
+        # Find problematic containers (excluding infrastructure containers)
         problematic: list[tuple[dict, str, int | None]] = []
         for container in containers:
+            # Get container name for exclusion check
+            names = container.get("Names") or []
+            if isinstance(names, list) and names:
+                container_name = names[0].lstrip("/")
+            else:
+                container_name = container.get("Name") or ""
+
+            # Skip excluded infrastructure containers
+            if _is_excluded_container(container_name, self.excluded_containers):
+                continue
+
             is_problem, state_category, exit_code = _is_problematic_container(container)
             if is_problem:
                 problematic.append((container, state_category, exit_code))
@@ -471,6 +484,7 @@ def create_data_collector() -> DataCollector:
     """Create a data collector with settings from configuration."""
     settings = get_settings()
     scanner = create_security_scanner()
+    excluded = frozenset(settings.monitoring.excluded_containers)
     return DataCollector(
         security_scanner=scanner,
         include_security_scan=settings.monitoring.include_security_scan,
@@ -479,6 +493,7 @@ def create_data_collector() -> DataCollector:
         log_tail_lines=settings.monitoring.log_tail_lines,
         max_containers_for_logs=settings.monitoring.max_containers_for_logs,
         log_fetch_timeout=settings.monitoring.log_fetch_timeout,
+        excluded_containers=excluded,
     )
 
 

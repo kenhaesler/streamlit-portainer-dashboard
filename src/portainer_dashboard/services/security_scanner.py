@@ -39,6 +39,21 @@ DEFAULT_ELEVATED_CAPS = frozenset([
 ])
 
 
+def _is_excluded_container(container_name: str, excluded_patterns: frozenset[str]) -> bool:
+    """Check if a container name matches any exclusion pattern.
+
+    Uses case-insensitive substring matching to identify infrastructure
+    containers that should be excluded from monitoring.
+    """
+    if not excluded_patterns:
+        return False
+    name_lower = container_name.lower()
+    for pattern in excluded_patterns:
+        if pattern.lower() in name_lower:
+            return True
+    return False
+
+
 @dataclass
 class SecurityScanner:
     """Scanner for container security configurations."""
@@ -46,6 +61,7 @@ class SecurityScanner:
     elevated_capabilities: frozenset[str] = field(
         default_factory=lambda: DEFAULT_ELEVATED_CAPS
     )
+    excluded_containers: frozenset[str] = field(default_factory=frozenset)
     scan_timeout: float = 10.0
 
     async def scan_container(
@@ -164,6 +180,14 @@ class SecurityScanner:
             if state != "running":
                 continue
 
+            # Skip excluded infrastructure containers
+            if _is_excluded_container(container_name, self.excluded_containers):
+                LOGGER.debug(
+                    "Skipping excluded container %s from security scan",
+                    container_name,
+                )
+                continue
+
             tasks.append(
                 self.scan_container(
                     client,
@@ -189,11 +213,16 @@ def create_security_scanner() -> SecurityScanner:
     """Create a security scanner with settings from configuration."""
     settings = get_settings()
     elevated_caps = frozenset(settings.monitoring.elevated_capabilities)
-    return SecurityScanner(elevated_capabilities=elevated_caps)
+    excluded = frozenset(settings.monitoring.excluded_containers)
+    return SecurityScanner(
+        elevated_capabilities=elevated_caps,
+        excluded_containers=excluded,
+    )
 
 
 __all__ = [
     "DEFAULT_ELEVATED_CAPS",
     "SecurityScanner",
+    "_is_excluded_container",
     "create_security_scanner",
 ]
