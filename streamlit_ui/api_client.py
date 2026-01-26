@@ -35,6 +35,7 @@ STREAMLIT_CACHE_TTL = int(os.getenv("STREAMLIT_CACHE_TTL_SECONDS", "300"))
 # HTTP connection pool settings
 _HTTP_POOL_MAX_CONNECTIONS = 10
 _HTTP_POOL_MAX_KEEPALIVE = 5
+_HTTP_KEEPALIVE_EXPIRY = 30.0  # Keep connections alive for 30 seconds
 
 SESSION_COOKIE_NAME = "dashboard_session_token"
 
@@ -49,6 +50,7 @@ def _get_shared_client() -> httpx.Client:
         limits = httpx.Limits(
             max_connections=_HTTP_POOL_MAX_CONNECTIONS,
             max_keepalive_connections=_HTTP_POOL_MAX_KEEPALIVE,
+            keepalive_expiry=_HTTP_KEEPALIVE_EXPIRY,
         )
         st.session_state._http_client = httpx.Client(
             base_url=BACKEND_URL,
@@ -210,20 +212,6 @@ class APIClient:
 
     def __init__(self, base_url: str = BACKEND_URL):
         self.base_url = base_url.rstrip("/")
-        self._client: httpx.Client | None = None
-
-    def _get_client(self) -> httpx.Client:
-        """Get or create HTTP client with session cookie."""
-        cookies = {}
-        session_cookie = get_session_cookie()
-        if session_cookie:
-            cookies[SESSION_COOKIE_NAME] = session_cookie
-
-        return httpx.Client(
-            base_url=self.base_url,
-            cookies=cookies,
-            timeout=API_TIMEOUT,
-        )
 
     def login(self, username: str, password: str, remember_me: bool = False) -> bool:
         """Authenticate with the backend.
@@ -271,8 +259,7 @@ class APIClient:
     def logout(self) -> None:
         """Logout from the backend."""
         try:
-            with self._get_client() as client:
-                client.get("/auth/logout", follow_redirects=False)
+            _make_request("GET", "/auth/logout")
         except httpx.HTTPError:
             pass
         finally:
@@ -302,28 +289,28 @@ class APIClient:
             LOGGER.debug("No session cookie found in browser")
             return False
 
-        # Validate the cookie with backend
+        # Temporarily set the cookie so _make_request can use it
+        set_session_cookie(cookie_value)
+
+        # Validate the cookie with backend using shared client
         try:
-            with httpx.Client(
-                base_url=self.base_url,
-                cookies={SESSION_COOKIE_NAME: cookie_value},
-                timeout=API_TIMEOUT_SESSION,
-            ) as client:
-                response = client.get("/auth/validate")
+            response = _make_request("GET", "/auth/validate", timeout=API_TIMEOUT_SESSION)
 
-                if response.status_code == 200:
-                    data = response.json()
-                    if data.get("valid"):
-                        # Restore session state
-                        set_session_cookie(cookie_value)
-                        st.session_state["authenticated"] = True
-                        st.session_state["username"] = data.get("username", "User")
-                        LOGGER.info("Session restored for user: %s", data.get("username"))
-                        return True
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("valid"):
+                    # Session is valid, keep the cookie
+                    st.session_state["authenticated"] = True
+                    st.session_state["username"] = data.get("username", "User")
+                    LOGGER.info("Session restored for user: %s", data.get("username"))
+                    return True
 
-                LOGGER.debug("Session validation failed: %s", response.status_code)
-                return False
+            # Session invalid, clear the cookie
+            clear_session()
+            LOGGER.debug("Session validation failed: %s", response.status_code)
+            return False
         except httpx.HTTPError as e:
+            clear_session()
             LOGGER.debug("Session restore failed: %s", e)
             return False
 
@@ -333,18 +320,17 @@ class APIClient:
         path: str,
         **kwargs: Any,
     ) -> dict | list | None:
-        """Make an authenticated request to the backend."""
+        """Make an authenticated request to the backend using shared connection pool."""
         try:
-            with self._get_client() as client:
-                response = client.request(method, path, **kwargs)
+            response = _make_request(method, path, **kwargs)
 
-                if response.status_code == 401:
-                    clear_session()
-                    st.warning("Session expired. Please login again.")
-                    st.rerun()
+            if response.status_code == 401:
+                clear_session()
+                st.warning("Session expired. Please login again.")
+                st.rerun()
 
-                response.raise_for_status()
-                return response.json()
+            response.raise_for_status()
+            return response.json()
         except httpx.HTTPError as e:
             st.error(f"API request failed: {e}")
             return None

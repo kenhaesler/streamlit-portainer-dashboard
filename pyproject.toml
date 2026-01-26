@@ -1,6 +1,6 @@
 [project]
 name = "portainer-dashboard"
-version = "2.0.0"
+version = "2.1.0"
 description = "FastAPI dashboard for Portainer infrastructure management"
 license = { text = "MIT" }
 requires-python = ">=3.12"
@@ -19,6 +19,7 @@ dependencies = [
     "tenacity>=9.0.0",
     "filelock>=3.20.0",
     "itsdangerous>=2.2.0",
+    "redis>=5.0.0",
     # Security: Pin cryptography to fix CVE-2023-50782, CVE-2024-0727, PYSEC-2024-225, GHSA-h4gh-qq45-vh27
     "cryptography>=43.0.1",
 ]
