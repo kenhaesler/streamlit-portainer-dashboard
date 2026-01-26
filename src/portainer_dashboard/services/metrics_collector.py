@@ -12,6 +12,7 @@ from portainer_dashboard.services.metrics_store import SQLiteMetricsStore, get_m
 from portainer_dashboard.services.portainer_client import (
     AsyncPortainerClient,
     PortainerAPIError,
+    _determine_edge_agent_status,
     create_portainer_client,
 )
 
@@ -279,8 +280,15 @@ class MetricsCollector:
                     endpoint_name = endpoint.get("Name") or endpoint.get("name") or env.name
 
                     # Only collect from online endpoints
-                    status = endpoint.get("Status") or endpoint.get("status")
+                    # Use _determine_edge_agent_status for proper edge agent detection
+                    raw_status = endpoint.get("Status") or endpoint.get("status")
+                    status = _determine_edge_agent_status(endpoint, raw_status)
                     if status != 1:
+                        LOGGER.debug(
+                            "Skipping offline endpoint %s (status=%s)",
+                            endpoint_name,
+                            status,
+                        )
                         continue
 
                     try:

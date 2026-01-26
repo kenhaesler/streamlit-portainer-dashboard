@@ -906,6 +906,7 @@ def normalise_endpoint_images(
 __all__ = [
     "AsyncPortainerClient",
     "PortainerAPIError",
+    "_determine_edge_agent_status",
     "create_portainer_client",
     "normalise_endpoint_containers",
     "normalise_endpoint_images",
