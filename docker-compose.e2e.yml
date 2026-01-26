@@ -6,7 +6,7 @@ services:
   backend-test:
     build:
       context: .
-      dockerfile: tests/e2e/Dockerfile.backend
+      dockerfile: Dockerfile
     ports:
       - "8001:8000"
     environment:
@@ -54,7 +54,7 @@ services:
   frontend-test:
     build:
       context: .
-      dockerfile: tests/e2e/Dockerfile.frontend
+      dockerfile: Dockerfile.streamlit
     ports:
       - "8503:8502"
     environment:
