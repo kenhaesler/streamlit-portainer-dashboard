@@ -493,26 +493,26 @@ LLM_STREAM_TIMEOUT = 120  # Long-running LLM operations
 
 ## Implementation Roadmap
 
-### Phase 1: Critical Fixes (1-2 days effort)
+### Phase 1: Critical Fixes (1-2 days effort) ✅ COMPLETED
 
-1. [ ] Implement HTTP connection pooling for `PortainerClient`
-2. [ ] Implement HTTP connection pooling for `LLMClient`
-3. [ ] Add SQLite connection pooling with WAL mode
-4. [ ] Cache PBKDF2 API key hashes
+1. [x] Implement HTTP connection pooling for `PortainerClient`
+2. [x] Implement HTTP connection pooling for `LLMClient`
+3. [x] Add SQLite connection pooling with WAL mode
+4. [x] Cache PBKDF2 API key hashes
 
-### Phase 2: High Impact Improvements (2-3 days effort)
+### Phase 2: High Impact Improvements (2-3 days effort) ✅ COMPLETED
 
-5. [ ] Add `asyncio.gather()` for parallel endpoint fetching in `cache_service.py`
-6. [ ] Add `asyncio.gather()` for LLM context building in `llm_chat.py`
-7. [ ] Implement in-memory LRU cache layer
-8. [ ] Create batch dashboard overview endpoint
+5. [x] Add `asyncio.gather()` for parallel endpoint fetching in `cache_service.py`
+6. [x] Add `asyncio.gather()` for LLM context building in `llm_chat.py`
+7. [x] Implement in-memory LRU cache layer
+8. [x] Create batch dashboard overview endpoint
 
-### Phase 3: Medium Priority Optimizations (2-3 days effort)
+### Phase 3: Medium Priority Optimizations (2-3 days effort) - PARTIAL
 
 9. [ ] Implement dict-based normalization for caching path
-10. [ ] Add Streamlit HTTP client reuse via session state
+10. [x] Add Streamlit HTTP client reuse via session state
 11. [ ] Synchronize frontend/backend cache TTLs
-12. [ ] Parallelize frontend API calls
+12. [x] Parallelize frontend API calls (via batch endpoint)
 
 ### Phase 4: Infrastructure & Configuration (1 day effort)
 
