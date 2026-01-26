@@ -2,14 +2,21 @@
 
 from __future__ import annotations
 
+import json
+import logging
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import RLock
-from typing import Final, Protocol
+from typing import Any, Final, Protocol
+
+import redis
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from portainer_dashboard.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 class _UnsetType:
@@ -296,16 +303,168 @@ class SQLiteSessionStorage:
             return int(count)
 
 
+class RedisSessionStorage:
+    """Redis-backed session storage for distributed deployments."""
+
+    def __init__(
+        self,
+        redis_url: str,
+        key_prefix: str = "session:",
+        socket_timeout: float = 5.0,
+        socket_connect_timeout: float = 5.0,
+        retry_on_timeout: bool = True,
+        health_check_interval: int = 30,
+    ) -> None:
+        self._key_prefix = key_prefix
+        self._client = redis.Redis.from_url(
+            redis_url,
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=socket_connect_timeout,
+            retry_on_timeout=retry_on_timeout,
+            health_check_interval=health_check_interval,
+            decode_responses=True,
+        )
+
+    def _make_key(self, token: str) -> str:
+        """Generate a prefixed Redis key for the session token."""
+        return f"{self._key_prefix}{token}"
+
+    @staticmethod
+    def _serialize_record(record: SessionRecord) -> str:
+        """Serialize a SessionRecord to JSON for Redis storage."""
+        data: dict[str, Any] = {
+            "token": record.token,
+            "username": record.username,
+            "authenticated_at": record.authenticated_at.isoformat(),
+            "last_active": record.last_active.isoformat(),
+            "session_timeout_seconds": (
+                int(record.session_timeout.total_seconds())
+                if record.session_timeout is not None
+                else None
+            ),
+            "auth_method": record.auth_method,
+        }
+        return json.dumps(data)
+
+    @staticmethod
+    def _deserialize_record(data: str) -> SessionRecord:
+        """Deserialize JSON data to a SessionRecord."""
+        parsed = json.loads(data)
+        session_timeout = None
+        if parsed["session_timeout_seconds"] is not None:
+            session_timeout = timedelta(seconds=parsed["session_timeout_seconds"])
+        return SessionRecord(
+            token=parsed["token"],
+            username=parsed["username"],
+            authenticated_at=datetime.fromisoformat(parsed["authenticated_at"]),
+            last_active=datetime.fromisoformat(parsed["last_active"]),
+            session_timeout=session_timeout,
+            auth_method=parsed["auth_method"],
+        )
+
+    def create(self, record: SessionRecord) -> None:
+        """Persist a session record in Redis."""
+        key = self._make_key(record.token)
+        value = self._serialize_record(record)
+        try:
+            if record.session_timeout is not None:
+                ttl_seconds = int(record.session_timeout.total_seconds())
+                self._client.setex(key, ttl_seconds, value)
+            else:
+                self._client.set(key, value)
+        except RedisConnectionError:
+            logger.warning("Redis connection error during session create")
+
+    def retrieve(self, token: str) -> SessionRecord | None:
+        """Retrieve a session record from Redis."""
+        key = self._make_key(token)
+        try:
+            data = self._client.get(key)
+            if data is None:
+                return None
+            return self._deserialize_record(data)
+        except RedisConnectionError:
+            logger.warning("Redis connection error during session retrieve")
+            return None
+
+    def touch(
+        self,
+        token: str,
+        *,
+        last_active: datetime,
+        session_timeout: timedelta | None,
+    ) -> None:
+        """Update session activity timestamp and refresh TTL."""
+        key = self._make_key(token)
+        try:
+            data = self._client.get(key)
+            if data is None:
+                return
+            record = self._deserialize_record(data)
+            record.last_active = last_active
+            record.session_timeout = session_timeout
+            value = self._serialize_record(record)
+            if session_timeout is not None:
+                ttl_seconds = int(session_timeout.total_seconds())
+                self._client.setex(key, ttl_seconds, value)
+            else:
+                self._client.set(key, value)
+        except RedisConnectionError:
+            logger.warning("Redis connection error during session touch")
+
+    def delete(self, token: str) -> None:
+        """Delete a session from Redis."""
+        key = self._make_key(token)
+        try:
+            self._client.delete(key)
+        except RedisConnectionError:
+            logger.warning("Redis connection error during session delete")
+
+    def purge_expired(self, now: datetime) -> None:
+        """No-op: Redis TTL handles expiration automatically."""
+        pass
+
+    def count(self, now: datetime) -> int:
+        """Count active sessions using SCAN with key prefix."""
+        count = 0
+        try:
+            cursor = 0
+            pattern = f"{self._key_prefix}*"
+            while True:
+                cursor, keys = self._client.scan(cursor=cursor, match=pattern, count=100)
+                count += len(keys)
+                if cursor == 0:
+                    break
+        except RedisConnectionError:
+            logger.warning("Redis connection error during session count")
+            return 0
+        return count
+
+    def close(self) -> None:
+        """Close the Redis connection pool."""
+        self._client.close()
+
+
 def create_session_storage() -> SessionStorage:
     """Instantiate the configured session storage backend."""
     settings = get_settings()
     if settings.session.backend == "sqlite":
         return SQLiteSessionStorage(settings.session.sqlite_path)
+    if settings.session.backend == "redis":
+        return RedisSessionStorage(
+            redis_url=settings.session.redis_url,
+            key_prefix=settings.session.redis_key_prefix,
+            socket_timeout=settings.session.redis_socket_timeout,
+            socket_connect_timeout=settings.session.redis_socket_connect_timeout,
+            retry_on_timeout=settings.session.redis_retry_on_timeout,
+            health_check_interval=settings.session.redis_health_check_interval,
+        )
     return InMemorySessionStorage()
 
 
 __all__ = [
     "InMemorySessionStorage",
+    "RedisSessionStorage",
     "SessionRecord",
     "SessionStorage",
     "SQLiteSessionStorage",

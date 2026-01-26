@@ -1,4 +1,19 @@
 services:
+  # Redis for session storage (optional - used when DASHBOARD_SESSION_BACKEND=redis)
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
   # FastAPI Backend
   backend:
     build:
@@ -31,10 +46,18 @@ services:
       # ============================================
       # SESSION STORAGE
       # ============================================
-      # Backend: "memory" or "sqlite" (sqlite recommended for production)
+      # Backend: "memory", "sqlite", or "redis" (redis recommended for distributed deployments)
       - DASHBOARD_SESSION_BACKEND=sqlite
       # SQLite path (only used when backend=sqlite)
       - DASHBOARD_SESSION_SQLITE_PATH=/app/.data/sessions.db
+      # --- Redis session storage (when backend=redis) ---
+      # - DASHBOARD_SESSION_BACKEND=redis
+      # - DASHBOARD_SESSION_REDIS_URL=redis://redis:6379/0
+      # - DASHBOARD_SESSION_REDIS_KEY_PREFIX=session:
+      # - DASHBOARD_SESSION_REDIS_SOCKET_TIMEOUT=5.0
+      # - DASHBOARD_SESSION_REDIS_SOCKET_CONNECT_TIMEOUT=5.0
+      # - DASHBOARD_SESSION_REDIS_RETRY_ON_TIMEOUT=true
+      # - DASHBOARD_SESSION_REDIS_HEALTH_CHECK_INTERVAL=30
 
       # ============================================
       # PORTAINER CONNECTION
@@ -152,3 +175,4 @@ services:
 
 volumes:
   backend-data:
+  redis-data:

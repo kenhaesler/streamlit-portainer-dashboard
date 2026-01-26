@@ -92,6 +92,13 @@ jobs:
           username: ${{ vars.DOCKER_USER }}
           password: ${{ secrets.DOCKER_PAT }}
 
+      - name: Log in to DHI Registry
+        uses: docker/login-action@v3
+        with:
+          registry: dhi.io
+          username: ${{ vars.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PAT }}
+
       - name: Extract metadata for frontend
         id: meta
         uses: docker/metadata-action@v5
