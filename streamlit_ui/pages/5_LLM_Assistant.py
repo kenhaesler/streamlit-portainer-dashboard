@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import streamlit as st
 from websockets.sync.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
@@ -16,7 +15,7 @@ from shared import require_auth
 
 st.set_page_config(
     page_title="LLM Assistant - Portainer Dashboard",
-    page_icon="🤖",
+    page_icon="💬",
     layout="wide",
 )
 
@@ -148,7 +147,7 @@ def main():
     require_auth()
     render_sidebar()
 
-    st.title("🤖 LLM Assistant")
+    st.title("💬 LLM Assistant")
     st.markdown("Ask questions about your Portainer infrastructure")
 
     # Initialize chat history
@@ -174,7 +173,7 @@ def main():
     # Show example prompts if no messages
     if not st.session_state["chat_messages"]:
         st.markdown("---")
-        st.markdown("### 💡 Example Questions")
+        st.markdown("### Example Questions")
 
         col1, col2 = st.columns(2)
 
