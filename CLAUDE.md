@@ -90,9 +90,39 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 
 ## Testing
 
+### Unit & Integration Tests
 - Run `pytest tests/unit tests/integration -q` before submitting changes
 - Do not commit while tests are failing
 - Mock credentials via `monkeypatch`
+
+### E2E Tests (Playwright)
+End-to-end tests use Playwright to test the full Streamlit + FastAPI stack.
+
+```bash
+# Install E2E dependencies
+pip install -e ".[e2e]"
+playwright install chromium
+
+# Run E2E tests (headless)
+pytest tests/e2e/ -v
+
+# Run with visible browser
+pytest tests/e2e/ -v --headed
+
+# Run specific test file
+pytest tests/e2e/test_auth_flow.py -v
+
+# With Docker Compose mock environment
+docker compose -f docker-compose.e2e.yml up -d --wait
+pytest tests/e2e/ -v
+docker compose -f docker-compose.e2e.yml down -v
+```
+
+**E2E Test Structure:**
+- `tests/e2e/conftest.py` - Fixtures for authenticated pages
+- `tests/e2e/pages/` - Page Object Model classes
+- `tests/e2e/mocks/` - MockServer configurations for Portainer/LLM APIs
+- `tests/e2e/test_*.py` - Test modules (auth, dashboard, containers, LLM, AI ops, settings)
 
 ## Local End-to-End Testing
 

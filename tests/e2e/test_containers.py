@@ -92,7 +92,7 @@ class TestContainerFiltering:
         )
 
         if search_input.count() > 0:
-            search_input.fill("test")
+            search_input.first.fill("test")
             containers.wait_for_data_loaded()
 
         # Verify page responds

@@ -51,9 +51,22 @@ def authenticated_page(page: "Page") -> "Page":
     # Wait for Streamlit to load
     page.wait_for_selector("[data-testid='stAppViewContainer']", timeout=STREAMLIT_LOAD_TIMEOUT)
 
-    # Fill login form - Streamlit uses aria-label for input identification
-    username_input = page.locator("input[aria-label='Username']")
-    password_input = page.locator("input[aria-label='Password']")
+    # Check if already authenticated (dashboard visible)
+    if page.locator("text=Quick Navigation").count() > 0:
+        return page
+
+    # Find login form inputs - Streamlit uses different input structures
+    # Try multiple selector strategies for Streamlit text inputs
+    username_input = page.locator(
+        "[data-testid='stTextInput'] input, "
+        "input[aria-label='Username'], "
+        "[data-testid='textInput'] input"
+    ).first
+    password_input = page.locator(
+        "[data-testid='stTextInput'] input[type='password'], "
+        "input[aria-label='Password'], "
+        "input[type='password']"
+    ).first
 
     # Wait for login form to be visible
     username_input.wait_for(state="visible", timeout=DEFAULT_TIMEOUT)
@@ -61,19 +74,20 @@ def authenticated_page(page: "Page") -> "Page":
     username_input.fill(TEST_USERNAME)
     password_input.fill(TEST_PASSWORD)
 
-    # Click login button
-    page.click("button:has-text('Login')")
+    # Click login button - try multiple selectors
+    login_button = page.locator(
+        "[data-testid='stFormSubmitButton'] button, "
+        "button:has-text('Login')"
+    ).first
+    login_button.click()
 
     # Wait for dashboard to load (look for main dashboard elements)
-    page.wait_for_selector("text=Portainer Dashboard", timeout=STREAMLIT_LOAD_TIMEOUT)
-
-    # Wait for any initial spinners to disappear
-    page.wait_for_selector(".stSpinner", state="hidden", timeout=STREAMLIT_LOAD_TIMEOUT)
+    page.wait_for_selector("text=Quick Navigation", timeout=STREAMLIT_LOAD_TIMEOUT)
 
     return page
 
 
-@pytest.fixture
+@pytest.fixture(scope="session")
 def base_url() -> str:
     """Return the frontend base URL."""
     return TEST_FRONTEND_URL
