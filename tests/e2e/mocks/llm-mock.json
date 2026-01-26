@@ -1,0 +1,64 @@
+[
+  {
+    "httpRequest": {
+      "method": "POST",
+      "path": "/v1/chat/completions"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": {
+          "id": "chatcmpl-test123",
+          "object": "chat.completion",
+          "created": 1706300000,
+          "model": "test-model",
+          "choices": [
+            {
+              "index": 0,
+              "message": {
+                "role": "assistant",
+                "content": "Based on the infrastructure data, there are currently 3 containers running across 2 endpoints. The containers include nginx (web server), redis (cache), and a Python application server. All containers appear to be healthy and running normally."
+              },
+              "finish_reason": "stop"
+            }
+          ],
+          "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150
+          }
+        }
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/v1/models"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": {
+          "object": "list",
+          "data": [
+            {
+              "id": "test-model",
+              "object": "model",
+              "created": 1706300000,
+              "owned_by": "test"
+            }
+          ]
+        }
+      }
+    }
+  }
+]

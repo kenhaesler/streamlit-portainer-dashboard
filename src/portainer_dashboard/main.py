@@ -10,6 +10,7 @@ from typing import AsyncGenerator
 import uvicorn
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -31,13 +32,33 @@ def setup_logging(settings: Settings) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+async def _warm_cache_on_startup() -> None:
+    """Warm the Portainer cache on startup."""
+    from portainer_dashboard.services.cache_service import get_cache_service
+
+    settings = get_settings()
+    if not settings.cache.enabled:
+        LOGGER.info("Cache warming skipped (caching disabled)")
+        return
+
+    try:
+        cache_service = get_cache_service()
+        results = await cache_service.warm_cache()
+        LOGGER.info("Cache warming results: %s", results)
+    except Exception as exc:
+        LOGGER.warning("Cache warming failed: %s", exc)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan context manager.
 
     Handles startup and shutdown events for the application.
     """
+    import asyncio
+
     from portainer_dashboard.scheduler import shutdown_scheduler, start_scheduler
+    from portainer_dashboard.core.telemetry import setup_telemetry, shutdown_telemetry
 
     settings = get_settings()
     setup_logging(settings)
@@ -47,20 +68,47 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings.cache.directory.mkdir(parents=True, exist_ok=True)
     if settings.session.backend == "sqlite":
         settings.session.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.metrics.enabled:
+        settings.metrics.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.remediation.enabled:
+        settings.remediation.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+    if settings.tracing.enabled:
+        settings.tracing.sqlite_path.parent.mkdir(parents=True, exist_ok=True)
 
     LOGGER.info("Auth provider: %s", settings.auth.provider)
     LOGGER.info("Session backend: %s", settings.session.backend)
     LOGGER.info("Cache enabled: %s", settings.cache.enabled)
     LOGGER.info("AI Monitoring enabled: %s", settings.monitoring.enabled)
+    LOGGER.info("Metrics collection enabled: %s", settings.metrics.enabled)
+    LOGGER.info("Remediation enabled: %s", settings.remediation.enabled)
+    LOGGER.info("Tracing enabled: %s", settings.tracing.enabled)
 
-    # Start the monitoring scheduler
-    if settings.monitoring.enabled:
+    # Setup distributed tracing
+    if settings.tracing.enabled:
+        await setup_telemetry(app, settings.tracing)
+
+    # Warm the cache on startup (run in background to not block startup)
+    asyncio.create_task(_warm_cache_on_startup())
+
+    # Start the scheduler for monitoring and/or cache refresh
+    if settings.monitoring.enabled or settings.cache.enabled:
         await start_scheduler()
 
     yield
 
+    # Shutdown telemetry
+    shutdown_telemetry()
+
     # Shutdown the monitoring scheduler
     shutdown_scheduler(wait=False)
+
+    # Shutdown HTTP client pools
+    from portainer_dashboard.services.portainer_client import shutdown_client_pool
+    from portainer_dashboard.services.llm_client import shutdown_llm_client_pool
+
+    await shutdown_client_pool()
+    await shutdown_llm_client_pool()
+
     LOGGER.info("Shutting down Portainer Dashboard")
 
 
@@ -77,6 +125,9 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+
+    # GZip compression for responses > 500 bytes
+    app.add_middleware(GZipMiddleware, minimum_size=500)
 
     # CORS middleware
     app.add_middleware(
@@ -116,12 +167,16 @@ def create_app() -> FastAPI:
     from portainer_dashboard.websocket.monitoring_insights import (
         router as monitoring_ws_router,
     )
+    from portainer_dashboard.websocket.remediation import (
+        router as remediation_ws_router,
+    )
 
     app.include_router(auth_router)
     app.include_router(api_router, prefix="/api/v1")
     app.include_router(partials_router, prefix="/partials")
     app.include_router(websocket_router)
     app.include_router(monitoring_ws_router)
+    app.include_router(remediation_ws_router)
     app.include_router(pages_router)
 
     return app

@@ -6,8 +6,9 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from portainer_dashboard.auth.dependencies import (
@@ -24,6 +25,48 @@ from portainer_dashboard.core.session import SessionRecord, SessionStorage
 from portainer_dashboard.dependencies import JinjaEnvDep, SessionStorageDep
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _is_safe_redirect_url(url: str) -> bool:
+    """Check if URL is safe for redirect (relative path only).
+
+    Prevents open redirect vulnerabilities by ensuring the redirect URL:
+    - Starts with a single forward slash (relative path)
+    - Does not start with // (protocol-relative URL)
+    - Has no scheme or netloc (not an absolute URL)
+
+    Args:
+        url: The URL to validate.
+
+    Returns:
+        True if the URL is a safe relative path, False otherwise.
+    """
+    if not url:
+        return False
+
+    # Must start with / but not // (protocol-relative)
+    if not url.startswith("/") or url.startswith("//"):
+        return False
+
+    # Parse and ensure no scheme or netloc
+    parsed = urlparse(url)
+    if parsed.scheme or parsed.netloc:
+        return False
+
+    return True
+
+
+def _get_safe_redirect_url(url: str, default: str = "/") -> str:
+    """Get a safe redirect URL, falling back to default if unsafe.
+
+    Args:
+        url: The URL to validate.
+        default: The default URL to use if the provided URL is unsafe.
+
+    Returns:
+        The original URL if safe, otherwise the default.
+    """
+    return url if _is_safe_redirect_url(url) else default
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -53,12 +96,28 @@ def _create_session(
     return token
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
-    """Set the session cookie on the response."""
+def _set_session_cookie(
+    response: Response,
+    token: str,
+    remember_me: bool = False,
+) -> None:
+    """Set the session cookie on the response.
+
+    Args:
+        response: The FastAPI response object.
+        token: The session token.
+        remember_me: If True, sets a 30-day persistent cookie. If False, uses
+                     the configured session timeout for the cookie max_age.
+    """
     settings = get_settings()
-    max_age = 30 * 24 * 60 * 60  # 30 days
-    if settings.auth.session_timeout:
+
+    if remember_me:
+        # Extended session: 30 days
+        max_age = 30 * 24 * 60 * 60
+    elif settings.auth.session_timeout:
         max_age = int(settings.auth.session_timeout.total_seconds())
+    else:
+        max_age = 30 * 24 * 60 * 60  # Default to 30 days
 
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -78,15 +137,17 @@ async def login_page(
     next: str = "/",
 ) -> HTMLResponse:
     """Render the login page."""
+    safe_next = _get_safe_redirect_url(next)
+
     if user is not None:
-        return RedirectResponse(url=next, status_code=303)
+        return RedirectResponse(url=safe_next, status_code=303)
 
     settings = get_settings()
     template = jinja.get_template("pages/login.html")
     content = await template.render_async(
         request=request,
         settings=settings,
-        next_url=next,
+        next_url=safe_next,
         error=None,
     )
     return HTMLResponse(content=content)
@@ -100,9 +161,15 @@ async def login(
     username: Annotated[str, Form()],
     password: Annotated[str, Form()],
     next: Annotated[str, Form()] = "/",
+    remember_me: Annotated[str | None, Form()] = None,
 ) -> Response:
-    """Process login form submission."""
+    """Process login form submission.
+
+    Args:
+        remember_me: If "on" or "true", creates an extended session (30 days).
+    """
     settings = get_settings()
+    safe_next = _get_safe_redirect_url(next)
 
     if settings.auth.provider != "static":
         raise HTTPException(status_code=400, detail="Static auth not enabled")
@@ -112,20 +179,29 @@ async def login(
         content = await template.render_async(
             request=request,
             settings=settings,
-            next_url=next,
+            next_url=safe_next,
             error="Invalid username or password",
         )
         return HTMLResponse(content=content, status_code=401)
+
+    # Check if remember_me is set (form checkbox sends "on" when checked)
+    is_remember_me = remember_me in ("on", "true", "1")
+
+    # Use extended timeout for remember_me, otherwise use configured timeout
+    if is_remember_me:
+        session_timeout = timedelta(days=30)
+    else:
+        session_timeout = settings.auth.session_timeout
 
     token = _create_session(
         storage=storage,
         username=username,
         auth_method="static",
-        session_timeout=settings.auth.session_timeout,
+        session_timeout=session_timeout,
     )
 
-    response = RedirectResponse(url=next, status_code=303)
-    _set_session_cookie(response, token)
+    response = RedirectResponse(url=safe_next, status_code=303)
+    _set_session_cookie(response, token, remember_me=is_remember_me)
     return response
 
 
@@ -167,10 +243,32 @@ async def get_session_status(user: CurrentUserDep) -> dict:
     }
 
 
+@router.get("/validate")
+async def validate_session(user: OptionalUserDep) -> dict:
+    """Validate an existing session cookie.
+
+    This endpoint is used by the frontend to restore sessions after browser refresh.
+    Unlike /session, this returns minimal info and doesn't require authentication
+    (it validates the cookie itself).
+    """
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+        )
+
+    return {
+        "valid": True,
+        "username": user.username,
+        "auth_method": user.auth_method,
+    }
+
+
 @router.get("/oidc/login")
 async def oidc_login(next: str = "/") -> RedirectResponse:
     """Initiate OIDC authentication flow."""
     settings = get_settings()
+    safe_next = _get_safe_redirect_url(next)
 
     if settings.auth.provider != "oidc":
         raise HTTPException(status_code=400, detail="OIDC auth not enabled")
@@ -178,10 +276,10 @@ async def oidc_login(next: str = "/") -> RedirectResponse:
     state = secrets.token_urlsafe(32)
     code_verifier = secrets.token_urlsafe(64)
 
-    # Store state for verification
+    # Store state for verification (with validated redirect URL)
     _oidc_state_store[state] = {
         "code_verifier": code_verifier,
-        "next_url": next,
+        "next_url": safe_next,
         "created_at": datetime.now(timezone.utc),
     }
 
@@ -227,7 +325,8 @@ async def oidc_callback(
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
     code_verifier = state_data["code_verifier"]
-    next_url = state_data.get("next_url", "/")
+    # Validate redirect URL again (defense in depth)
+    next_url = _get_safe_redirect_url(state_data.get("next_url", "/"))
 
     try:
         client = create_oidc_client()

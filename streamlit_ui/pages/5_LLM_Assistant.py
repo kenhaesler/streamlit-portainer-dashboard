@@ -3,20 +3,19 @@
 from __future__ import annotations
 
 import json
-import os
 import streamlit as st
 from websockets.sync.client import connect as ws_connect
 from websockets.exceptions import WebSocketException
 
 import sys
 sys.path.insert(0, str(__file__).rsplit("pages", 1)[0])
-from api_client import get_api_client, BACKEND_URL
+from api_client import get_api_client, get_session_cookie, BACKEND_URL, SESSION_COOKIE_NAME
 from shared import require_auth
 
 
 st.set_page_config(
     page_title="LLM Assistant - Portainer Dashboard",
-    page_icon="🤖",
+    page_icon="💬",
     layout="wide",
 )
 
@@ -78,8 +77,14 @@ def stream_llm_response(messages: list[dict]) -> str:
     ws_url = get_websocket_url()
     full_response = ""
 
+    # Build headers with session cookie for authentication
+    additional_headers = {}
+    session_cookie = get_session_cookie()
+    if session_cookie:
+        additional_headers["Cookie"] = f"{SESSION_COOKIE_NAME}={session_cookie}"
+
     try:
-        with ws_connect(ws_url, close_timeout=5) as websocket:
+        with ws_connect(ws_url, close_timeout=5, additional_headers=additional_headers) as websocket:
             # Send the messages
             websocket.send(json.dumps({"messages": messages}))
 
@@ -148,7 +153,7 @@ def main():
     require_auth()
     render_sidebar()
 
-    st.title("🤖 LLM Assistant")
+    st.title("💬 LLM Assistant")
     st.markdown("Ask questions about your Portainer infrastructure")
 
     # Initialize chat history
@@ -174,7 +179,7 @@ def main():
     # Show example prompts if no messages
     if not st.session_state["chat_messages"]:
         st.markdown("---")
-        st.markdown("### 💡 Example Questions")
+        st.markdown("### Example Questions")
 
         col1, col2 = st.columns(2)
 

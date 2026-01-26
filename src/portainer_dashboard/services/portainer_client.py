@@ -1,7 +1,8 @@
-"""Async Portainer API client using httpx."""
+"""Async Portainer API client using httpx with connection pooling."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass, field
@@ -15,6 +16,94 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from portainer_dashboard.config import PortainerEnvironmentSettings, get_settings
 
 LOGGER = logging.getLogger(__name__)
+
+# Connection pool limits for better performance
+_DEFAULT_MAX_CONNECTIONS = 20
+_DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 10
+_DEFAULT_KEEPALIVE_EXPIRY = 30.0  # seconds
+
+
+class PortainerClientPool:
+    """Connection pool manager for Portainer API clients.
+
+    Maintains a pool of httpx.AsyncClient instances for connection reuse,
+    significantly reducing TCP/TLS handshake overhead for repeated requests.
+    """
+
+    def __init__(self) -> None:
+        self._clients: dict[str, httpx.AsyncClient] = {}
+        self._lock = asyncio.Lock()
+
+    async def get_client(
+        self,
+        base_url: str,
+        api_key: str,
+        *,
+        timeout: float = 60.0,
+        verify_ssl: bool = True,
+    ) -> httpx.AsyncClient:
+        """Get or create a pooled client for the given base URL."""
+        # Use base_url as key (API key might change, but URL identifies the server)
+        key = base_url
+
+        async with self._lock:
+            if key not in self._clients:
+                limits = httpx.Limits(
+                    max_connections=_DEFAULT_MAX_CONNECTIONS,
+                    max_keepalive_connections=_DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
+                    keepalive_expiry=_DEFAULT_KEEPALIVE_EXPIRY,
+                )
+                self._clients[key] = httpx.AsyncClient(
+                    base_url=base_url,
+                    headers={"X-API-Key": api_key},
+                    timeout=timeout,
+                    verify=verify_ssl,
+                    limits=limits,
+                )
+                LOGGER.debug("Created pooled client for %s", base_url)
+
+            return self._clients[key]
+
+    async def close_all(self) -> None:
+        """Close all pooled clients."""
+        async with self._lock:
+            for url, client in self._clients.items():
+                try:
+                    await client.aclose()
+                    LOGGER.debug("Closed pooled client for %s", url)
+                except Exception as exc:
+                    LOGGER.warning("Error closing client for %s: %s", url, exc)
+            self._clients.clear()
+
+    async def close_client(self, base_url: str) -> None:
+        """Close a specific client."""
+        async with self._lock:
+            if base_url in self._clients:
+                try:
+                    await self._clients[base_url].aclose()
+                except Exception as exc:
+                    LOGGER.warning("Error closing client for %s: %s", base_url, exc)
+                del self._clients[base_url]
+
+
+# Global client pool singleton
+_client_pool: PortainerClientPool | None = None
+
+
+def get_client_pool() -> PortainerClientPool:
+    """Get or create the global client pool."""
+    global _client_pool
+    if _client_pool is None:
+        _client_pool = PortainerClientPool()
+    return _client_pool
+
+
+async def shutdown_client_pool() -> None:
+    """Shutdown the global client pool. Call during application shutdown."""
+    global _client_pool
+    if _client_pool is not None:
+        await _client_pool.close_all()
+        _client_pool = None
 
 
 class PortainerAPIError(RuntimeError):
@@ -111,13 +200,19 @@ def _stack_has_endpoint_metadata(stack: dict[str, object]) -> bool:
 
 @dataclass
 class AsyncPortainerClient:
-    """Async Portainer API client using httpx."""
+    """Async Portainer API client using httpx with connection pooling.
+
+    When use_pool=True (default), uses shared connection pool for better performance.
+    When use_pool=False, creates a new client per context (legacy behavior).
+    """
 
     base_url: str
     api_key: str
-    timeout: float = 30.0
+    timeout: float = 60.0  # Increased from 30s to handle slow API responses
     verify_ssl: bool = True
+    use_pool: bool = True  # Use connection pooling by default
     _client: httpx.AsyncClient = field(init=False, repr=False)
+    _owns_client: bool = field(init=False, repr=False, default=True)
 
     def __post_init__(self) -> None:
         self.base_url = self.base_url.rstrip("/")
@@ -127,16 +222,31 @@ class AsyncPortainerClient:
             raise ValueError("Portainer API key is required")
 
     async def __aenter__(self) -> "AsyncPortainerClient":
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers={"X-API-Key": self.api_key},
-            timeout=self.timeout,
-            verify=self.verify_ssl,
-        )
+        if self.use_pool:
+            # Use pooled client - don't close on exit
+            pool = get_client_pool()
+            self._client = await pool.get_client(
+                self.base_url,
+                self.api_key,
+                timeout=self.timeout,
+                verify_ssl=self.verify_ssl,
+            )
+            self._owns_client = False
+        else:
+            # Create a new client (legacy behavior)
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers={"X-API-Key": self.api_key},
+                timeout=self.timeout,
+                verify=self.verify_ssl,
+            )
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
-        await self._client.aclose()
+        # Only close if we own the client (not pooled)
+        if self._owns_client:
+            await self._client.aclose()
 
     @retry(
         stop=stop_after_attempt(3),
@@ -399,6 +509,79 @@ class AsyncPortainerClient:
             )
         return data
 
+    async def restart_container(
+        self, endpoint_id: int, container_id: str, *, timeout: int = 10
+    ) -> dict[str, object]:
+        """Restart a container.
+
+        Args:
+            endpoint_id: The Portainer endpoint ID.
+            container_id: The container ID or name.
+            timeout: Seconds to wait before killing the container.
+
+        Returns:
+            A dict with success status.
+        """
+        try:
+            response = await self._client.post(
+                f"/endpoints/{endpoint_id}/docker/containers/{container_id}/restart",
+                params={"t": str(timeout)},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PortainerAPIError(f"Failed to restart container: {exc}") from exc
+        return {"success": True, "action": "restart", "container_id": container_id}
+
+    async def start_container(
+        self, endpoint_id: int, container_id: str
+    ) -> dict[str, object]:
+        """Start a stopped container.
+
+        Args:
+            endpoint_id: The Portainer endpoint ID.
+            container_id: The container ID or name.
+
+        Returns:
+            A dict with success status.
+        """
+        try:
+            response = await self._client.post(
+                f"/endpoints/{endpoint_id}/docker/containers/{container_id}/start",
+            )
+            # 304 means container is already started
+            if response.status_code == 304:
+                return {"success": True, "action": "start", "container_id": container_id, "note": "already running"}
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PortainerAPIError(f"Failed to start container: {exc}") from exc
+        return {"success": True, "action": "start", "container_id": container_id}
+
+    async def stop_container(
+        self, endpoint_id: int, container_id: str, *, timeout: int = 10
+    ) -> dict[str, object]:
+        """Stop a running container.
+
+        Args:
+            endpoint_id: The Portainer endpoint ID.
+            container_id: The container ID or name.
+            timeout: Seconds to wait before killing the container.
+
+        Returns:
+            A dict with success status.
+        """
+        try:
+            response = await self._client.post(
+                f"/endpoints/{endpoint_id}/docker/containers/{container_id}/stop",
+                params={"t": str(timeout)},
+            )
+            # 304 means container is already stopped
+            if response.status_code == 304:
+                return {"success": True, "action": "stop", "container_id": container_id, "note": "already stopped"}
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise PortainerAPIError(f"Failed to stop container: {exc}") from exc
+        return {"success": True, "action": "stop", "container_id": container_id}
+
 
 def create_portainer_client(
     env: PortainerEnvironmentSettings,
@@ -408,10 +591,96 @@ def create_portainer_client(
         base_url=env.api_url,
         api_key=env.api_key,
         verify_ssl=env.verify_ssl,
+        timeout=env.timeout,
     )
 
 
 # Data normalizers (kept from original implementation)
+
+
+def _determine_edge_agent_status(
+    endpoint: dict[str, object],
+    raw_status: object,
+) -> int:
+    """Determine the actual status for an edge agent.
+
+    Edge agents may report status differently than regular Docker endpoints.
+    This function checks multiple indicators to determine if an edge agent
+    is actually online or offline.
+
+    Returns:
+        1 for Online, 2 for Offline
+    """
+    import time
+
+    # Check endpoint type - Type 4 is Edge Agent, Type 7 is Edge Agent (async)
+    endpoint_type = _coerce_int(_first_present(endpoint, "Type", "type"))
+    is_edge_agent = endpoint_type in (4, 7)
+
+    # If raw status is valid and it's not an edge agent, trust it
+    if not is_edge_agent:
+        if raw_status == 1:
+            return 1
+        if raw_status == 2:
+            return 2
+        # For non-edge, unknown status defaults to offline
+        return 2
+
+    # For edge agents, check the heartbeat/check-in time
+    # EdgeCheckinInterval is in seconds
+    checkin_interval = _coerce_int(
+        _first_present(endpoint, "EdgeCheckinInterval", "edgeCheckinInterval")
+    )
+
+    # Get the last check-in timestamp
+    last_checkin = _first_present(
+        endpoint,
+        "LastCheckInDate",
+        "EdgeLastCheckInDate",
+        "LastCheckIn",
+        "lastCheckInDate",
+    )
+
+    # Convert to Unix timestamp if possible
+    last_checkin_ts: float | None = None
+    if isinstance(last_checkin, (int, float)) and last_checkin > 0:
+        last_checkin_ts = float(last_checkin)
+    elif isinstance(last_checkin, str) and last_checkin:
+        try:
+            parsed = pd.to_datetime(last_checkin, utc=True)
+            if not pd.isna(parsed):
+                last_checkin_ts = parsed.timestamp()
+        except (ValueError, TypeError):
+            pass
+
+    # If we have a last check-in time, use it to determine status
+    if last_checkin_ts is not None:
+        now = time.time()
+        time_since_checkin = now - last_checkin_ts
+
+        # Default check-in interval for edge agents is typically 5 seconds
+        # Consider offline if no check-in for 3x the interval (or 60 seconds if unknown)
+        expected_interval = checkin_interval if checkin_interval and checkin_interval > 0 else 5
+        offline_threshold = max(expected_interval * 3, 60)
+
+        if time_since_checkin <= offline_threshold:
+            return 1  # Online
+        else:
+            return 2  # Offline
+
+    # Check the Heartbeat field if available
+    heartbeat = _first_present(endpoint, "Heartbeat", "heartbeat")
+    if heartbeat is True or heartbeat == 1:
+        return 1
+
+    # Fall back to raw status
+    if raw_status == 1:
+        return 1
+    if raw_status == 2:
+        return 2
+
+    # Edge agents with no status info default to offline
+    return 2
 
 
 def normalise_endpoint_metadata(
@@ -422,7 +691,11 @@ def normalise_endpoint_metadata(
     for endpoint in endpoints:
         endpoint_id = int(_first_present(endpoint, "Id", "id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
-        endpoint_status = _first_present(endpoint, "Status", "status")
+        raw_status = _first_present(endpoint, "Status", "status")
+
+        # Use enhanced status detection for edge agents
+        endpoint_status = _determine_edge_agent_status(endpoint, raw_status)
+
         agent = endpoint.get("Agent") or endpoint.get("agent") or {}
         if not isinstance(agent, dict):
             agent = {}
@@ -440,7 +713,6 @@ def normalise_endpoint_metadata(
         last_check_in = _first_present(
             endpoint,
             "LastCheckInDate",
-            "EdgeCheckinInterval",
             "EdgeLastCheckInDate",
             "LastCheckIn",
         )
@@ -744,9 +1016,13 @@ def normalise_endpoint_images(
 __all__ = [
     "AsyncPortainerClient",
     "PortainerAPIError",
+    "PortainerClientPool",
+    "_determine_edge_agent_status",
     "create_portainer_client",
+    "get_client_pool",
     "normalise_endpoint_containers",
     "normalise_endpoint_images",
     "normalise_endpoint_metadata",
     "normalise_endpoint_stacks",
+    "shutdown_client_pool",
 ]

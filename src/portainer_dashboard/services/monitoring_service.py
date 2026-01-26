@@ -25,6 +25,10 @@ from portainer_dashboard.services.llm_client import (
     LLMClientError,
     create_llm_client,
 )
+from portainer_dashboard.services.log_sanitizer import sanitize_logs
+from portainer_dashboard.services.metrics_collector import MetricsCollector, create_metrics_collector
+from portainer_dashboard.services.anomaly_detector import AnomalyDetector, create_anomaly_detector
+from portainer_dashboard.services.remediation_service import RemediationService, get_remediation_service
 
 LOGGER = logging.getLogger(__name__)
 
@@ -142,8 +146,8 @@ def _build_analysis_prompt(snapshot: InfrastructureSnapshot) -> str:
             parts.append(f"Log lines: {log_entry.log_lines}")
             if log_entry.truncated:
                 parts.append("(logs truncated)")
-            # Limit log content to avoid overwhelming the LLM
-            log_content = log_entry.logs
+            # Sanitize and limit log content to avoid overwhelming the LLM
+            log_content = sanitize_logs(log_entry.logs)
             if len(log_content) > 3000:
                 log_content = log_content[-3000:]
                 parts.append("Recent log output (truncated to last 3000 chars):")
@@ -204,6 +208,64 @@ def _parse_llm_insights(response: str) -> list[MonitoringInsight]:
             continue
 
     return insights
+
+
+def _deduplicate_insights(insights: list[MonitoringInsight]) -> list[MonitoringInsight]:
+    """Remove duplicate insights based on title and affected resources.
+
+    Two insights are considered duplicates if they have the same title
+    and the same set of affected resources. When duplicates are found,
+    the one with higher severity is kept.
+    """
+    if not insights:
+        return insights
+
+    # Build deduplication key: (normalized_title, frozenset of resources)
+    seen: dict[tuple[str, frozenset[str]], MonitoringInsight] = {}
+    severity_order = {
+        InsightSeverity.CRITICAL: 4,
+        InsightSeverity.WARNING: 3,
+        InsightSeverity.INFO: 2,
+        InsightSeverity.OPTIMIZATION: 1,
+    }
+
+    for insight in insights:
+        # Normalize title for comparison (lowercase, strip whitespace)
+        normalized_title = insight.title.lower().strip()
+        resources_key = frozenset(r.lower().strip() for r in insight.affected_resources)
+        key = (normalized_title, resources_key)
+
+        if key in seen:
+            existing = seen[key]
+            # Keep the one with higher severity
+            if severity_order.get(insight.severity, 0) > severity_order.get(existing.severity, 0):
+                LOGGER.debug(
+                    "Replacing duplicate insight '%s' (severity %s -> %s)",
+                    insight.title,
+                    existing.severity.value,
+                    insight.severity.value,
+                )
+                seen[key] = insight
+            else:
+                LOGGER.debug(
+                    "Skipping duplicate insight '%s' (keeping severity %s)",
+                    insight.title,
+                    existing.severity.value,
+                )
+        else:
+            seen[key] = insight
+
+    deduplicated = list(seen.values())
+
+    if len(deduplicated) < len(insights):
+        LOGGER.info(
+            "Deduplicated insights: %d -> %d (removed %d duplicates)",
+            len(insights),
+            len(deduplicated),
+            len(insights) - len(deduplicated),
+        )
+
+    return deduplicated
 
 
 def _generate_fallback_insights(snapshot: InfrastructureSnapshot) -> list[MonitoringInsight]:
@@ -353,11 +415,23 @@ class MonitoringService:
     insights_store: InsightsStore
     llm_client: AsyncLLMClient | None = None
     broadcast_callback: Callable[[MonitoringReport], Any] | None = None
+    metrics_collector: MetricsCollector | None = None
+    anomaly_detector: AnomalyDetector | None = None
+    remediation_service: RemediationService | None = None
 
     async def run_analysis(self) -> MonitoringReport:
         """Run a complete monitoring analysis cycle."""
         LOGGER.info("Starting monitoring analysis")
         start_time = datetime.now(timezone.utc)
+
+        # Collect metrics if enabled
+        metrics_collected = 0
+        if self.metrics_collector:
+            try:
+                metrics_collected = await self.metrics_collector.collect_all_metrics()
+                LOGGER.info("Collected %d metrics", metrics_collected)
+            except Exception as exc:
+                LOGGER.warning("Metrics collection failed: %s", exc)
 
         try:
             snapshot = await self.data_collector.collect_snapshot()
@@ -395,6 +469,15 @@ class MonitoringService:
             LOGGER.info("No LLM configured, using fallback analysis")
             insights = _generate_fallback_insights(snapshot)
 
+        # Deduplicate insights to avoid redundant alerts
+        insights = _deduplicate_insights(insights)
+
+        # Suggest remediation actions from insights (if enabled)
+        actions_suggested = 0
+        if self.remediation_service and self.remediation_service.is_enabled:
+            actions_suggested = await self._suggest_remediation_actions(insights, snapshot)
+            LOGGER.info("Suggested %d remediation actions", actions_suggested)
+
         critical_count = sum(1 for i in insights if i.severity == InsightSeverity.CRITICAL)
         warning_count = sum(1 for i in insights if i.severity == InsightSeverity.WARNING)
 
@@ -409,6 +492,12 @@ class MonitoringService:
             )
         else:
             summary_parts.append("No issues detected.")
+
+        if metrics_collected > 0:
+            summary_parts.append(f"Collected {metrics_collected} metrics.")
+
+        if actions_suggested > 0:
+            summary_parts.append(f"Suggested {actions_suggested} remediation action(s).")
 
         report = MonitoringReport(
             timestamp=start_time,
@@ -438,6 +527,84 @@ class MonitoringService:
 
         return report
 
+    async def _suggest_remediation_actions(
+        self,
+        insights: list[MonitoringInsight],
+        snapshot: InfrastructureSnapshot,
+    ) -> int:
+        """Suggest remediation actions from insights.
+
+        Returns the number of actions suggested.
+        """
+        if not self.remediation_service:
+            return 0
+
+        actions_created = 0
+
+        # Build container lookup from snapshot
+        container_lookup: dict[str, dict] = {}
+        for container in snapshot.container_details:
+            name = container.get("container_name")
+            if name:
+                container_lookup[name] = container
+
+        # Also include log entries (these have endpoint info)
+        for log_entry in snapshot.container_logs:
+            # Log entries override container_details since they have complete info
+            container_lookup[log_entry.container_name] = {
+                "container_name": log_entry.container_name,
+                "container_id": log_entry.container_id,
+                "endpoint_id": log_entry.endpoint_id,
+                "endpoint_name": log_entry.endpoint_name,
+            }
+
+        LOGGER.debug(
+            "Container lookup built with %d entries: %s",
+            len(container_lookup),
+            list(container_lookup.keys()),
+        )
+
+        for insight in insights:
+            # Only process actionable categories
+            if insight.category.lower() not in {"availability", "logs", "resource"}:
+                continue
+
+            # Try to find affected container
+            for resource_name in insight.affected_resources:
+                container_info = container_lookup.get(resource_name)
+                if not container_info:
+                    LOGGER.debug(
+                        "Resource '%s' from insight '%s' not found in container lookup",
+                        resource_name,
+                        insight.title,
+                    )
+                    continue
+
+                container_id = container_info.get("container_id")
+                endpoint_id = container_info.get("endpoint_id")
+
+                if not container_id or not endpoint_id:
+                    LOGGER.debug(
+                        "Resource '%s' missing container_id=%s or endpoint_id=%s",
+                        resource_name,
+                        container_id,
+                        endpoint_id,
+                    )
+                    continue
+
+                action = self.remediation_service.suggest_action_from_insight(
+                    insight=insight,
+                    endpoint_id=endpoint_id,
+                    endpoint_name=container_info.get("endpoint_name"),
+                    container_id=container_id,
+                    container_name=resource_name,
+                )
+
+                if action:
+                    actions_created += 1
+
+        return actions_created
+
 
 async def create_monitoring_service(
     broadcast_callback: Callable[[MonitoringReport], Any] | None = None,
@@ -448,11 +615,27 @@ async def create_monitoring_service(
     insights_store = await get_insights_store()
     llm_client = create_llm_client(settings.llm)
 
+    # Create optional services based on configuration
+    metrics_collector = None
+    anomaly_detector = None
+    remediation_service = None
+
+    if settings.metrics.enabled:
+        metrics_collector = await create_metrics_collector()
+        if settings.metrics.anomaly_detection_enabled:
+            anomaly_detector = await create_anomaly_detector()
+
+    if settings.remediation.enabled:
+        remediation_service = await get_remediation_service()
+
     return MonitoringService(
         data_collector=data_collector,
         insights_store=insights_store,
         llm_client=llm_client,
         broadcast_callback=broadcast_callback,
+        metrics_collector=metrics_collector,
+        anomaly_detector=anomaly_detector,
+        remediation_service=remediation_service,
     )
 
 

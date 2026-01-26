@@ -17,12 +17,14 @@ from portainer_dashboard.models.monitoring import (
 from portainer_dashboard.services.portainer_client import (
     AsyncPortainerClient,
     PortainerAPIError,
+    _determine_edge_agent_status,
     create_portainer_client,
     normalise_endpoint_containers,
     normalise_endpoint_metadata,
 )
 from portainer_dashboard.services.security_scanner import (
     SecurityScanner,
+    _is_excluded_container,
     create_security_scanner,
 )
 
@@ -88,7 +90,8 @@ class DataCollector:
     max_containers_for_logs: int = 10
     log_fetch_timeout: float = 10.0
     max_endpoints_per_env: int = 50
-    container_fetch_timeout: float = 30.0
+    container_fetch_timeout: float = 60.0  # Increased from 30s to handle slow API responses
+    excluded_containers: frozenset[str] = frozenset()
 
     async def collect_endpoint_data(
         self,
@@ -98,9 +101,16 @@ class DataCollector:
         """Collect container data and security issues for a single endpoint."""
         endpoint_id = int(endpoint.get("Id") or endpoint.get("id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
-        endpoint_status = endpoint.get("Status") or endpoint.get("status")
+        # Use _determine_edge_agent_status for proper edge agent detection
+        raw_status = endpoint.get("Status") or endpoint.get("status")
+        endpoint_status = _determine_edge_agent_status(endpoint, raw_status)
 
         if endpoint_status != 1:
+            LOGGER.debug(
+                "Skipping offline endpoint %s (status=%s)",
+                endpoint_name,
+                endpoint_status,
+            )
             return [], []
 
         try:
@@ -191,9 +201,20 @@ class DataCollector:
         endpoint_id = int(endpoint.get("Id") or endpoint.get("id") or 0)
         endpoint_name = endpoint.get("Name") or endpoint.get("name")
 
-        # Find problematic containers
+        # Find problematic containers (excluding infrastructure containers)
         problematic: list[tuple[dict, str, int | None]] = []
         for container in containers:
+            # Get container name for exclusion check
+            names = container.get("Names") or []
+            if isinstance(names, list) and names:
+                container_name = names[0].lstrip("/")
+            else:
+                container_name = container.get("Name") or ""
+
+            # Skip excluded infrastructure containers
+            if _is_excluded_container(container_name, self.excluded_containers):
+                continue
+
             is_problem, state_category, exit_code = _is_problematic_container(container)
             if is_problem:
                 problematic.append((container, state_category, exit_code))
@@ -388,13 +409,20 @@ class DataCollector:
                     )
 
                     for ep in endpoints:
+                        ep_id = int(ep.get("Id") or ep.get("id") or 0)
+                        ep_name = ep.get("Name") or ep.get("name")
                         ep_data = {
-                            "endpoint_id": int(ep.get("Id") or ep.get("id") or 0),
-                            "endpoint_name": ep.get("Name") or ep.get("name"),
+                            "endpoint_id": ep_id,
+                            "endpoint_name": ep_name,
                             "endpoint_status": ep.get("Status") or ep.get("status"),
                             "environment": env.name,
                         }
                         all_endpoints.append(ep_data)
+
+                        # Add endpoint info to containers for remediation lookup
+                        for c in containers_by_endpoint.get(ep_id, []):
+                            c["_endpoint_id"] = ep_id
+                            c["_endpoint_name"] = ep_name
 
             except PortainerAPIError as exc:
                 LOGGER.error(
@@ -431,6 +459,8 @@ class DataCollector:
                 "image": c.get("Image"),
                 "state": c.get("State"),
                 "status": c.get("Status"),
+                "endpoint_id": c.get("_endpoint_id"),
+                "endpoint_name": c.get("_endpoint_name"),
             }
             for c in all_containers
         ]
@@ -454,6 +484,7 @@ def create_data_collector() -> DataCollector:
     """Create a data collector with settings from configuration."""
     settings = get_settings()
     scanner = create_security_scanner()
+    excluded = frozenset(settings.monitoring.excluded_containers)
     return DataCollector(
         security_scanner=scanner,
         include_security_scan=settings.monitoring.include_security_scan,
@@ -462,6 +493,7 @@ def create_data_collector() -> DataCollector:
         log_tail_lines=settings.monitoring.log_tail_lines,
         max_containers_for_logs=settings.monitoring.max_containers_for_logs,
         log_fetch_timeout=settings.monitoring.log_fetch_timeout,
+        excluded_containers=excluded,
     )
 
 

@@ -121,6 +121,7 @@ The application is configured via environment variables:
 - `MONITORING_MAX_INSIGHTS_STORED` – Optional. Maximum number of insights to keep in memory. Defaults to 100.
 - `MONITORING_INCLUDE_SECURITY_SCAN` – Optional. Defaults to `true`. Enables scanning for elevated container capabilities.
 - `MONITORING_INCLUDE_IMAGE_CHECK` – Optional. Defaults to `true`. Enables checking for outdated container images.
+- `MONITORING_EXCLUDED_CONTAINERS` – Optional. Comma-separated list of container name patterns to exclude from monitoring. Defaults to `portainer,sysdig-host-shield,traefik,portainer_edge_agent`. Infrastructure containers that require privileged mode are excluded by default to reduce noise in security scans.
 
 When `DASHBOARD_AUTH_PROVIDER` is unset or set to `static`, both `DASHBOARD_USERNAME` and `DASHBOARD_KEY` must be provided. The app blocks access and displays an error until those credentials are configured. When `DASHBOARD_AUTH_PROVIDER=oidc`, configure the matching `DASHBOARD_OIDC_*` variables instead—the dashboard redirects users through the standard authorization-code flow, discovers the provider endpoints via the well-known document, and validates ID tokens against the advertised JWKS before establishing a session.
 

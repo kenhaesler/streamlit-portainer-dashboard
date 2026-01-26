@@ -84,7 +84,7 @@ class AsyncKibanaClient:
     endpoint: str
     api_key: str
     verify_ssl: bool = True
-    timeout: int = 30
+    timeout: int = 60  # Increased from 30s to handle slow API responses
 
     def __post_init__(self) -> None:
         if not self.endpoint:

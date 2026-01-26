@@ -2,17 +2,43 @@
 
 from __future__ import annotations
 
+import time
+from typing import Callable
+
 import streamlit as st
 
 from api_client import get_api_client
 
 
+# Auto-refresh configuration
+AUTO_REFRESH_OPTIONS = {
+    "Off": 0,
+    "30s": 30,
+    "1m": 60,
+    "5m": 300,
+    "10m": 600,
+}
+
+
 def require_auth() -> None:
-    """Check authentication and redirect to login if needed."""
+    """Check authentication and redirect to login if needed.
+
+    This function first checks session state, then attempts to restore
+    from browser cookie (survives F5 refresh).
+    """
     client = get_api_client()
-    if not client.is_authenticated():
-        st.warning("Please login from the Home page")
-        st.stop()
+
+    # Fast path: already authenticated
+    if client.is_authenticated():
+        return
+
+    # Try to restore session from browser cookie
+    if client.try_restore_session():
+        return
+
+    # No valid session
+    st.warning("Please login from the Home page")
+    st.stop()
 
 
 def render_sidebar() -> None:
@@ -72,4 +98,71 @@ def render_session_expiry_banner() -> None:
             )
 
 
-__all__ = ["require_auth", "render_sidebar", "render_session_expiry_banner"]
+def render_refresh_controls(
+    page_key: str,
+    on_refresh: Callable[[], None] | None = None,
+) -> bool:
+    """Render auto-refresh toggle and manual refresh button.
+
+    Args:
+        page_key: Unique key for this page's refresh state.
+        on_refresh: Optional callback when refresh is triggered.
+
+    Returns:
+        True if a refresh was triggered (manual or auto), False otherwise.
+    """
+    refresh_triggered = False
+
+    col1, col2, col3 = st.columns([4, 2, 1])
+
+    with col2:
+        # Auto-refresh interval selector
+        current_interval = st.session_state.get(f"{page_key}_auto_refresh", "Off")
+        selected_interval = st.selectbox(
+            "Auto-refresh",
+            options=list(AUTO_REFRESH_OPTIONS.keys()),
+            index=list(AUTO_REFRESH_OPTIONS.keys()).index(current_interval),
+            key=f"{page_key}_refresh_select",
+            label_visibility="collapsed",
+        )
+        st.session_state[f"{page_key}_auto_refresh"] = selected_interval
+
+    with col3:
+        # Manual refresh button
+        if st.button("Refresh", use_container_width=True, key=f"{page_key}_manual_refresh"):
+            st.cache_data.clear()
+            refresh_triggered = True
+            if on_refresh:
+                on_refresh()
+
+    # Handle auto-refresh timing
+    interval_seconds = AUTO_REFRESH_OPTIONS.get(selected_interval, 0)
+    if interval_seconds > 0:
+        last_refresh_key = f"{page_key}_last_refresh"
+        last_refresh = st.session_state.get(last_refresh_key, 0)
+        current_time = time.time()
+
+        if current_time - last_refresh >= interval_seconds:
+            st.session_state[last_refresh_key] = current_time
+            st.cache_data.clear()
+            refresh_triggered = True
+            if on_refresh:
+                on_refresh()
+            st.rerun()
+
+        # Show time until next refresh
+        time_remaining = int(interval_seconds - (current_time - last_refresh))
+        if time_remaining > 0:
+            with col1:
+                st.caption(f"Next refresh in {time_remaining}s")
+
+    return refresh_triggered
+
+
+__all__ = [
+    "require_auth",
+    "render_sidebar",
+    "render_session_expiry_banner",
+    "render_refresh_controls",
+    "AUTO_REFRESH_OPTIONS",
+]

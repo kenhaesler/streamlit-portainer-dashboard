@@ -19,9 +19,18 @@ dependencies = [
     "tenacity>=9.0.0",
     "filelock>=3.20.0",
     "itsdangerous>=2.2.0",
+    # Security: Pin cryptography to fix CVE-2023-50782, CVE-2024-0727, PYSEC-2024-225, GHSA-h4gh-qq45-vh27
+    "cryptography>=43.0.1",
 ]
 
 [project.optional-dependencies]
+tracing = [
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-instrumentation-fastapi>=0.41b0",
+    "opentelemetry-instrumentation-httpx>=0.41b0",
+    "opentelemetry-semantic-conventions>=0.41b0",
+]
 streamlit = [
     "streamlit>=1.40.0",
     "plotly>=5.24.0",
@@ -35,6 +44,10 @@ dev = [
     "ruff>=0.8.0",
     "mypy>=1.14.0",
     "pandas-stubs>=2.2.0",
+]
+e2e = [
+    "playwright>=1.40.0",
+    "pytest-playwright>=0.4.0",
 ]
 
 [project.scripts]

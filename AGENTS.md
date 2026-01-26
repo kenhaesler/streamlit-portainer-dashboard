@@ -21,7 +21,11 @@ Welcome! This repository powers the Streamlit Portainer dashboard with a hybrid 
 - API client in `streamlit_ui/api_client.py`
 
 **Tests:**
-- Tests reside in the `tests/` package and cover the Portainer client, backup helpers, LLM integration, and monitoring services.
+- Unit/integration tests reside in `tests/unit/` and `tests/integration/`
+- E2E tests using Playwright are in `tests/e2e/`
+  - Page Object Model classes in `tests/e2e/pages/`
+  - MockServer configs in `tests/e2e/mocks/`
+- Tests cover Portainer client, backup helpers, LLM integration, monitoring services, and full UI flows
 
 **Scripts:**
 - Shell utilities live in `scripts/`; the `check_app_starts.sh` script bootstraps the Streamlit server for smoke testing.
@@ -35,9 +39,11 @@ Welcome! This repository powers the Streamlit Portainer dashboard with a hybrid 
 - Avoid capping or truncating data whenever possible; instead, design solutions that can gracefully handle the full data set.
 
 ## Testing expectations
-- Always run the available automated checks when modifying code. At a minimum execute `pytest -q` before submitting a change, and run any targeted tests that cover the modules you touched.
+- Always run the available automated checks when modifying code. At a minimum execute `pytest tests/unit tests/integration -q` before submitting a change, and run any targeted tests that cover the modules you touched.
 - Do not commit changes while any required automated tests are failing.
 - When you adjust UI flows or authentication, pair the unit tests with a manual smoke test via `scripts/check_app_starts.sh` to confirm the app still boots and the login flow works as expected.
+- For UI changes, consider running E2E tests: `pytest tests/e2e/ -v` (requires `pip install -e ".[e2e]"` and `playwright install chromium`).
+- E2E tests can run against the Docker Compose mock environment: `docker compose -f docker-compose.e2e.yml up -d --wait`
 
 ## Environment & configuration
 - Streamlit configuration lives under `.streamlit/`. Data directories are configured via environment variables.

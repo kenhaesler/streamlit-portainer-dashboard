@@ -5,16 +5,24 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from portainer_dashboard.auth.dependencies import SESSION_COOKIE_NAME
 from portainer_dashboard.config import get_settings
+from portainer_dashboard.core.session import SessionStorage
+from portainer_dashboard.dependencies import get_session_storage
+from portainer_dashboard.models.auth import SessionData
 from portainer_dashboard.services.llm_client import (
     AsyncLLMClient,
     LLMClientError,
     create_llm_client,
 )
+from portainer_dashboard.services.log_sanitizer import sanitize_logs
 from portainer_dashboard.services.portainer_client import (
     PortainerAPIError,
     create_portainer_client,
@@ -25,7 +33,80 @@ from portainer_dashboard.services.portainer_client import (
 
 LOGGER = logging.getLogger(__name__)
 
+
+async def _authenticate_websocket(websocket: WebSocket) -> SessionData | None:
+    """Authenticate a WebSocket connection using session cookie.
+
+    Args:
+        websocket: The WebSocket connection to authenticate.
+
+    Returns:
+        SessionData if authenticated, None otherwise.
+    """
+    token = websocket.cookies.get(SESSION_COOKIE_NAME)
+    if not token:
+        return None
+
+    storage: SessionStorage = get_session_storage()
+    record = storage.retrieve(token)
+    if record is None:
+        return None
+
+    now = datetime.now(timezone.utc)
+    settings = get_settings()
+
+    session_data = SessionData(
+        token=record.token,
+        username=record.username,
+        auth_method=record.auth_method,
+        authenticated_at=record.authenticated_at,
+        last_active=record.last_active,
+        session_timeout=record.session_timeout or settings.auth.session_timeout,
+    )
+
+    if session_data.is_expired(now):
+        storage.delete(token)
+        return None
+
+    # Update last active time
+    storage.touch(
+        token,
+        last_active=now,
+        session_timeout=session_data.session_timeout,
+    )
+
+    return session_data
+
 router = APIRouter()
+
+# Infrastructure context cache
+_CONTEXT_CACHE_TTL_SECONDS = 30.0
+
+
+@dataclass
+class _ContextCache:
+    """Cache for infrastructure context to avoid rebuilding on every query."""
+
+    context: str = ""
+    timestamp: float = 0.0
+    lock: asyncio.Lock | None = None
+
+    def is_valid(self) -> bool:
+        """Check if cached context is still valid."""
+        return (
+            self.context
+            and (time.monotonic() - self.timestamp) < _CONTEXT_CACHE_TTL_SECONDS
+        )
+
+
+_context_cache = _ContextCache()
+
+
+async def _get_context_cache_lock() -> asyncio.Lock:
+    """Get or create the cache lock (must be created in async context)."""
+    if _context_cache.lock is None:
+        _context_cache.lock = asyncio.Lock()
+    return _context_cache.lock
 
 
 def _calculate_cpu_percent(stats: dict) -> float | None:
@@ -114,8 +195,8 @@ async def _fetch_container_logs(
         return None
 
 
-async def _build_context() -> str:
-    """Build a context string with current infrastructure data."""
+async def _build_context_uncached() -> str:
+    """Build a context string with current infrastructure data (no caching)."""
     settings = get_settings()
     environments = settings.portainer.get_configured_environments()
 
@@ -139,28 +220,44 @@ async def _build_context() -> str:
                     f"Total endpoints: {len(endpoints)} ({online_count} online, {offline_count} offline)"
                 )
 
-                # Get containers for each endpoint
-                all_endpoints: list[dict] = []
+                # Get containers and stacks for each endpoint in parallel
+                all_endpoints: list[dict] = list(endpoints[:10])  # Limit to first 10 endpoints for context
                 containers_by_endpoint: dict[int, list[dict]] = {}
                 stacks_by_endpoint: dict[int, list[dict]] = {}
 
-                for ep in endpoints[:10]:  # Limit to first 10 endpoints for context
+                async def fetch_endpoint_data(ep: dict) -> tuple[int, list[dict], list[dict]]:
+                    """Fetch containers and stacks for a single endpoint."""
                     ep_id = int(ep.get("Id") or ep.get("id") or 0)
-                    all_endpoints.append(ep)
+                    containers: list[dict] = []
+                    stacks: list[dict] = []
 
                     try:
                         containers = await client.list_containers_for_endpoint(
                             ep_id, include_stopped=True
                         )
-                        containers_by_endpoint[ep_id] = containers
                     except PortainerAPIError:
-                        containers_by_endpoint[ep_id] = []
+                        pass
 
                     try:
                         stacks = await client.list_stacks_for_endpoint(ep_id)
-                        stacks_by_endpoint[ep_id] = stacks
                     except PortainerAPIError:
-                        stacks_by_endpoint[ep_id] = []
+                        pass
+
+                    return ep_id, containers, stacks
+
+                # Fetch all endpoint data in parallel
+                results = await asyncio.gather(
+                    *[fetch_endpoint_data(ep) for ep in all_endpoints],
+                    return_exceptions=True
+                )
+
+                for result in results:
+                    if isinstance(result, Exception):
+                        LOGGER.debug("Endpoint data fetch error: %s", result)
+                        continue
+                    ep_id, containers, stacks = result
+                    containers_by_endpoint[ep_id] = containers
+                    stacks_by_endpoint[ep_id] = stacks
 
                 df_containers = normalise_endpoint_containers(
                     all_endpoints, containers_by_endpoint
@@ -213,7 +310,7 @@ async def _build_context() -> str:
                         if stats:
                             container_stats[cid] = stats
 
-                # Identify stopped/unhealthy containers that need logs
+                # Identify stopped/unhealthy/restarting containers that need logs
                 stopped_container_ids: list[tuple[int, str, str]] = []
                 for _, row in df_containers.iterrows():
                     state = row.get("state", "")
@@ -222,13 +319,13 @@ async def _build_context() -> str:
                     ep_id = row.get("endpoint_id")
                     name = row.get("container_name", "unknown")
 
-                    # Fetch logs for stopped, exited, or unhealthy containers
-                    if cid and ep_id and state in ("exited", "dead", "created"):
+                    # Fetch logs for stopped, exited, restarting, or unhealthy containers
+                    if cid and ep_id and state in ("exited", "dead", "created", "restarting"):
                         stopped_container_ids.append((ep_id, cid, name))
                     elif cid and ep_id and "unhealthy" in status.lower():
                         stopped_container_ids.append((ep_id, cid, name))
 
-                # Fetch logs for stopped/unhealthy containers (limit to 5 to avoid timeout)
+                # Fetch logs for stopped/unhealthy/restarting containers (limit to 5 to avoid timeout)
                 container_logs: dict[str, str] = {}
                 if stopped_container_ids:
                     logs_tasks = [
@@ -277,6 +374,8 @@ async def _build_context() -> str:
                         # Add logs for stopped/unhealthy containers
                         if cid and cid in container_logs:
                             logs = container_logs[cid]
+                            # Sanitize logs to remove potential secrets
+                            logs = sanitize_logs(logs)
                             # Truncate logs to last 20 lines for context
                             log_lines = logs.strip().split("\n")[-20:]
                             truncated_logs = "\n".join(log_lines)
@@ -306,28 +405,104 @@ async def _build_context() -> str:
     return "\n".join(context_parts) if context_parts else "No infrastructure data available."
 
 
+async def _build_context() -> str:
+    """Build context with caching to avoid rebuilding on every query.
+
+    Uses a 30-second TTL cache to reduce Portainer API load while keeping
+    data reasonably fresh for interactive chat.
+    """
+    global _context_cache
+
+    # Check if cache is valid
+    if _context_cache.is_valid():
+        LOGGER.debug("Using cached infrastructure context (age: %.1fs)",
+                     time.monotonic() - _context_cache.timestamp)
+        return _context_cache.context
+
+    # Acquire lock to prevent concurrent rebuilds
+    lock = await _get_context_cache_lock()
+    async with lock:
+        # Double-check after acquiring lock
+        if _context_cache.is_valid():
+            return _context_cache.context
+
+        LOGGER.debug("Building fresh infrastructure context")
+        context = await _build_context_uncached()
+
+        # Update cache
+        _context_cache.context = context
+        _context_cache.timestamp = time.monotonic()
+
+        return context
+
+
 def _build_system_prompt(context: str) -> str:
-    """Build the system prompt with infrastructure context."""
-    return f"""You are a helpful assistant for managing Portainer infrastructure. You have access to the current state of the infrastructure, including container logs for stopped or unhealthy containers:
+    """Build the system prompt with infrastructure context and few-shot examples."""
+    return f"""You are a helpful assistant for managing Portainer infrastructure. You have access to the current state of the infrastructure, including container logs for stopped, unhealthy, or restarting containers:
 
 {context}
 
 When answering questions:
 1. Be concise and direct
 2. Use the provided infrastructure context to answer questions
-3. When a container is stopped or unhealthy, check the "Recent Logs" section for that container to diagnose the issue
+3. When a container is stopped, unhealthy, or restarting (crash loop), check the "Recent Logs" section for that container to diagnose the issue
 4. Analyze log output to identify errors, exceptions, or failure reasons
 5. If you don't have enough information, say so
 6. Format responses with markdown when helpful
 7. For lists of containers or endpoints, use tables when appropriate
-8. When diagnosing container failures, look for: error messages, stack traces, exit codes, permission issues, missing files, connection failures, or OOM kills"""
+8. When diagnosing container failures, look for: error messages, stack traces, exit codes, permission issues, missing files, connection failures, or OOM kills
+
+## Example Interactions
+
+**User:** How many containers are running?
+**Assistant:** Based on the current infrastructure data, there are **12 containers running** across 3 endpoints. Here's the breakdown:
+
+| Endpoint | Running | Stopped |
+|----------|---------|---------|
+| prod-server-1 | 5 | 1 |
+| prod-server-2 | 4 | 0 |
+| dev-server | 3 | 2 |
+
+---
+
+**User:** Why is my-app container stopped?
+**Assistant:** The **my-app** container on endpoint **prod-server-1** exited with an error. Looking at the recent logs:
+
+**Root Cause:** The container failed to connect to the database.
+```
+Error: Connection refused to postgres:5432
+```
+
+**Recommended Actions:**
+1. Verify the postgres container is running
+2. Check network connectivity between containers
+3. Ensure database credentials are correct
+
+---
+
+**User:** Show me unhealthy containers
+**Assistant:** Found **2 unhealthy containers**:
+
+| Container | Endpoint | Status | Issue |
+|-----------|----------|--------|-------|
+| api-gateway | prod-server-1 | unhealthy | Health check timeout |
+| worker-queue | prod-server-2 | unhealthy | Port 8080 not responding |
+
+Check the health check configuration and container logs for more details."""
 
 
 @router.websocket("/ws/llm/chat")
 async def llm_chat_websocket(websocket: WebSocket) -> None:
     """WebSocket endpoint for LLM chat with streaming responses."""
+    # Authenticate before accepting connection
+    user = await _authenticate_websocket(websocket)
+    if user is None:
+        await websocket.close(code=4001, reason="Not authenticated")
+        LOGGER.warning("LLM chat WebSocket connection rejected: not authenticated")
+        return
+
     await websocket.accept()
-    LOGGER.info("LLM chat WebSocket connected")
+    LOGGER.info("LLM chat WebSocket connected for user: %s", user.username)
 
     settings = get_settings()
     llm_client = create_llm_client(settings.llm)

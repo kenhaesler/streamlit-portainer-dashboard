@@ -6,20 +6,135 @@ services:
       dockerfile: Dockerfile
     ports:
       - "8000:8000"
-    env_file:
-      - .env
     environment:
+      # ============================================
+      # AUTHENTICATION
+      # ============================================
+      # Auth provider: "static" (username/password) or "oidc"
+      - DASHBOARD_AUTH_PROVIDER=static
+      # Session timeout in minutes (default: 60)
+      - DASHBOARD_SESSION_TIMEOUT_MINUTES=60
+
+      # --- Static Authentication (when AUTH_PROVIDER=static) ---
+      - DASHBOARD_USERNAME=admin
+      - DASHBOARD_KEY=changeme
+
+      # --- OIDC Authentication (when AUTH_PROVIDER=oidc) ---
+      # - DASHBOARD_OIDC_ISSUER=https://your-idp.example.com
+      # - DASHBOARD_OIDC_CLIENT_ID=your-client-id
+      # - DASHBOARD_OIDC_CLIENT_SECRET=your-client-secret
+      # - DASHBOARD_OIDC_REDIRECT_URI=http://localhost:8000/auth/oidc/callback
+      # - DASHBOARD_OIDC_SCOPES=openid profile email
+      # - DASHBOARD_OIDC_DISCOVERY_URL=
+      # - DASHBOARD_OIDC_AUDIENCE=
+
+      # ============================================
+      # SESSION STORAGE
+      # ============================================
+      # Backend: "memory" or "sqlite" (sqlite recommended for production)
       - DASHBOARD_SESSION_BACKEND=sqlite
+      # SQLite path (only used when backend=sqlite)
+      - DASHBOARD_SESSION_SQLITE_PATH=/app/.data/sessions.db
+
+      # ============================================
+      # PORTAINER CONNECTION
+      # ============================================
+      # Single environment configuration
+      - PORTAINER_API_URL=https://your-portainer-instance.example.com
+      - PORTAINER_API_KEY=your-portainer-api-key
+      - PORTAINER_VERIFY_SSL=true
+      - PORTAINER_ENVIRONMENT_NAME=Default
+
+      # Multi-environment configuration (comma-separated names)
+      # - PORTAINER_ENVIRONMENTS=Production,Staging
+      # - PORTAINER_PRODUCTION_API_URL=https://portainer-prod.example.com
+      # - PORTAINER_PRODUCTION_API_KEY=prod-api-key
+      # - PORTAINER_PRODUCTION_VERIFY_SSL=true
+      # - PORTAINER_STAGING_API_URL=https://portainer-staging.example.com
+      # - PORTAINER_STAGING_API_KEY=staging-api-key
+      # - PORTAINER_STAGING_VERIFY_SSL=true
+
+      # ============================================
+      # CACHING
+      # ============================================
+      - PORTAINER_CACHE_ENABLED=true
+      - PORTAINER_CACHE_TTL_SECONDS=900
+      - PORTAINER_CACHE_DIR=/app/.data/cache
+
+      # ============================================
+      # LLM ASSISTANT
+      # ============================================
+      # LLM API endpoint (Ollama or OpenAI-compatible)
+      - LLM_API_ENDPOINT=http://host.docker.internal:11434/v1/chat/completions
+      - LLM_MODEL=llama3
+      - LLM_BEARER_TOKEN=
+      - LLM_MAX_TOKENS=4096
+      - LLM_TIMEOUT=60
+      # Custom CA bundle for self-signed certs (optional)
+      # - LLM_CA_BUNDLE=/path/to/ca-bundle.crt
+
+      # ============================================
+      # KIBANA / ELASTICSEARCH LOGS
+      # ============================================
+      # - KIBANA_LOGS_ENDPOINT=https://your-kibana.example.com
+      # - KIBANA_API_KEY=your-kibana-api-key
+      # - KIBANA_VERIFY_SSL=true
+      # - KIBANA_TIMEOUT_SECONDS=30
+
+      # ============================================
+      # AI MONITORING SERVICE
+      # ============================================
+      - MONITORING_ENABLED=true
+      - MONITORING_INTERVAL_MINUTES=5
+      - MONITORING_MAX_INSIGHTS_STORED=100
+      - MONITORING_INCLUDE_SECURITY_SCAN=true
+      - MONITORING_INCLUDE_IMAGE_CHECK=true
+      - MONITORING_INCLUDE_LOG_ANALYSIS=true
+      - MONITORING_LOG_TAIL_LINES=100
+      - MONITORING_MAX_CONTAINERS_FOR_LOGS=10
+      - MONITORING_LOG_FETCH_TIMEOUT=10.0
+
+      # ============================================
+      # METRICS COLLECTION
+      # ============================================
+      - MONITORING_METRICS_ENABLED=true
+      - MONITORING_METRICS_RETENTION_HOURS=168
+      - MONITORING_METRICS_COLLECTION_INTERVAL_SECONDS=60
+      - MONITORING_METRICS_SQLITE_PATH=/app/.data/metrics.db
+      - MONITORING_METRICS_ANOMALY_DETECTION_ENABLED=true
+      - MONITORING_METRICS_ZSCORE_THRESHOLD=3.0
+      - MONITORING_METRICS_MOVING_AVERAGE_WINDOW=30
+      - MONITORING_METRICS_MIN_SAMPLES_FOR_DETECTION=10
+
+      # ============================================
+      # SELF-HEALING REMEDIATION
+      # ============================================
+      - REMEDIATION_ENABLED=true
+      - REMEDIATION_AUTO_SUGGEST=true
+      - REMEDIATION_MAX_PENDING_ACTIONS=100
+      - REMEDIATION_ACTION_TIMEOUT_SECONDS=60
+      - REMEDIATION_SQLITE_PATH=/app/.data/actions.db
+
+      # ============================================
+      # DISTRIBUTED TRACING
+      # ============================================
+      - TRACING_ENABLED=true
+      - TRACING_SERVICE_NAME=portainer-dashboard
+      - TRACING_SQLITE_PATH=/app/.data/traces.db
+      - TRACING_RETENTION_HOURS=24
+      - TRACING_SAMPLE_RATE=1.0
+
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # Persist data across container restarts
+      - backend-data:/app/.data
     healthcheck:
       test: ["CMD", "python", "-c", "import httpx; httpx.get('http://localhost:8000/health').raise_for_status()"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
-    networks:
-      - dashboard-net
 
   # Streamlit Frontend
   frontend:
@@ -29,13 +144,11 @@ services:
     ports:
       - "8502:8502"
     environment:
+      # Backend URL (use service name for inter-container communication)
       - FASTAPI_BACKEND_URL=http://backend:8000
     depends_on:
       backend:
         condition: service_healthy
-    networks:
-      - dashboard-net
 
-networks:
-  dashboard-net:
-    driver: bridge
+volumes:
+  backend-data:

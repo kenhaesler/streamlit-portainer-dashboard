@@ -149,6 +149,11 @@ async def authenticated_client(app, test_settings: None) -> AsyncGenerator[Async
 @pytest.fixture
 def mock_portainer_endpoints() -> list[dict]:
     """Sample Portainer endpoint data for testing."""
+    import time
+
+    # Use current timestamp for LastCheckInDate to simulate online edge agents
+    now = int(time.time())
+
     return [
         {
             "Id": 1,
@@ -158,6 +163,8 @@ def mock_portainer_endpoints() -> list[dict]:
             "EdgeID": "edge-id-1",
             "EdgeKey": "edge-key-1",
             "Status": 1,
+            "LastCheckInDate": now,  # Recent check-in = online
+            "EdgeCheckinInterval": 5,
             "Snapshots": [
                 {
                     "DockerSnapshotRaw": {
@@ -178,6 +185,8 @@ def mock_portainer_endpoints() -> list[dict]:
             "EdgeID": "edge-id-2",
             "EdgeKey": "edge-key-2",
             "Status": 1,
+            "LastCheckInDate": now,  # Recent check-in = online
+            "EdgeCheckinInterval": 5,
             "Snapshots": [
                 {
                     "DockerSnapshotRaw": {
