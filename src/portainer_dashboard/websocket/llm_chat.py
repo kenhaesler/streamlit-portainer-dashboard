@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
+from dataclasses import dataclass
 from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -15,6 +17,7 @@ from portainer_dashboard.services.llm_client import (
     LLMClientError,
     create_llm_client,
 )
+from portainer_dashboard.services.log_sanitizer import sanitize_logs
 from portainer_dashboard.services.portainer_client import (
     PortainerAPIError,
     create_portainer_client,
@@ -26,6 +29,35 @@ from portainer_dashboard.services.portainer_client import (
 LOGGER = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Infrastructure context cache
+_CONTEXT_CACHE_TTL_SECONDS = 30.0
+
+
+@dataclass
+class _ContextCache:
+    """Cache for infrastructure context to avoid rebuilding on every query."""
+
+    context: str = ""
+    timestamp: float = 0.0
+    lock: asyncio.Lock | None = None
+
+    def is_valid(self) -> bool:
+        """Check if cached context is still valid."""
+        return (
+            self.context
+            and (time.monotonic() - self.timestamp) < _CONTEXT_CACHE_TTL_SECONDS
+        )
+
+
+_context_cache = _ContextCache()
+
+
+async def _get_context_cache_lock() -> asyncio.Lock:
+    """Get or create the cache lock (must be created in async context)."""
+    if _context_cache.lock is None:
+        _context_cache.lock = asyncio.Lock()
+    return _context_cache.lock
 
 
 def _calculate_cpu_percent(stats: dict) -> float | None:
@@ -114,8 +146,8 @@ async def _fetch_container_logs(
         return None
 
 
-async def _build_context() -> str:
-    """Build a context string with current infrastructure data."""
+async def _build_context_uncached() -> str:
+    """Build a context string with current infrastructure data (no caching)."""
     settings = get_settings()
     environments = settings.portainer.get_configured_environments()
 
@@ -293,6 +325,8 @@ async def _build_context() -> str:
                         # Add logs for stopped/unhealthy containers
                         if cid and cid in container_logs:
                             logs = container_logs[cid]
+                            # Sanitize logs to remove potential secrets
+                            logs = sanitize_logs(logs)
                             # Truncate logs to last 20 lines for context
                             log_lines = logs.strip().split("\n")[-20:]
                             truncated_logs = "\n".join(log_lines)
@@ -322,8 +356,39 @@ async def _build_context() -> str:
     return "\n".join(context_parts) if context_parts else "No infrastructure data available."
 
 
+async def _build_context() -> str:
+    """Build context with caching to avoid rebuilding on every query.
+
+    Uses a 30-second TTL cache to reduce Portainer API load while keeping
+    data reasonably fresh for interactive chat.
+    """
+    global _context_cache
+
+    # Check if cache is valid
+    if _context_cache.is_valid():
+        LOGGER.debug("Using cached infrastructure context (age: %.1fs)",
+                     time.monotonic() - _context_cache.timestamp)
+        return _context_cache.context
+
+    # Acquire lock to prevent concurrent rebuilds
+    lock = await _get_context_cache_lock()
+    async with lock:
+        # Double-check after acquiring lock
+        if _context_cache.is_valid():
+            return _context_cache.context
+
+        LOGGER.debug("Building fresh infrastructure context")
+        context = await _build_context_uncached()
+
+        # Update cache
+        _context_cache.context = context
+        _context_cache.timestamp = time.monotonic()
+
+        return context
+
+
 def _build_system_prompt(context: str) -> str:
-    """Build the system prompt with infrastructure context."""
+    """Build the system prompt with infrastructure context and few-shot examples."""
     return f"""You are a helpful assistant for managing Portainer infrastructure. You have access to the current state of the infrastructure, including container logs for stopped, unhealthy, or restarting containers:
 
 {context}
@@ -336,7 +401,45 @@ When answering questions:
 5. If you don't have enough information, say so
 6. Format responses with markdown when helpful
 7. For lists of containers or endpoints, use tables when appropriate
-8. When diagnosing container failures, look for: error messages, stack traces, exit codes, permission issues, missing files, connection failures, or OOM kills"""
+8. When diagnosing container failures, look for: error messages, stack traces, exit codes, permission issues, missing files, connection failures, or OOM kills
+
+## Example Interactions
+
+**User:** How many containers are running?
+**Assistant:** Based on the current infrastructure data, there are **12 containers running** across 3 endpoints. Here's the breakdown:
+
+| Endpoint | Running | Stopped |
+|----------|---------|---------|
+| prod-server-1 | 5 | 1 |
+| prod-server-2 | 4 | 0 |
+| dev-server | 3 | 2 |
+
+---
+
+**User:** Why is my-app container stopped?
+**Assistant:** The **my-app** container on endpoint **prod-server-1** exited with an error. Looking at the recent logs:
+
+**Root Cause:** The container failed to connect to the database.
+```
+Error: Connection refused to postgres:5432
+```
+
+**Recommended Actions:**
+1. Verify the postgres container is running
+2. Check network connectivity between containers
+3. Ensure database credentials are correct
+
+---
+
+**User:** Show me unhealthy containers
+**Assistant:** Found **2 unhealthy containers**:
+
+| Container | Endpoint | Status | Issue |
+|-----------|----------|--------|-------|
+| api-gateway | prod-server-1 | unhealthy | Health check timeout |
+| worker-queue | prod-server-2 | unhealthy | Port 8080 not responding |
+
+Check the health check configuration and container logs for more details."""
 
 
 @router.websocket("/ws/llm/chat")

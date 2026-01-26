@@ -6,6 +6,7 @@ import asyncio
 import base64
 import json
 import logging
+import random
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -15,6 +16,88 @@ import httpx
 from portainer_dashboard.config import LLMSettings, get_settings
 
 LOGGER = logging.getLogger(__name__)
+
+# Retry configuration
+_DEFAULT_MAX_RETRIES = 3
+_DEFAULT_RETRY_BASE_DELAY = 1.0  # seconds
+_DEFAULT_RETRY_MAX_DELAY = 10.0  # seconds
+_DEFAULT_RETRY_JITTER = 0.1  # 10% jitter
+
+
+def _is_retryable_error(exc: Exception) -> bool:
+    """Check if an error is retryable (transient)."""
+    if isinstance(exc, httpx.TimeoutException):
+        return True
+    if isinstance(exc, httpx.ConnectError):
+        return True
+    if isinstance(exc, httpx.HTTPStatusError):
+        # Retry on 5xx server errors and 429 rate limits
+        return exc.response.status_code >= 500 or exc.response.status_code == 429
+    return False
+
+
+async def _retry_with_backoff[T](
+    operation: str,
+    func,
+    max_retries: int = _DEFAULT_MAX_RETRIES,
+    base_delay: float = _DEFAULT_RETRY_BASE_DELAY,
+    max_delay: float = _DEFAULT_RETRY_MAX_DELAY,
+) -> T:
+    """Execute a function with exponential backoff retry.
+
+    Args:
+        operation: Description of the operation for logging
+        func: Async function to execute
+        max_retries: Maximum number of retry attempts
+        base_delay: Initial delay between retries (seconds)
+        max_delay: Maximum delay between retries (seconds)
+
+    Returns:
+        The result of the function
+
+    Raises:
+        The last exception if all retries fail
+    """
+    last_exception: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        try:
+            return await func()
+        except Exception as exc:
+            last_exception = exc
+
+            if not _is_retryable_error(exc):
+                # Non-retryable error, raise immediately
+                raise
+
+            if attempt >= max_retries:
+                # All retries exhausted
+                LOGGER.warning(
+                    "%s failed after %d attempts: %s",
+                    operation,
+                    attempt + 1,
+                    exc,
+                )
+                raise
+
+            # Calculate delay with exponential backoff and jitter
+            delay = min(base_delay * (2**attempt), max_delay)
+            jitter = delay * _DEFAULT_RETRY_JITTER * random.random()
+            delay += jitter
+
+            LOGGER.info(
+                "%s attempt %d failed (%s), retrying in %.2fs...",
+                operation,
+                attempt + 1,
+                type(exc).__name__,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+    # Should not reach here, but satisfy type checker
+    if last_exception:
+        raise last_exception
+    raise RuntimeError("Unexpected retry loop exit")
 
 # Connection pool for LLM API clients
 _DEFAULT_MAX_CONNECTIONS = 10
@@ -266,7 +349,11 @@ class AsyncLLMClient:
         max_tokens: int = 512,
         extra_options: dict[str, Any] | None = None,
     ) -> str:
-        """Send a chat completion request and return the response text."""
+        """Send a chat completion request and return the response text.
+
+        Includes automatic retry with exponential backoff for transient errors
+        (timeouts, connection errors, 5xx server errors, rate limits).
+        """
         payload = self._payload(
             messages,
             temperature=temperature,
@@ -275,9 +362,8 @@ class AsyncLLMClient:
             extra_options=extra_options,
         )
 
-        try:
+        async def _do_request() -> httpx.Response:
             if self.use_pool:
-                # Use pooled client for better connection reuse
                 client = await self._get_pooled_client()
                 response = await client.post(
                     self.base_url,
@@ -285,7 +371,6 @@ class AsyncLLMClient:
                     json=payload,
                 )
             else:
-                # Legacy: create new client per request
                 async with httpx.AsyncClient(
                     timeout=self.timeout, verify=self.verify_ssl
                 ) as client:
@@ -295,6 +380,10 @@ class AsyncLLMClient:
                         json=payload,
                     )
             response.raise_for_status()
+            return response
+
+        try:
+            response = await _retry_with_backoff("LLM chat request", _do_request)
         except httpx.HTTPError as exc:
             raise LLMClientError(f"Failed to query LLM API: {exc}") from exc
 
@@ -314,7 +403,11 @@ class AsyncLLMClient:
         max_tokens: int = 512,
         extra_options: dict[str, Any] | None = None,
     ) -> AsyncIterator[str]:
-        """Stream chat completion response chunks."""
+        """Stream chat completion response chunks.
+
+        Includes automatic retry with exponential backoff for connection errors.
+        Note: Retry only applies to initial connection; mid-stream errors are not retried.
+        """
         payload = self._payload(
             messages,
             temperature=temperature,
@@ -323,40 +416,33 @@ class AsyncLLMClient:
             extra_options=extra_options,
         )
 
-        try:
-            if self.use_pool:
-                # Use pooled client for streaming
-                client = await self._get_pooled_client()
-                async with client.stream(
-                    "POST",
-                    self.base_url,
-                    headers=self._headers(),
-                    json=payload,
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.aiter_lines():
-                        if not line:
-                            continue
-                        if line.startswith("data: "):
-                            data_str = line[6:]
-                            if data_str.strip() == "[DONE]":
-                                break
-                            try:
-                                data = json.loads(data_str)
-                            except json.JSONDecodeError:
-                                continue
-                            choices = data.get("choices", [])
-                            if not choices:
-                                continue
-                            delta = choices[0].get("delta", {})
-                            content = delta.get("content")
-                            if content:
-                                yield content
-            else:
-                # Legacy: create new client per request
-                async with httpx.AsyncClient(
-                    timeout=self.timeout, verify=self.verify_ssl
-                ) as client:
+        async def _process_stream(response) -> AsyncIterator[str]:
+            """Process SSE stream and yield content chunks."""
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                if line.startswith("data: "):
+                    data_str = line[6:]
+                    if data_str.strip() == "[DONE]":
+                        break
+                    try:
+                        data = json.loads(data_str)
+                    except json.JSONDecodeError:
+                        continue
+                    choices = data.get("choices", [])
+                    if not choices:
+                        continue
+                    delta = choices[0].get("delta", {})
+                    content = delta.get("content")
+                    if content:
+                        yield content
+
+        # Retry logic for initial connection with exponential backoff
+        last_exception: Exception | None = None
+        for attempt in range(_DEFAULT_MAX_RETRIES + 1):
+            try:
+                if self.use_pool:
+                    client = await self._get_pooled_client()
                     async with client.stream(
                         "POST",
                         self.base_url,
@@ -364,26 +450,50 @@ class AsyncLLMClient:
                         json=payload,
                     ) as response:
                         response.raise_for_status()
-                        async for line in response.aiter_lines():
-                            if not line:
-                                continue
-                            if line.startswith("data: "):
-                                data_str = line[6:]
-                                if data_str.strip() == "[DONE]":
-                                    break
-                                try:
-                                    data = json.loads(data_str)
-                                except json.JSONDecodeError:
-                                    continue
-                                choices = data.get("choices", [])
-                                if not choices:
-                                    continue
-                                delta = choices[0].get("delta", {})
-                                content = delta.get("content")
-                                if content:
-                                    yield content
-        except httpx.HTTPError as exc:
-            raise LLMClientError(f"Failed to stream from LLM API: {exc}") from exc
+                        async for chunk in _process_stream(response):
+                            yield chunk
+                        return  # Success, exit retry loop
+                else:
+                    async with httpx.AsyncClient(
+                        timeout=self.timeout, verify=self.verify_ssl
+                    ) as client:
+                        async with client.stream(
+                            "POST",
+                            self.base_url,
+                            headers=self._headers(),
+                            json=payload,
+                        ) as response:
+                            response.raise_for_status()
+                            async for chunk in _process_stream(response):
+                                yield chunk
+                            return  # Success, exit retry loop
+
+            except httpx.HTTPError as exc:
+                last_exception = exc
+
+                if not _is_retryable_error(exc):
+                    raise LLMClientError(f"Failed to stream from LLM API: {exc}") from exc
+
+                if attempt >= _DEFAULT_MAX_RETRIES:
+                    raise LLMClientError(
+                        f"Failed to stream from LLM API after {attempt + 1} attempts: {exc}"
+                    ) from exc
+
+                delay = min(_DEFAULT_RETRY_BASE_DELAY * (2**attempt), _DEFAULT_RETRY_MAX_DELAY)
+                jitter = delay * _DEFAULT_RETRY_JITTER * random.random()
+                delay += jitter
+
+                LOGGER.info(
+                    "LLM stream attempt %d failed (%s), retrying in %.2fs...",
+                    attempt + 1,
+                    type(exc).__name__,
+                    delay,
+                )
+                await asyncio.sleep(delay)
+
+        # Should not reach here
+        if last_exception:
+            raise LLMClientError(f"Failed to stream from LLM API: {last_exception}") from last_exception
 
 
 def create_llm_client(settings: LLMSettings | None = None) -> AsyncLLMClient | None:

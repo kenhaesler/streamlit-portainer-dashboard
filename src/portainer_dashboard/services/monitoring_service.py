@@ -25,6 +25,7 @@ from portainer_dashboard.services.llm_client import (
     LLMClientError,
     create_llm_client,
 )
+from portainer_dashboard.services.log_sanitizer import sanitize_logs
 from portainer_dashboard.services.metrics_collector import MetricsCollector, create_metrics_collector
 from portainer_dashboard.services.anomaly_detector import AnomalyDetector, create_anomaly_detector
 from portainer_dashboard.services.remediation_service import RemediationService, get_remediation_service
@@ -145,8 +146,8 @@ def _build_analysis_prompt(snapshot: InfrastructureSnapshot) -> str:
             parts.append(f"Log lines: {log_entry.log_lines}")
             if log_entry.truncated:
                 parts.append("(logs truncated)")
-            # Limit log content to avoid overwhelming the LLM
-            log_content = log_entry.logs
+            # Sanitize and limit log content to avoid overwhelming the LLM
+            log_content = sanitize_logs(log_entry.logs)
             if len(log_content) > 3000:
                 log_content = log_content[-3000:]
                 parts.append("Recent log output (truncated to last 3000 chars):")
@@ -207,6 +208,64 @@ def _parse_llm_insights(response: str) -> list[MonitoringInsight]:
             continue
 
     return insights
+
+
+def _deduplicate_insights(insights: list[MonitoringInsight]) -> list[MonitoringInsight]:
+    """Remove duplicate insights based on title and affected resources.
+
+    Two insights are considered duplicates if they have the same title
+    and the same set of affected resources. When duplicates are found,
+    the one with higher severity is kept.
+    """
+    if not insights:
+        return insights
+
+    # Build deduplication key: (normalized_title, frozenset of resources)
+    seen: dict[tuple[str, frozenset[str]], MonitoringInsight] = {}
+    severity_order = {
+        InsightSeverity.CRITICAL: 4,
+        InsightSeverity.WARNING: 3,
+        InsightSeverity.INFO: 2,
+        InsightSeverity.OPTIMIZATION: 1,
+    }
+
+    for insight in insights:
+        # Normalize title for comparison (lowercase, strip whitespace)
+        normalized_title = insight.title.lower().strip()
+        resources_key = frozenset(r.lower().strip() for r in insight.affected_resources)
+        key = (normalized_title, resources_key)
+
+        if key in seen:
+            existing = seen[key]
+            # Keep the one with higher severity
+            if severity_order.get(insight.severity, 0) > severity_order.get(existing.severity, 0):
+                LOGGER.debug(
+                    "Replacing duplicate insight '%s' (severity %s -> %s)",
+                    insight.title,
+                    existing.severity.value,
+                    insight.severity.value,
+                )
+                seen[key] = insight
+            else:
+                LOGGER.debug(
+                    "Skipping duplicate insight '%s' (keeping severity %s)",
+                    insight.title,
+                    existing.severity.value,
+                )
+        else:
+            seen[key] = insight
+
+    deduplicated = list(seen.values())
+
+    if len(deduplicated) < len(insights):
+        LOGGER.info(
+            "Deduplicated insights: %d -> %d (removed %d duplicates)",
+            len(insights),
+            len(deduplicated),
+            len(insights) - len(deduplicated),
+        )
+
+    return deduplicated
 
 
 def _generate_fallback_insights(snapshot: InfrastructureSnapshot) -> list[MonitoringInsight]:
@@ -409,6 +468,9 @@ class MonitoringService:
         else:
             LOGGER.info("No LLM configured, using fallback analysis")
             insights = _generate_fallback_insights(snapshot)
+
+        # Deduplicate insights to avoid redundant alerts
+        insights = _deduplicate_insights(insights)
 
         # Suggest remediation actions from insights (if enabled)
         actions_suggested = 0
