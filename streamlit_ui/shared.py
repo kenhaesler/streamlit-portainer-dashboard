@@ -8,11 +8,24 @@ from api_client import get_api_client
 
 
 def require_auth() -> None:
-    """Check authentication and redirect to login if needed."""
+    """Check authentication and redirect to login if needed.
+
+    This function first checks session state, then attempts to restore
+    from browser cookie (survives F5 refresh).
+    """
     client = get_api_client()
-    if not client.is_authenticated():
-        st.warning("Please login from the Home page")
-        st.stop()
+
+    # Fast path: already authenticated
+    if client.is_authenticated():
+        return
+
+    # Try to restore session from browser cookie
+    if client.try_restore_session():
+        return
+
+    # No valid session
+    st.warning("Please login from the Home page")
+    st.stop()
 
 
 def render_sidebar() -> None:
