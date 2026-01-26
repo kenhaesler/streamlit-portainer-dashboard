@@ -13,7 +13,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends
 
-from portainer_dashboard.auth.dependencies import require_authenticated
+from portainer_dashboard.auth.dependencies import get_current_user
 from portainer_dashboard.services.cache_service import get_cache_service
 
 LOGGER = logging.getLogger(__name__)
@@ -24,7 +24,7 @@ router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 @router.get(
     "/overview",
     summary="Get dashboard overview data",
-    dependencies=[Depends(require_authenticated)],
+    dependencies=[Depends(get_current_user)],
 )
 async def get_dashboard_overview() -> dict[str, Any]:
     """Get all dashboard data in a single request.
@@ -75,7 +75,7 @@ async def get_dashboard_overview() -> dict[str, Any]:
 @router.get(
     "/summary",
     summary="Get dashboard summary statistics",
-    dependencies=[Depends(require_authenticated)],
+    dependencies=[Depends(get_current_user)],
 )
 async def get_dashboard_summary() -> dict[str, Any]:
     """Get summary statistics for the dashboard.
