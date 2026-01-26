@@ -213,7 +213,7 @@ async def _build_context() -> str:
                         if stats:
                             container_stats[cid] = stats
 
-                # Identify stopped/unhealthy containers that need logs
+                # Identify stopped/unhealthy/restarting containers that need logs
                 stopped_container_ids: list[tuple[int, str, str]] = []
                 for _, row in df_containers.iterrows():
                     state = row.get("state", "")
@@ -222,13 +222,13 @@ async def _build_context() -> str:
                     ep_id = row.get("endpoint_id")
                     name = row.get("container_name", "unknown")
 
-                    # Fetch logs for stopped, exited, or unhealthy containers
-                    if cid and ep_id and state in ("exited", "dead", "created"):
+                    # Fetch logs for stopped, exited, restarting, or unhealthy containers
+                    if cid and ep_id and state in ("exited", "dead", "created", "restarting"):
                         stopped_container_ids.append((ep_id, cid, name))
                     elif cid and ep_id and "unhealthy" in status.lower():
                         stopped_container_ids.append((ep_id, cid, name))
 
-                # Fetch logs for stopped/unhealthy containers (limit to 5 to avoid timeout)
+                # Fetch logs for stopped/unhealthy/restarting containers (limit to 5 to avoid timeout)
                 container_logs: dict[str, str] = {}
                 if stopped_container_ids:
                     logs_tasks = [
@@ -308,14 +308,14 @@ async def _build_context() -> str:
 
 def _build_system_prompt(context: str) -> str:
     """Build the system prompt with infrastructure context."""
-    return f"""You are a helpful assistant for managing Portainer infrastructure. You have access to the current state of the infrastructure, including container logs for stopped or unhealthy containers:
+    return f"""You are a helpful assistant for managing Portainer infrastructure. You have access to the current state of the infrastructure, including container logs for stopped, unhealthy, or restarting containers:
 
 {context}
 
 When answering questions:
 1. Be concise and direct
 2. Use the provided infrastructure context to answer questions
-3. When a container is stopped or unhealthy, check the "Recent Logs" section for that container to diagnose the issue
+3. When a container is stopped, unhealthy, or restarting (crash loop), check the "Recent Logs" section for that container to diagnose the issue
 4. Analyze log output to identify errors, exceptions, or failure reasons
 5. If you don't have enough information, say so
 6. Format responses with markdown when helpful
