@@ -12,7 +12,7 @@ import streamlit as st
 import sys
 sys.path.insert(0, str(__file__).rsplit("pages", 1)[0])
 from api_client import get_api_client
-from shared import require_auth, render_sidebar
+from shared import require_auth, render_sidebar, render_refresh_controls
 
 
 st.set_page_config(
@@ -47,16 +47,12 @@ def main():
     require_auth()
     render_sidebar()
 
-    # Title with refresh button
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.title("🐳 Containers")
-    with col2:
-        if st.button("🔄 Refresh", use_container_width=True, key="refresh_containers"):
-            st.cache_data.clear()
-            st.rerun()
-
+    # Title with refresh controls
+    st.title("🐳 Containers")
     st.markdown("Container management, health monitoring, and resource analysis")
+
+    # Auto-refresh controls
+    render_refresh_controls("containers")
 
     client = get_api_client()
 

@@ -36,7 +36,14 @@ def _sanitize_record(record: dict[str, Any]) -> dict[str, Any]:
 router = APIRouter()
 
 
-@router.get("/", response_model=list[Container])
+@router.get(
+    "/",
+    response_model=list[Container],
+    summary="List all containers",
+    description="Retrieve all Docker containers across all Portainer endpoints. "
+    "Includes container name, image, state, health status, ports, and resource usage. "
+    "Results are cached for performance; use refresh=true to force a cache update.",
+)
 async def list_containers(
     user: CurrentUserDep,
     environment: Annotated[str | None, Query(description="Filter by environment name")] = None,
@@ -73,7 +80,14 @@ async def list_containers(
     return [Container(**_sanitize_record(row)) for row in containers_data]
 
 
-@router.get("/{endpoint_id}/{container_id}", response_model=ContainerDetails)
+@router.get(
+    "/{endpoint_id}/{container_id}",
+    response_model=ContainerDetails,
+    summary="Get container details",
+    description="Retrieve detailed information for a specific container including "
+    "environment variables, network configuration, volume mounts, labels, "
+    "health status, and real-time CPU/memory usage.",
+)
 async def get_container_details(
     endpoint_id: int,
     container_id: str,
@@ -169,7 +183,13 @@ async def get_container_details(
     raise HTTPException(status_code=404, detail="Container not found")
 
 
-@router.get("/{endpoint_id}/{container_id}/logs", response_model=ContainerLogsResponse)
+@router.get(
+    "/{endpoint_id}/{container_id}/logs",
+    response_model=ContainerLogsResponse,
+    summary="Get container logs",
+    description="Retrieve container logs directly from Docker via Portainer API. "
+    "Supports tail (last N lines), timestamps, and time-based filtering (since N minutes ago).",
+)
 async def get_container_logs(
     endpoint_id: int,
     container_id: str,

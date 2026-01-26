@@ -9,7 +9,7 @@ import plotly.express as px
 import streamlit as st
 
 from api_client import get_api_client
-from shared import render_sidebar as shared_sidebar, render_session_expiry_banner
+from shared import render_sidebar as shared_sidebar, render_session_expiry_banner, render_refresh_controls
 
 st.set_page_config(
     page_title="Portainer Dashboard",
@@ -87,22 +87,11 @@ def main():
     require_auth()
     render_sidebar()
 
-    # Title with refresh button
-    col1, col2 = st.columns([6, 1])
-    with col1:
-        st.title("🐳 Portainer Dashboard")
-    with col2:
-        if st.button("🔄 Refresh", use_container_width=True, key="refresh_home"):
-            # Clear Streamlit's data cache to force fresh data
-            st.cache_data.clear()
-            st.rerun()
-
-    # Check if we should force refresh (bypass cache)
-    force_refresh = st.session_state.get("_force_refresh", False)
-    if force_refresh:
-        st.session_state["_force_refresh"] = False
-
+    st.title("🐳 Portainer Dashboard")
     st.markdown("Infrastructure overview and quick navigation")
+
+    # Auto-refresh controls
+    render_refresh_controls("home")
 
     client = get_api_client()
 

@@ -65,7 +65,13 @@ async def _get_endpoints_for_environment(
     return [Endpoint(**_sanitize_record(row)) for row in endpoints_data]
 
 
-@router.get("/", response_model=list[Endpoint])
+@router.get(
+    "/",
+    response_model=list[Endpoint],
+    summary="List all endpoints",
+    description="Retrieve all Portainer endpoints (edge agents) with their connection status, "
+    "container counts, and metadata. Results are cached for performance.",
+)
 async def list_endpoints(
     user: CurrentUserDep,
     environment: Annotated[str | None, Query(description="Filter by environment name")] = None,
@@ -75,7 +81,12 @@ async def list_endpoints(
     return await _get_endpoints_for_environment(environment, force_refresh=refresh)
 
 
-@router.get("/{endpoint_id}", response_model=Endpoint)
+@router.get(
+    "/{endpoint_id}",
+    response_model=Endpoint,
+    summary="Get endpoint by ID",
+    description="Retrieve details for a specific Portainer endpoint by its numeric ID.",
+)
 async def get_endpoint(
     endpoint_id: int,
     user: CurrentUserDep,
@@ -89,7 +100,13 @@ async def get_endpoint(
     raise HTTPException(status_code=404, detail="Endpoint not found")
 
 
-@router.get("/{endpoint_id}/host-metrics", response_model=HostMetrics)
+@router.get(
+    "/{endpoint_id}/host-metrics",
+    response_model=HostMetrics,
+    summary="Get endpoint host metrics",
+    description="Retrieve Docker host system metrics for a specific endpoint, including "
+    "CPU count, memory, Docker version, architecture, and container/volume/image counts.",
+)
 async def get_endpoint_host_metrics(
     endpoint_id: int,
     user: CurrentUserDep,
