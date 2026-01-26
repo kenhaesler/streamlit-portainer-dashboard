@@ -96,7 +96,7 @@ def main():
             st.cache_data.clear()
             st.rerun()
 
-    st.markdown("Infrastructure overview and monitoring")
+    st.markdown("Infrastructure overview and quick navigation")
 
     client = get_api_client()
 
@@ -104,6 +104,7 @@ def main():
     with st.spinner("Loading data from Portainer..."):
         endpoints = client.get_endpoints()
         containers = client.get_containers(include_stopped=True)
+        stacks = client.get_stacks()
 
     if not endpoints:
         st.warning("No endpoints found. Check your Portainer configuration.")
@@ -112,51 +113,74 @@ def main():
     # Convert to DataFrames
     df_endpoints = pd.DataFrame(endpoints) if endpoints else pd.DataFrame()
     df_containers = pd.DataFrame(containers) if containers else pd.DataFrame()
+    df_stacks = pd.DataFrame(stacks) if stacks else pd.DataFrame()
 
-    # KPI Metrics
-    st.markdown("### 📊 Overview")
+    # Calculate metrics
+    total_endpoints = len(df_endpoints)
+    online_endpoints = len(df_endpoints[df_endpoints.get("endpoint_status", pd.Series()) == 1]) if not df_endpoints.empty else 0
+    total_containers = len(df_containers)
+    running_containers = len(df_containers[df_containers.get("state", pd.Series()) == "running"]) if not df_containers.empty else 0
+    unique_stacks = df_stacks["stack_name"].nunique() if not df_stacks.empty and "stack_name" in df_stacks.columns else 0
+    unique_images = df_containers["image"].nunique() if not df_containers.empty and "image" in df_containers.columns else 0
+
+    # Quick Navigation Cards
+    st.markdown("### Quick Navigation")
 
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        total_endpoints = len(df_endpoints)
-        online_endpoints = len(df_endpoints[df_endpoints.get("endpoint_status", pd.Series()) == 1]) if not df_endpoints.empty else 0
-        st.metric(
-            "Endpoints",
-            total_endpoints,
-            f"{online_endpoints} online",
-            delta_color="normal"
-        )
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); padding: 20px; border-radius: 10px; color: white;">
+            <h3 style="margin: 0; color: white;">🚀 Fleet & Stacks</h3>
+            <p style="margin: 5px 0 0 0; opacity: 0.9;">Edge agents and deployments</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.metric("Stacks", unique_stacks)
+        st.metric("Edge Agents", total_endpoints, f"{online_endpoints} online")
 
     with col2:
-        total_containers = len(df_containers)
-        running_containers = len(df_containers[df_containers.get("state", pd.Series()) == "running"]) if not df_containers.empty else 0
-        st.metric(
-            "Containers",
-            total_containers,
-            f"{running_containers} running"
-        )
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); padding: 20px; border-radius: 10px; color: white;">
+            <h3 style="margin: 0; color: white;">🐳 Containers</h3>
+            <p style="margin: 5px 0 0 0; opacity: 0.9;">Health and management</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.metric("Total", total_containers)
+        st.metric("Running", running_containers)
 
     with col3:
-        unique_images = df_containers["image"].nunique() if not df_containers.empty and "image" in df_containers.columns else 0
-        st.metric("Unique Images", unique_images)
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%); padding: 20px; border-radius: 10px; color: white;">
+            <h3 style="margin: 0; color: white;">📋 Logs</h3>
+            <p style="margin: 5px 0 0 0; opacity: 0.9;">Live and searchable</p>
+        </div>
+        """, unsafe_allow_html=True)
+        st.metric("Images", unique_images)
 
     with col4:
+        st.markdown("""
+        <div style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); padding: 20px; border-radius: 10px; color: white;">
+            <h3 style="margin: 0; color: white;">🤖 AI Operations</h3>
+            <p style="margin: 5px 0 0 0; opacity: 0.9;">Insights and self-healing</p>
+        </div>
+        """, unsafe_allow_html=True)
+        # Check for alerts
+        offline = total_endpoints - online_endpoints
         stopped = total_containers - running_containers
-        st.metric(
-            "Stopped Containers",
-            stopped,
-            delta=-stopped if stopped > 0 else None,
-            delta_color="inverse"
-        )
+        if offline > 0:
+            st.error(f"{offline} offline endpoint(s)")
+        elif stopped > 5:
+            st.warning(f"{stopped} stopped containers")
+        else:
+            st.success("Systems healthy")
 
     st.markdown("---")
 
-    # Charts
+    # Status Overview
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("### 🟢 Endpoint Status")
+        st.markdown("### Endpoint Status")
         if not df_endpoints.empty and "endpoint_status" in df_endpoints.columns:
             status_counts = df_endpoints["endpoint_status"].map(
                 {1: "Online", 2: "Offline"}
@@ -174,14 +198,14 @@ def main():
                 showlegend=True,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.2, x=0.5, xanchor="center"),
                 margin=dict(t=20, b=20, l=20, r=20),
-                height=300,
+                height=280,
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No endpoint data available")
 
     with col2:
-        st.markdown("### 📦 Container States")
+        st.markdown("### Container States")
         if not df_containers.empty and "state" in df_containers.columns:
             state_counts = df_containers["state"].value_counts()
 
@@ -201,44 +225,28 @@ def main():
                 xaxis_title="State",
                 yaxis_title="Count",
                 margin=dict(t=20, b=20, l=20, r=20),
-                height=300,
+                height=280,
             )
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No container data available")
 
+    # Summary export
     st.markdown("---")
-
-    # Recent containers table
-    st.markdown("### 🐳 Recent Containers")
-    if not df_containers.empty:
-        display_cols = ["endpoint_name", "container_name", "image", "state", "status"]
-        available_cols = [c for c in display_cols if c in df_containers.columns]
-
-        if available_cols:
-            display_df = df_containers[available_cols].head(10).copy()
-            display_df.columns = [c.replace("_", " ").title() for c in display_df.columns]
-            st.dataframe(display_df, use_container_width=True, hide_index=True)
-        else:
-            st.dataframe(df_containers.head(10), use_container_width=True, hide_index=True)
-
-        # CSV Export - Summary data
-        summary_data = {
-            "Metric": ["Total Endpoints", "Online Endpoints", "Total Containers", "Running Containers", "Stopped Containers", "Unique Images"],
-            "Value": [total_endpoints, online_endpoints, total_containers, running_containers, stopped, unique_images],
-        }
-        summary_df = pd.DataFrame(summary_data)
-        csv = summary_df.to_csv(index=False)
-        timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
-        st.download_button(
-            "📥 Download Summary CSV",
-            csv,
-            f"dashboard_summary_{timestamp_str}.csv",
-            "text/csv",
-            use_container_width=False,
-        )
-    else:
-        st.info("No containers found")
+    summary_data = {
+        "Metric": ["Total Endpoints", "Online Endpoints", "Total Containers", "Running Containers", "Deployed Stacks", "Unique Images"],
+        "Value": [total_endpoints, online_endpoints, total_containers, running_containers, unique_stacks, unique_images],
+    }
+    summary_df = pd.DataFrame(summary_data)
+    csv = summary_df.to_csv(index=False)
+    timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+    st.download_button(
+        "📥 Download Summary CSV",
+        csv,
+        f"dashboard_summary_{timestamp_str}.csv",
+        "text/csv",
+        use_container_width=False,
+    )
 
 
 if __name__ == "__main__":
