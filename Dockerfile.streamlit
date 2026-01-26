@@ -9,13 +9,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Upgrade pip to fix CVE-2025-8869, then install dependencies
+# cryptography>=43.0.1 fixes CVE-2023-50782, CVE-2024-0727, PYSEC-2024-225, GHSA-h4gh-qq45-vh27
 RUN pip install --no-cache-dir --upgrade pip>=25.3 && \
     pip install --no-cache-dir \
     streamlit>=1.40.0 \
     plotly>=5.24.0 \
     websockets>=13.0 \
     httpx>=0.28.0 \
-    pandas>=2.3.0
+    pandas>=2.3.0 \
+    cryptography>=43.0.1
 
 # Copy Streamlit app
 COPY streamlit_ui/ /app/
