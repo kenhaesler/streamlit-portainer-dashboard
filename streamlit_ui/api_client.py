@@ -20,8 +20,91 @@ API_TIMEOUT = float(os.getenv("STREAMLIT_API_TIMEOUT", "60.0"))
 API_TIMEOUT_LOGIN = float(os.getenv("STREAMLIT_API_TIMEOUT_LOGIN", "30.0"))
 API_TIMEOUT_SESSION = float(os.getenv("STREAMLIT_API_TIMEOUT_SESSION", "10.0"))
 
+# Streamlit cache TTL (in seconds) - how long to cache API responses in Streamlit
+# This provides instant page navigation while backend cache handles freshness
+STREAMLIT_CACHE_TTL = int(os.getenv("STREAMLIT_CACHE_TTL_SECONDS", "60"))
+
 
 SESSION_COOKIE_NAME = "dashboard_session_token"
+
+
+# Cached API call functions
+# These use st.cache_data with TTL to avoid redundant API calls during page navigation
+
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL, show_spinner=False)
+def _cached_get_endpoints(_session_cookie: str | None) -> list[dict]:
+    """Cached fetch for endpoints."""
+    try:
+        cookies = {}
+        if _session_cookie:
+            cookies[SESSION_COOKIE_NAME] = _session_cookie
+
+        with httpx.Client(
+            base_url=BACKEND_URL,
+            cookies=cookies,
+            timeout=API_TIMEOUT,
+        ) as client:
+            response = client.get("/api/v1/endpoints/")
+            if response.status_code == 401:
+                return []
+            response.raise_for_status()
+            result = response.json()
+            return result if isinstance(result, list) else []
+    except httpx.HTTPError as e:
+        LOGGER.warning("Cached endpoints fetch failed: %s", e)
+        return []
+
+
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL, show_spinner=False)
+def _cached_get_containers(
+    _session_cookie: str | None,
+    include_stopped: bool = True,
+) -> list[dict]:
+    """Cached fetch for containers."""
+    try:
+        cookies = {}
+        if _session_cookie:
+            cookies[SESSION_COOKIE_NAME] = _session_cookie
+
+        with httpx.Client(
+            base_url=BACKEND_URL,
+            cookies=cookies,
+            timeout=API_TIMEOUT,
+        ) as client:
+            params = {"include_stopped": str(include_stopped).lower()}
+            response = client.get("/api/v1/containers/", params=params)
+            if response.status_code == 401:
+                return []
+            response.raise_for_status()
+            result = response.json()
+            return result if isinstance(result, list) else []
+    except httpx.HTTPError as e:
+        LOGGER.warning("Cached containers fetch failed: %s", e)
+        return []
+
+
+@st.cache_data(ttl=STREAMLIT_CACHE_TTL, show_spinner=False)
+def _cached_get_stacks(_session_cookie: str | None) -> list[dict]:
+    """Cached fetch for stacks."""
+    try:
+        cookies = {}
+        if _session_cookie:
+            cookies[SESSION_COOKIE_NAME] = _session_cookie
+
+        with httpx.Client(
+            base_url=BACKEND_URL,
+            cookies=cookies,
+            timeout=API_TIMEOUT,
+        ) as client:
+            response = client.get("/api/v1/stacks/")
+            if response.status_code == 401:
+                return []
+            response.raise_for_status()
+            result = response.json()
+            return result if isinstance(result, list) else []
+    except httpx.HTTPError as e:
+        LOGGER.warning("Cached stacks fetch failed: %s", e)
+        return []
 
 
 def get_session_cookie() -> str | None:
@@ -229,8 +312,16 @@ class APIClient:
 
     # API Methods
 
-    def get_endpoints(self) -> list[dict]:
-        """Get all endpoints."""
+    def get_endpoints(self, use_cache: bool = True) -> list[dict]:
+        """Get all endpoints.
+
+        Args:
+            use_cache: If True, use Streamlit's cache for faster response.
+                      Set to False to force a fresh fetch.
+        """
+        if use_cache:
+            return _cached_get_endpoints(get_session_cookie())
+
         result = self.get("/api/v1/endpoints/")
         return result if isinstance(result, list) else []
 
@@ -238,16 +329,39 @@ class APIClient:
         self,
         endpoint_id: int | None = None,
         include_stopped: bool = True,
+        use_cache: bool = True,
     ) -> list[dict]:
-        """Get all containers."""
+        """Get all containers.
+
+        Args:
+            endpoint_id: Filter by specific endpoint ID.
+            include_stopped: Include stopped containers in results.
+            use_cache: If True, use Streamlit's cache for faster response.
+        """
+        if use_cache and endpoint_id is None:
+            # Use cache for the common case (all containers)
+            containers = _cached_get_containers(get_session_cookie(), include_stopped)
+            return containers
+
+        # Non-cached path for filtered requests
         params = {"include_stopped": str(include_stopped).lower()}
         if endpoint_id is not None:
             params["endpoint_id"] = str(endpoint_id)
         result = self.get("/api/v1/containers/", params=params)
         return result if isinstance(result, list) else []
 
-    def get_stacks(self, endpoint_id: int | None = None) -> list[dict]:
-        """Get all stacks."""
+    def get_stacks(self, endpoint_id: int | None = None, use_cache: bool = True) -> list[dict]:
+        """Get all stacks.
+
+        Args:
+            endpoint_id: Filter by specific endpoint ID.
+            use_cache: If True, use Streamlit's cache for faster response.
+        """
+        if use_cache and endpoint_id is None:
+            # Use cache for the common case (all stacks)
+            return _cached_get_stacks(get_session_cookie())
+
+        # Non-cached path for filtered requests
         params = {}
         if endpoint_id is not None:
             params["endpoint_id"] = str(endpoint_id)

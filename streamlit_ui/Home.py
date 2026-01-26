@@ -93,8 +93,14 @@ def main():
         st.title("🐳 Portainer Dashboard")
     with col2:
         if st.button("🔄 Refresh", use_container_width=True, key="refresh_home"):
+            # Clear Streamlit's data cache to force fresh data
             st.cache_data.clear()
             st.rerun()
+
+    # Check if we should force refresh (bypass cache)
+    force_refresh = st.session_state.get("_force_refresh", False)
+    if force_refresh:
+        st.session_state["_force_refresh"] = False
 
     st.markdown("Infrastructure overview and quick navigation")
 
