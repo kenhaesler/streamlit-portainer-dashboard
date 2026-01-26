@@ -1,0 +1,207 @@
+[
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/api/endpoints"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": [
+          {
+            "Id": 1,
+            "Name": "test-endpoint-1",
+            "Type": 4,
+            "URL": "https://edge-1.example.com",
+            "EdgeID": "edge-id-1",
+            "EdgeKey": "edge-key-1",
+            "Status": 1,
+            "LastCheckInDate": 1706300000,
+            "EdgeCheckinInterval": 5,
+            "Snapshots": [
+              {
+                "DockerSnapshotRaw": {
+                  "Containers": 5,
+                  "Images": 3
+                }
+              }
+            ],
+            "TagIds": [1, 2],
+            "UserAccessPolicies": {},
+            "TeamAccessPolicies": {}
+          },
+          {
+            "Id": 2,
+            "Name": "test-endpoint-2",
+            "Type": 4,
+            "URL": "https://edge-2.example.com",
+            "EdgeID": "edge-id-2",
+            "EdgeKey": "edge-key-2",
+            "Status": 1,
+            "LastCheckInDate": 1706300000,
+            "EdgeCheckinInterval": 5,
+            "Snapshots": [
+              {
+                "DockerSnapshotRaw": {
+                  "Containers": 10,
+                  "Images": 5
+                }
+              }
+            ],
+            "TagIds": [1],
+            "UserAccessPolicies": {},
+            "TeamAccessPolicies": {}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/api/endpoints/1/docker/containers/json"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": [
+          {
+            "Id": "container-1-abc123",
+            "Names": ["/test-container-1"],
+            "Image": "nginx:latest",
+            "ImageID": "sha256:abc123",
+            "State": "running",
+            "Status": "Up 2 hours",
+            "Created": 1704067200,
+            "Ports": [{"PrivatePort": 80, "PublicPort": 8080, "Type": "tcp"}],
+            "Labels": {"com.docker.compose.service": "web"},
+            "NetworkSettings": {"Networks": {"bridge": {"IPAddress": "172.17.0.2"}}}
+          },
+          {
+            "Id": "container-2-def456",
+            "Names": ["/test-container-2"],
+            "Image": "redis:7",
+            "ImageID": "sha256:def456",
+            "State": "running",
+            "Status": "Up 1 hour",
+            "Created": 1704070800,
+            "Ports": [{"PrivatePort": 6379, "Type": "tcp"}],
+            "Labels": {"com.docker.compose.service": "cache"},
+            "NetworkSettings": {"Networks": {"bridge": {"IPAddress": "172.17.0.3"}}}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/api/endpoints/2/docker/containers/json"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": [
+          {
+            "Id": "container-3-ghi789",
+            "Names": ["/app-server"],
+            "Image": "python:3.12-slim",
+            "ImageID": "sha256:ghi789",
+            "State": "running",
+            "Status": "Up 3 hours",
+            "Created": 1704063600,
+            "Ports": [{"PrivatePort": 8000, "PublicPort": 8000, "Type": "tcp"}],
+            "Labels": {"app": "backend"},
+            "NetworkSettings": {"Networks": {"bridge": {"IPAddress": "172.17.0.4"}}}
+          }
+        ]
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/api/stacks"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": [
+          {
+            "Id": 1,
+            "Name": "test-stack-1",
+            "Type": 2,
+            "EndpointId": 1,
+            "Status": 1,
+            "CreationDate": "2024-01-01T00:00:00Z",
+            "UpdateDate": "2024-01-02T00:00:00Z",
+            "Env": [{"name": "ENV", "value": "test"}]
+          },
+          {
+            "Id": 2,
+            "Name": "test-stack-2",
+            "Type": 2,
+            "EndpointId": 1,
+            "Status": 1,
+            "CreationDate": "2024-01-01T00:00:00Z",
+            "UpdateDate": "2024-01-03T00:00:00Z",
+            "Env": []
+          }
+        ]
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/api/tags"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": [
+          {"ID": 1, "Name": "production"},
+          {"ID": 2, "Name": "staging"}
+        ]
+      }
+    }
+  },
+  {
+    "httpRequest": {
+      "method": "GET",
+      "path": "/api/status"
+    },
+    "httpResponse": {
+      "statusCode": 200,
+      "headers": {
+        "Content-Type": ["application/json"]
+      },
+      "body": {
+        "type": "JSON",
+        "json": {
+          "Version": "2.19.0"
+        }
+      }
+    }
+  }
+]

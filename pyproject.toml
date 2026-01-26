@@ -45,6 +45,10 @@ dev = [
     "mypy>=1.14.0",
     "pandas-stubs>=2.2.0",
 ]
+e2e = [
+    "playwright>=1.40.0",
+    "pytest-playwright>=0.4.0",
+]
 
 [project.scripts]
 portainer-dashboard = "portainer_dashboard.main:run"
