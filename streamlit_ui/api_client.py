@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import Any
 
 import httpx
 import streamlit as st
+
+LOGGER = logging.getLogger(__name__)
 
 # Backend URL - can be overridden by environment variable
 BACKEND_URL = os.getenv("FASTAPI_BACKEND_URL", "http://localhost:8000")
@@ -31,6 +34,39 @@ def clear_session() -> None:
         del st.session_state["session_cookie"]
     if "authenticated" in st.session_state:
         del st.session_state["authenticated"]
+    if "username" in st.session_state:
+        del st.session_state["username"]
+    if "_session_restore_attempted" in st.session_state:
+        del st.session_state["_session_restore_attempted"]
+
+
+def extract_cookie_from_browser() -> str | None:
+    """Extract the session cookie from browser request headers.
+
+    Streamlit's st.context.headers contains the HTTP headers from the browser
+    request, including the Cookie header with all cookies.
+    """
+    try:
+        # st.context.headers is available in Streamlit 1.37+
+        headers = st.context.headers
+        cookie_header = headers.get("Cookie", "")
+
+        if not cookie_header:
+            return None
+
+        # Parse cookies from the Cookie header
+        # Format: "name1=value1; name2=value2; ..."
+        for cookie_pair in cookie_header.split(";"):
+            cookie_pair = cookie_pair.strip()
+            if "=" in cookie_pair:
+                name, value = cookie_pair.split("=", 1)
+                if name.strip() == SESSION_COOKIE_NAME:
+                    return value.strip()
+
+        return None
+    except Exception as e:
+        LOGGER.debug("Could not extract cookie from browser: %s", e)
+        return None
 
 
 class APIClient:
@@ -53,13 +89,27 @@ class APIClient:
             timeout=30.0,
         )
 
-    def login(self, username: str, password: str) -> bool:
-        """Authenticate with the backend."""
+    def login(self, username: str, password: str, remember_me: bool = False) -> bool:
+        """Authenticate with the backend.
+
+        Args:
+            username: The username to authenticate.
+            password: The user's password.
+            remember_me: If True, creates an extended session (30 days) that
+                        survives browser restarts.
+        """
         try:
             with httpx.Client(base_url=self.base_url, timeout=30.0) as client:
+                form_data = {
+                    "username": username,
+                    "password": password,
+                }
+                if remember_me:
+                    form_data["remember_me"] = "on"
+
                 response = client.post(
                     "/auth/login",
-                    data={"username": username, "password": password},
+                    data=form_data,
                     follow_redirects=False,
                 )
 
@@ -95,6 +145,51 @@ class APIClient:
     def is_authenticated(self) -> bool:
         """Check if the current session is authenticated."""
         return st.session_state.get("authenticated", False)
+
+    def try_restore_session(self) -> bool:
+        """Attempt to restore session from browser cookie.
+
+        This method extracts the session cookie from the browser request headers
+        and validates it with the backend. If valid, restores the session state.
+
+        Returns True if session was restored, False otherwise.
+        """
+        # Only attempt restore once per Streamlit script run to avoid loops
+        if st.session_state.get("_session_restore_attempted"):
+            return False
+
+        st.session_state["_session_restore_attempted"] = True
+
+        # Extract cookie from browser headers
+        cookie_value = extract_cookie_from_browser()
+        if not cookie_value:
+            LOGGER.debug("No session cookie found in browser")
+            return False
+
+        # Validate the cookie with backend
+        try:
+            with httpx.Client(
+                base_url=self.base_url,
+                cookies={SESSION_COOKIE_NAME: cookie_value},
+                timeout=10.0,
+            ) as client:
+                response = client.get("/auth/validate")
+
+                if response.status_code == 200:
+                    data = response.json()
+                    if data.get("valid"):
+                        # Restore session state
+                        set_session_cookie(cookie_value)
+                        st.session_state["authenticated"] = True
+                        st.session_state["username"] = data.get("username", "User")
+                        LOGGER.info("Session restored for user: %s", data.get("username"))
+                        return True
+
+                LOGGER.debug("Session validation failed: %s", response.status_code)
+                return False
+        except httpx.HTTPError as e:
+            LOGGER.debug("Session restore failed: %s", e)
+            return False
 
     def _request(
         self,

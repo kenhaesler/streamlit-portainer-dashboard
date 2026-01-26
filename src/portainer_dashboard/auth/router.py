@@ -7,7 +7,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Request, Response
+from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
 from portainer_dashboard.auth.dependencies import (
@@ -53,12 +53,28 @@ def _create_session(
     return token
 
 
-def _set_session_cookie(response: Response, token: str) -> None:
-    """Set the session cookie on the response."""
+def _set_session_cookie(
+    response: Response,
+    token: str,
+    remember_me: bool = False,
+) -> None:
+    """Set the session cookie on the response.
+
+    Args:
+        response: The FastAPI response object.
+        token: The session token.
+        remember_me: If True, sets a 30-day persistent cookie. If False, uses
+                     the configured session timeout for the cookie max_age.
+    """
     settings = get_settings()
-    max_age = 30 * 24 * 60 * 60  # 30 days
-    if settings.auth.session_timeout:
+
+    if remember_me:
+        # Extended session: 30 days
+        max_age = 30 * 24 * 60 * 60
+    elif settings.auth.session_timeout:
         max_age = int(settings.auth.session_timeout.total_seconds())
+    else:
+        max_age = 30 * 24 * 60 * 60  # Default to 30 days
 
     response.set_cookie(
         key=SESSION_COOKIE_NAME,
@@ -100,8 +116,13 @@ async def login(
     username: Annotated[str, Form()],
     password: Annotated[str, Form()],
     next: Annotated[str, Form()] = "/",
+    remember_me: Annotated[str | None, Form()] = None,
 ) -> Response:
-    """Process login form submission."""
+    """Process login form submission.
+
+    Args:
+        remember_me: If "on" or "true", creates an extended session (30 days).
+    """
     settings = get_settings()
 
     if settings.auth.provider != "static":
@@ -117,15 +138,24 @@ async def login(
         )
         return HTMLResponse(content=content, status_code=401)
 
+    # Check if remember_me is set (form checkbox sends "on" when checked)
+    is_remember_me = remember_me in ("on", "true", "1")
+
+    # Use extended timeout for remember_me, otherwise use configured timeout
+    if is_remember_me:
+        session_timeout = timedelta(days=30)
+    else:
+        session_timeout = settings.auth.session_timeout
+
     token = _create_session(
         storage=storage,
         username=username,
         auth_method="static",
-        session_timeout=settings.auth.session_timeout,
+        session_timeout=session_timeout,
     )
 
     response = RedirectResponse(url=next, status_code=303)
-    _set_session_cookie(response, token)
+    _set_session_cookie(response, token, remember_me=is_remember_me)
     return response
 
 
@@ -164,6 +194,27 @@ async def get_session_status(user: CurrentUserDep) -> dict:
         "seconds_remaining": seconds_remaining,
         "minutes_remaining": minutes_remaining,
         "session_timeout_minutes": int(session_timeout.total_seconds() // 60),
+    }
+
+
+@router.get("/validate")
+async def validate_session(user: OptionalUserDep) -> dict:
+    """Validate an existing session cookie.
+
+    This endpoint is used by the frontend to restore sessions after browser refresh.
+    Unlike /session, this returns minimal info and doesn't require authentication
+    (it validates the cookie itself).
+    """
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired session",
+        )
+
+    return {
+        "valid": True,
+        "username": user.username,
+        "auth_method": user.auth_method,
     }
 
 

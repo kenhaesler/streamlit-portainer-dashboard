@@ -38,29 +38,43 @@ st.markdown("""
 
 
 def require_auth():
-    """Check authentication and show login if needed."""
+    """Check authentication and show login if needed.
+
+    This function first checks if the user is already authenticated via session state.
+    If not, it attempts to restore the session from the browser cookie (persisted
+    across browser refreshes). Only if both checks fail, the login form is displayed.
+    """
     client = get_api_client()
 
-    if not client.is_authenticated():
-        st.title("🐳 Portainer Dashboard")
-        st.markdown("---")
+    # Fast path: already authenticated in this session
+    if client.is_authenticated():
+        return
 
-        col1, col2, col3 = st.columns([1, 2, 1])
-        with col2:
-            st.subheader("Login")
-            with st.form("login_form"):
-                username = st.text_input("Username")
-                password = st.text_input("Password", type="password")
-                submitted = st.form_submit_button("Login", use_container_width=True)
+    # Try to restore session from browser cookie (survives F5 refresh)
+    if client.try_restore_session():
+        return
 
-                if submitted:
-                    if client.login(username, password):
-                        st.success("Login successful!")
-                        st.rerun()
-                    else:
-                        st.error("Invalid credentials")
+    # No valid session - show login form
+    st.title("🐳 Portainer Dashboard")
+    st.markdown("---")
 
-        st.stop()
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        st.subheader("Login")
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            remember_me = st.checkbox("Keep me logged in", value=True)
+            submitted = st.form_submit_button("Login", use_container_width=True)
+
+            if submitted:
+                if client.login(username, password, remember_me=remember_me):
+                    st.success("Login successful!")
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials")
+
+    st.stop()
 
 
 def render_sidebar():
