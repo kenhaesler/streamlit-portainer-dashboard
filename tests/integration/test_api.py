@@ -103,8 +103,9 @@ async def test_api_endpoints_with_auth(
     mock_portainer_endpoints: list[dict],
 ) -> None:
     """Test API endpoints with authentication."""
+    # Patch at the cache_service module where create_portainer_client is imported
     with patch(
-        "portainer_dashboard.api.v1.endpoints.create_portainer_client"
+        "portainer_dashboard.services.cache_service.create_portainer_client"
     ) as mock_client:
         # Create mock client
         mock_instance = AsyncMock()
