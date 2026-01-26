@@ -1,14 +1,16 @@
 # Streamlit Frontend Dockerfile
-FROM python:3.14-slim
+# syntax=docker/dockerfile:1
+
+# --- Build stage (DHI dev image) ---
+FROM dhi.io/python:3.14.2-debian13-dev AS build-stage
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
 
 WORKDIR /app
 
-# Install system dependencies
-# libsqlite3-0 updated to fix CVE-2025-7709 (integer overflow in FTS5 extension)
-# Note: curl removed to reduce vulnerabilities; using Python-based health check instead
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libsqlite3-0 \
-    && rm -rf /var/lib/apt/lists/*
+RUN python -m venv /app/venv
 
 # Upgrade pip to fix CVE-2025-8869, then install dependencies
 # cryptography>=43.0.1 fixes CVE-2023-50782, CVE-2024-0727, PYSEC-2024-225, GHSA-h4gh-qq45-vh27
@@ -24,11 +26,28 @@ RUN pip install --no-cache-dir --upgrade pip>=25.3 && \
 # Copy Streamlit app
 COPY streamlit_ui/ /app/
 
-# Create non-root user
-RUN useradd -m -u 1000 streamlit && \
-    chown -R streamlit:streamlit /app
+# Update libsqlite3-0 to fix CVE-2025-7709 (integer overflow in FTS5 extension)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libsqlite3-0 \
+    && rm -rf /var/lib/apt/lists/*
 
-USER streamlit
+# --- Runtime stage (DHI nonroot image) ---
+FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
+
+# Copy updated libsqlite3 from build stage to fix CVE-2025-7709
+COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libsqlite3.so.0* /usr/lib/x86_64-linux-gnu/
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/venv/bin:$PATH"
+
+WORKDIR /app
+
+# Copy venv and app files from build stage
+COPY --from=build-stage /app /app
+
+# Switch to non-root user (65532 is the nonroot user in DHI images)
+USER 65532
 
 # Expose Streamlit port
 EXPOSE 8502
