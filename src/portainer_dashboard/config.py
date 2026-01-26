@@ -272,6 +272,13 @@ class SessionSettings(BaseSettings):
     backend: Literal["memory", "sqlite"] = "memory"
     sqlite_path: Path = Field(default_factory=lambda: PROJECT_ROOT / ".data" / "sessions.db")
 
+    @field_validator("backend", mode="before")
+    @classmethod
+    def parse_backend(cls, v: str | None) -> str:
+        if v is None or v == "":
+            return "memory"
+        return v
+
     @field_validator("sqlite_path", mode="before")
     @classmethod
     def expand_sqlite_path(cls, v: str | Path | None) -> Path:
