@@ -250,6 +250,7 @@ Then create an API key in Portainer UI: Settings → Users → your user → API
 
 **LLM:**
 - `LLM_API_ENDPOINT`, `LLM_MODEL`, `LLM_BEARER_TOKEN`
+- `LLM_CONTEXT_MAX_ENDPOINTS` - Max endpoints included in LLM context (default: 50)
 
 **Kibana:**
 - `KIBANA_LOGS_ENDPOINT`, `KIBANA_API_KEY`
