@@ -221,7 +221,15 @@ async def _build_context_uncached() -> str:
                 )
 
                 # Get containers and stacks for each endpoint in parallel
-                all_endpoints: list[dict] = list(endpoints[:10])  # Limit to first 10 endpoints for context
+                max_endpoints = settings.llm.context_max_endpoints
+                if len(endpoints) > max_endpoints:
+                    LOGGER.warning(
+                        "Truncating LLM context from %d to %d endpoints. "
+                        "Set LLM_CONTEXT_MAX_ENDPOINTS to increase this limit.",
+                        len(endpoints),
+                        max_endpoints,
+                    )
+                all_endpoints: list[dict] = list(endpoints[:max_endpoints])
                 containers_by_endpoint: dict[int, list[dict]] = {}
                 stacks_by_endpoint: dict[int, list[dict]] = {}
 
