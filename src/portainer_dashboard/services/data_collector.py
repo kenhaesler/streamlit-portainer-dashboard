@@ -408,13 +408,18 @@ class DataCollector:
                         endpoints, containers_by_endpoint
                     )
 
+                    # Build a lookup for normalized endpoint status from the DataFrame
+                    normalized_status_lookup = dict(
+                        zip(df_endpoints["endpoint_id"], df_endpoints["endpoint_status"])
+                    )
+
                     for ep in endpoints:
                         ep_id = int(ep.get("Id") or ep.get("id") or 0)
                         ep_name = ep.get("Name") or ep.get("name")
                         ep_data = {
                             "endpoint_id": ep_id,
                             "endpoint_name": ep_name,
-                            "endpoint_status": ep.get("Status") or ep.get("status"),
+                            "endpoint_status": normalized_status_lookup.get(ep_id, 2),
                             "environment": env.name,
                         }
                         all_endpoints.append(ep_data)
