@@ -26,16 +26,26 @@ COPY static ./static
 # Create data directory for sessions/cache and set ownership
 RUN mkdir -p /app/data && chown -R 65532:65532 /app/data
 
-# Update libsqlite3-0 to fix CVE-2025-7709 (integer overflow in FTS5 extension)
+# Update system packages to fix CVEs:
+# - libsqlite3-0: CVE-2025-7709 (integer overflow in FTS5 extension)
+# - libssl3t64/openssl/openssl-provider-legacy: CVE-2025-15467 (Critical),
+#   CVE-2025-69419 (High), plus multiple Medium severity OpenSSL CVEs
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
+    libssl3t64 \
+    openssl \
+    openssl-provider-legacy \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Runtime stage (3.14, DHI nonroot image) ---
 FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
 
-# Copy updated libsqlite3 from build stage to fix CVE-2025-7709
+# Copy updated libraries from build stage to fix CVEs
 COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libsqlite3.so.0* /usr/lib/x86_64-linux-gnu/
+COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libssl.so.3* /usr/lib/x86_64-linux-gnu/
+COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libcrypto.so.3* /usr/lib/x86_64-linux-gnu/
+COPY --from=build-stage /usr/lib/x86_64-linux-gnu/ossl-modules/ /usr/lib/x86_64-linux-gnu/ossl-modules/
+COPY --from=build-stage /usr/bin/openssl /usr/bin/openssl
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
