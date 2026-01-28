@@ -207,7 +207,7 @@ class SamplingSQLiteExporter(SQLiteSpanExporter):
 
                 # Decide sampling based on trace_id if not already decided
                 if trace_id not in sampled_traces:
-                    if random.random() < self._sample_rate:
+                    if random.random() < self._sample_rate:  # nosec B311 - not used for security/crypto
                         sampled_traces.add(trace_id)
 
                 if trace_id in sampled_traces:

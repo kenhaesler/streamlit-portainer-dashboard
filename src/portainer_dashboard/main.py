@@ -129,14 +129,30 @@ def create_app() -> FastAPI:
     # GZip compression for responses > 500 bytes
     app.add_middleware(GZipMiddleware, minimum_size=500)
 
-    # CORS middleware
+    # CORS middleware — restrict origins via DASHBOARD_CORS_ORIGINS env var
+    cors_origins = settings.auth.cors_origin_list
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_origins != ["*"],  # credentials require explicit origins
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if cors_origins == ["*"]:
+        LOGGER.warning(
+            "CORS: allow_origins=['*'] (all origins). "
+            "Set DASHBOARD_CORS_ORIGINS to restrict in production."
+        )
+
+    # Security headers middleware
+    @app.middleware("http")
+    async def add_security_headers(request: Request, call_next):  # type: ignore[no-untyped-def]
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Permissions-Policy"] = "geolocation=(), camera=(), microphone=()"
+        return response
 
     # Mount static files
     static_dir = PROJECT_ROOT / "static"

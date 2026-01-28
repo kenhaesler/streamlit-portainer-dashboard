@@ -125,7 +125,7 @@ def _set_session_cookie(
         max_age=max_age,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
+        secure=settings.auth.secure_cookies,
     )
 
 

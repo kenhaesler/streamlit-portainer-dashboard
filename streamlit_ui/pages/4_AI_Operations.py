@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 import sys
 from datetime import datetime
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 import plotly.express as px
@@ -261,7 +264,7 @@ def render_insights_tab(client) -> None:
     try:
         report = client.get("/api/v1/monitoring/reports/latest")
     except Exception:
-        pass
+        logger.debug("Failed to fetch latest monitoring report", exc_info=True)
 
     if report:
         st.subheader("Latest Analysis Report")

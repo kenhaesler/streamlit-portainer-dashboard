@@ -114,6 +114,13 @@ class AuthSettings(BaseSettings):
 
     auth_provider: Literal["static", "oidc"] = "static"
     session_timeout_minutes: int = 60  # Default: 60 minutes
+    secure_cookies: bool = False  # Set to True in production with HTTPS
+    cors_origins: str = ""  # Comma-separated allowed origins; empty = allow all (for backward compat)
+
+    @field_validator("secure_cookies", mode="before")
+    @classmethod
+    def handle_empty_secure_cookies(cls, v: str | bool | None) -> bool:
+        return _empty_str_to_default_bool(v, default=False)
 
     @property
     def provider(self) -> Literal["static", "oidc"]:
@@ -126,6 +133,13 @@ class AuthSettings(BaseSettings):
         if self.session_timeout_minutes <= 0:
             return timedelta(minutes=60)  # Fallback to 60 min
         return timedelta(minutes=self.session_timeout_minutes)
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        """Return list of allowed CORS origins."""
+        if not self.cors_origins:
+            return ["*"]
+        return [o.strip() for o in self.cors_origins.split(",") if o.strip()]
 
 
 class CacheSettings(BaseSettings):
@@ -558,7 +572,7 @@ class ServerSettings(BaseSettings):
 
     model_config = SettingsConfigDict(extra="ignore")
 
-    host: str = "0.0.0.0"
+    host: str = "0.0.0.0"  # nosec B104 - binding all interfaces is expected in Docker containers
     port: int = 8000
     reload: bool = False
     workers: int = 1
