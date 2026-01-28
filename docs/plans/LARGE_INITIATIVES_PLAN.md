@@ -494,7 +494,7 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: playwright install chromium
       - run: pytest tests/e2e -v --screenshot=on --video=on
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         if: failure()
         with:
           name: test-results
