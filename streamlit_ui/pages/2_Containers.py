@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 import plotly.express as px
@@ -554,7 +557,7 @@ def render_networks_tab(df_containers: pd.DataFrame, client):
                                     "state": state,
                                 })
                 except Exception:
-                    pass
+                    logger.debug("Failed to parse network info for container", exc_info=True)
 
     if network_data:
         df_networks = pd.DataFrame(network_data)

@@ -590,7 +590,7 @@ async def llm_chat_websocket(websocket: WebSocket) -> None:
                 "content": f"Internal error: {exc}",
             })
         except Exception:
-            pass
+            LOGGER.debug("Failed to send error message to WebSocket client")
 
 
 __all__ = ["router"]
