@@ -488,7 +488,7 @@ jobs:
           - 9000:9000
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.14'
       - run: pip install -e ".[dev]"
