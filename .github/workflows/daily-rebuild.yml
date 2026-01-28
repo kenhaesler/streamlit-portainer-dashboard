@@ -1,24 +1,20 @@
-name: CI
+name: Daily Image Rebuild
 
 on:
-  push:
-    branches:
-      - main
-      - 'dev-*'
-      - dev
-    tags:
-      - 'v*'
-  pull_request:
+  schedule:
+    # Run daily at 04:00 UTC to pick up base image security patches
+    - cron: '0 4 * * *'
+  workflow_dispatch:
 
 jobs:
   test:
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@v5
         with:
           python-version: '3.14'
 
@@ -35,7 +31,7 @@ jobs:
     needs: test
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -56,11 +52,8 @@ jobs:
         with:
           images: ${{ vars.DOCKER_USER }}/portainer-dashboard-backend
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=latest
+            type=raw,value=nightly-${{ github.run_id }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -68,14 +61,15 @@ jobs:
           driver: cloud
           endpoint: "diinlu/streamlit-portainer-dashboard"
 
-      - name: Build and push backend
+      - name: Build and push backend (no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry' }}
+          outputs: type=registry
+          no-cache: true
           sbom: true
           provenance: mode=max
 
@@ -84,7 +78,7 @@ jobs:
     needs: test
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -105,11 +99,8 @@ jobs:
         with:
           images: ${{ vars.DOCKER_USER }}/portainer-dashboard-frontend
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=ref,event=branch,enable=${{ github.ref != 'refs/heads/main' }}
-            type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
+            type=raw,value=latest
+            type=raw,value=nightly-${{ github.run_id }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -117,13 +108,14 @@ jobs:
           driver: cloud
           endpoint: "diinlu/streamlit-portainer-dashboard"
 
-      - name: Build and push frontend
+      - name: Build and push frontend (no cache)
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile.streamlit
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          outputs: ${{ github.event_name == 'pull_request' && 'type=cacheonly' || 'type=registry' }}
+          outputs: type=registry
+          no-cache: true
           sbom: true
           provenance: mode=max
