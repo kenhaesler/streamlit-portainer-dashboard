@@ -40,12 +40,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- Runtime stage (3.14, DHI nonroot image) ---
 FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
 
-# Copy updated libraries from build stage to fix CVEs
-COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libsqlite3.so.0* /usr/lib/x86_64-linux-gnu/
-COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libssl.so.3* /usr/lib/x86_64-linux-gnu/
-COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libcrypto.so.3* /usr/lib/x86_64-linux-gnu/
-COPY --from=build-stage /usr/lib/x86_64-linux-gnu/ossl-modules/ /usr/lib/x86_64-linux-gnu/ossl-modules/
-COPY --from=build-stage /usr/bin/openssl /usr/bin/openssl
+# Upgrade vulnerable packages in-place before switching to nonroot user.
+# This fixes CVEs in the runtime layer itself (not just overlay):
+# - libssl3t64/openssl/openssl-provider-legacy: CVE-2025-15467 (Critical),
+#   CVE-2025-69419 (High), plus multiple Medium severity OpenSSL CVEs
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libssl3t64 \
+    openssl \
+    openssl-provider-legacy \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
