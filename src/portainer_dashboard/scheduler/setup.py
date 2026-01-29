@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from filelock import FileLock, Timeout
 
-from portainer_dashboard.config import get_settings
+from portainer_dashboard.config import PROJECT_ROOT, get_settings
 from portainer_dashboard.services.monitoring_service import (
     MonitoringService,
     create_monitoring_service,
@@ -23,6 +24,7 @@ LOGGER = logging.getLogger(__name__)
 
 _scheduler: AsyncIOScheduler | None = None
 _monitoring_service: MonitoringService | None = None
+_scheduler_lock: FileLock | None = None
 
 
 async def _refresh_cache_job() -> None:
@@ -180,8 +182,25 @@ async def create_scheduler() -> AsyncIOScheduler | None:
 
 
 async def start_scheduler() -> None:
-    """Start the scheduler if configured."""
-    global _scheduler
+    """Start the scheduler if configured.
+
+    Uses a file lock to prevent duplicate schedulers in multi-worker
+    deployments.  Only the worker that acquires the lock will start
+    the scheduler; others silently skip.
+    """
+    global _scheduler, _scheduler_lock
+
+    # Leader election via file lock
+    lock_path = PROJECT_ROOT / ".data" / "scheduler.lock"
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    _scheduler_lock = FileLock(str(lock_path))
+    try:
+        _scheduler_lock.acquire(blocking=False)
+    except Timeout:
+        LOGGER.info(
+            "Scheduler lock held by another worker — skipping scheduler registration"
+        )
+        return
 
     if _scheduler is None:
         _scheduler = await create_scheduler()
@@ -191,7 +210,7 @@ async def start_scheduler() -> None:
 
     if not _scheduler.running:
         _scheduler.start()
-        LOGGER.info("Scheduler started")
+        LOGGER.info("Scheduler started (leader worker)")
 
         # Only run initial analysis if monitoring is enabled
         settings = get_settings()
@@ -213,7 +232,7 @@ async def _run_initial_analysis() -> None:
 
 def shutdown_scheduler(wait: bool = False) -> None:
     """Shutdown the scheduler."""
-    global _scheduler, _monitoring_service
+    global _scheduler, _monitoring_service, _scheduler_lock
 
     if _scheduler is not None and _scheduler.running:
         _scheduler.shutdown(wait=wait)
@@ -221,6 +240,13 @@ def shutdown_scheduler(wait: bool = False) -> None:
 
     _scheduler = None
     _monitoring_service = None
+
+    if _scheduler_lock is not None:
+        try:
+            _scheduler_lock.release()
+        except RuntimeError:
+            pass
+        _scheduler_lock = None
 
 
 def get_scheduler() -> AsyncIOScheduler | None:

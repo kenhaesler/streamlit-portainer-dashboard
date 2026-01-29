@@ -13,6 +13,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
 from portainer_dashboard import __version__
 from portainer_dashboard.config import PROJECT_ROOT, Settings, get_settings
@@ -30,6 +33,16 @@ def setup_logging(settings: Settings) -> None:
     )
     logging.getLogger("uvicorn.access").setLevel(log_level)
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+    # Configure audit log handler (separate file for security events)
+    audit_logger = logging.getLogger("audit")
+    audit_logger.setLevel(logging.INFO)
+    audit_log_dir = PROJECT_ROOT / ".data"
+    audit_log_dir.mkdir(parents=True, exist_ok=True)
+    audit_handler = logging.FileHandler(audit_log_dir / "audit.log")
+    audit_handler.setFormatter(logging.Formatter("%(message)s"))
+    audit_logger.addHandler(audit_handler)
+    audit_logger.propagate = False
 
 
 async def _warm_cache_on_startup() -> None:
@@ -125,6 +138,17 @@ def create_app() -> FastAPI:
         openapi_url="/api/openapi.json",
         lifespan=lifespan,
     )
+
+    # Rate limiter
+    limiter = Limiter(
+        key_func=get_remote_address,
+        default_limits=[settings.rate_limit.global_rate_limit],
+        enabled=settings.rate_limit.enabled,
+    )
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    if settings.rate_limit.enabled:
+        LOGGER.info("Rate limiting enabled (login: %s)", settings.rate_limit.login_rate_limit)
 
     # GZip compression for responses > 500 bytes
     app.add_middleware(GZipMiddleware, minimum_size=500)

@@ -12,6 +12,7 @@ import logging
 from datetime import datetime, timezone
 
 from portainer_dashboard.config import PortainerEnvironmentSettings, get_settings
+from portainer_dashboard.core.audit import get_audit_logger
 from portainer_dashboard.models.monitoring import MonitoringInsight
 from portainer_dashboard.models.remediation import (
     ActionExecutionResult,
@@ -170,6 +171,9 @@ class RemediationService:
         """
         success = self._actions_store.approve_action(action_id, approved_by)
         if success:
+            action = self._actions_store.get_action(action_id)
+            target = action.target_container_name if action else action_id
+            get_audit_logger().log_remediation_approved(action_id, approved_by, target)
             LOGGER.info("Action %s approved by %s (not yet executed)", action_id, approved_by)
         return success
 
@@ -267,6 +271,12 @@ class RemediationService:
             message = f"Successfully executed {action.action_type.value}"
             self._actions_store.mark_executed(action_id, message)
 
+            get_audit_logger().log_remediation_executed(
+                action_id,
+                action.approved_by or "system",
+                action.target_container_name,
+                "success",
+            )
             LOGGER.info(
                 "Executed action %s: %s on %s",
                 action_id,
@@ -284,6 +294,12 @@ class RemediationService:
             error = str(exc)
             self._actions_store.mark_executed(action_id, "Failed", error)
 
+            get_audit_logger().log_remediation_executed(
+                action_id,
+                action.approved_by or "system",
+                action.target_container_name,
+                f"failed: {error}",
+            )
             LOGGER.error(
                 "Failed to execute action %s: %s",
                 action_id,

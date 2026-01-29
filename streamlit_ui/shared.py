@@ -41,6 +41,23 @@ def require_auth() -> None:
     st.stop()
 
 
+def _get_cached_session_info() -> dict | None:
+    """Get session info, cached per script run to avoid duplicate API calls."""
+    cache_key = "_session_info_cache"
+    cache_ts_key = "_session_info_cache_ts"
+
+    now = time.time()
+    cached_ts = st.session_state.get(cache_ts_key, 0)
+    if now - cached_ts < 30 and cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    client = get_api_client()
+    session_info = client.get_session_status()
+    st.session_state[cache_key] = session_info
+    st.session_state[cache_ts_key] = now
+    return session_info
+
+
 def render_sidebar() -> None:
     """Render sidebar with user info, session timeout, and logout."""
     client = get_api_client()
@@ -48,8 +65,8 @@ def render_sidebar() -> None:
     with st.sidebar:
         st.markdown(f"**Logged in as:** {st.session_state.get('username', 'User')}")
 
-        # Get session status for timeout display
-        session_info = client.get_session_status()
+        # Get session status for timeout display (cached per script run)
+        session_info = _get_cached_session_info()
         if session_info:
             minutes_remaining = session_info.get("minutes_remaining", 0)
             seconds_remaining = session_info.get("seconds_remaining", 0)
@@ -77,8 +94,7 @@ def render_sidebar() -> None:
 
 def render_session_expiry_banner() -> None:
     """Render a session expiry banner at the top if time is running low."""
-    client = get_api_client()
-    session_info = client.get_session_status()
+    session_info = _get_cached_session_info()
 
     if session_info:
         minutes_remaining = session_info.get("minutes_remaining", 0)
