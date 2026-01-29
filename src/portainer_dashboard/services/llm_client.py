@@ -99,10 +99,18 @@ async def _retry_with_backoff[T](
         raise last_exception
     raise RuntimeError("Unexpected retry loop exit")
 
-# Connection pool for LLM API clients
-_DEFAULT_MAX_CONNECTIONS = 10
-_DEFAULT_MAX_KEEPALIVE_CONNECTIONS = 5
-_DEFAULT_KEEPALIVE_EXPIRY = 60.0  # LLM connections can be long-lived
+def _get_llm_pool_settings() -> tuple[int, int, float]:
+    """Return (max_connections, max_keepalive_connections, keepalive_expiry) from config."""
+    try:
+        from portainer_dashboard.config import get_settings
+        settings = get_settings()
+        return (
+            settings.llm.max_connections,
+            settings.llm.max_keepalive_connections,
+            settings.llm.keepalive_expiry,
+        )
+    except Exception:
+        return 10, 5, 60.0
 
 
 class LLMClientPool:
@@ -127,10 +135,11 @@ class LLMClientPool:
 
         async with self._lock:
             if key not in self._clients:
+                max_conn, max_keep, keep_exp = _get_llm_pool_settings()
                 limits = httpx.Limits(
-                    max_connections=_DEFAULT_MAX_CONNECTIONS,
-                    max_keepalive_connections=_DEFAULT_MAX_KEEPALIVE_CONNECTIONS,
-                    keepalive_expiry=_DEFAULT_KEEPALIVE_EXPIRY,
+                    max_connections=max_conn,
+                    max_keepalive_connections=max_keep,
+                    keepalive_expiry=keep_exp,
                 )
                 self._clients[key] = httpx.AsyncClient(
                     timeout=timeout,

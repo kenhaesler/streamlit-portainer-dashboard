@@ -57,8 +57,13 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 - **`websocket/llm_chat.py`** - WebSocket streaming for LLM responses
 - **`websocket/monitoring_insights.py`** - WebSocket for real-time monitoring insights
 - **`scheduler/`** - APScheduler for background monitoring tasks
-- **`config.py`** - Pydantic settings from environment variables
+- **`config/`** - Pydantic settings package (modular: auth, cache, portainer, llm, etc.)
 - **`core/session.py`** - Session storage (memory, SQLite, or Redis)
+- **`core/audit.py`** - Structured JSON audit logging for security events
+- **`core/ws_auth.py`** - Shared WebSocket authentication logic
+- **`core/ws_limiter.py`** - Per-user WebSocket connection limiter
+- **`core/oidc_state_store.py`** - OIDC state store (memory, SQLite, or Redis)
+- **`core/event_bus.py`** - Async publish/subscribe event bus
 
 **Frontend (streamlit_ui/):**
 - **`Home.py`** - Dashboard entry point with KPIs and charts
@@ -84,9 +89,35 @@ External APIs (Portainer, LLM endpoints, Kibana/Elasticsearch)
 - **Python 3.14** with type hints; use built-in generics (`list`, `dict`)
 - Backend code in `src/portainer_dashboard/`
 - Frontend code in `streamlit_ui/`
+
+### Security-First Development
+
+- All auth endpoints (`POST /auth/login`) are rate-limited via slowapi (configurable via `DASHBOARD_RATE_LIMIT_*`)
+- Security events are logged to `.data/audit.log` in structured JSON format
+- WebSocket connections are limited per-user (default: 5, configurable via `DASHBOARD_WS_MAX_CONNECTIONS_PER_USER`)
+- OIDC state uses session-backend-aware storage (memory/SQLite/Redis)
+- Run `pip audit` before releases to check for known vulnerabilities
+- Never commit secrets (`.env`, credentials, API keys)
 - Templates in `templates/` (HTMX alternative UI)
 - Mock HTTP requests in tests
 - Import order: standard library → third-party → local
+
+### Pre-Commit Security Checks
+
+```bash
+# Build images and scan for vulnerabilities
+docker build -t portainer-dashboard-backend -f Dockerfile .
+docker build -t portainer-dashboard-frontend -f Dockerfile.streamlit .
+docker scout cves portainer-dashboard-backend
+docker scout cves portainer-dashboard-frontend
+docker scout recommendations portainer-dashboard-backend
+
+# Python dependency audit
+pip audit
+```
+
+- Fix all critical/high severity CVEs before merging
+- Images MUST be built and scanned before final commit
 
 ## Testing
 
@@ -250,9 +281,18 @@ Then create an API key in Portainer UI: Settings → Users → your user → API
 
 **LLM:**
 - `LLM_API_ENDPOINT`, `LLM_MODEL`, `LLM_BEARER_TOKEN`
+- `LLM_CONTEXT_MAX_ENDPOINTS` - Max endpoints included in LLM context (default: 50)
 
 **Kibana:**
 - `KIBANA_LOGS_ENDPOINT`, `KIBANA_API_KEY`
+
+**Rate Limiting:**
+- `DASHBOARD_RATE_LIMIT_ENABLED` - Enable/disable rate limiting (default: true)
+- `DASHBOARD_RATE_LIMIT_LOGIN_RATE_LIMIT` - Login endpoint rate limit (default: 5/minute)
+- `DASHBOARD_RATE_LIMIT_GLOBAL_RATE_LIMIT` - Global rate limit (default: 100/minute)
+
+**WebSocket:**
+- `DASHBOARD_WS_MAX_CONNECTIONS_PER_USER` - Max WebSocket connections per user (default: 5)
 
 **AI Monitoring:**
 - `MONITORING_ENABLED` - Enable/disable AI monitoring (default: true)

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from portainer_dashboard.config import get_settings
+from portainer_dashboard.core.event_bus import get_event_bus
 from portainer_dashboard.models.monitoring import (
     InfrastructureSnapshot,
     InsightSeverity,
@@ -517,6 +518,12 @@ class MonitoringService:
                 await self.broadcast_callback(report)
             except Exception as exc:
                 LOGGER.warning("Failed to broadcast report: %s", exc)
+
+        # Also publish via event bus for decoupled subscribers
+        try:
+            await get_event_bus().publish("monitoring.report", report)
+        except Exception as exc:
+            LOGGER.warning("Failed to publish monitoring event: %s", exc)
 
         elapsed = (datetime.now(timezone.utc) - start_time).total_seconds()
         LOGGER.info(

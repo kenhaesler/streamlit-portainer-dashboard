@@ -30,9 +30,18 @@ _CACHE_KEY_DERIVATION_SALT = b"portainer-environment-cache"
 _CACHE_KEY_DERIVATION_ROUNDS = 200_000
 _CACHE_LOCK_TIMEOUT_SECONDS = 5.0
 
-# In-memory cache settings
+def _get_memory_cache_settings() -> tuple[int, int]:
+    """Return (max_size, ttl_seconds) from config."""
+    try:
+        settings = get_settings()
+        return settings.cache.memory_cache_max_size, settings.cache.memory_cache_ttl_seconds
+    except Exception:
+        return 100, 60
+
+
+# Legacy constants — used as defaults only
 _MEMORY_CACHE_MAX_SIZE = 100
-_MEMORY_CACHE_TTL_SECONDS = 60  # Short TTL for memory cache
+_MEMORY_CACHE_TTL_SECONDS = 60
 
 
 class MemoryCache:
@@ -354,7 +363,65 @@ def store_cache_entry(
         LOGGER.warning("Unable to persist cache entry %s", path)
         return refreshed_at  # Memory cache still works
 
+    # Run eviction after write
+    evict_cache_files(resolved)
+
     return refreshed_at
+
+
+def _evict_expired_files(directory: Path, ttl: int) -> int:
+    """Remove cache files whose mtime exceeds the TTL. Returns count deleted."""
+    import time as _time
+
+    now = _time.time()
+    deleted = 0
+    try:
+        for entry in directory.glob(f"*{_CACHE_FILE_SUFFIX}"):
+            try:
+                if now - entry.stat().st_mtime > ttl:
+                    entry.unlink()
+                    deleted += 1
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return deleted
+
+
+def _evict_lru_files(directory: Path, max_files: int) -> int:
+    """If the number of cache files exceeds *max_files*, evict the oldest by mtime."""
+    deleted = 0
+    try:
+        files = sorted(
+            directory.glob(f"*{_CACHE_FILE_SUFFIX}"),
+            key=lambda p: p.stat().st_mtime,
+        )
+    except OSError:
+        return 0
+    excess = len(files) - max_files
+    if excess <= 0:
+        return 0
+    for f in files[:excess]:
+        try:
+            f.unlink()
+            deleted += 1
+        except OSError:
+            continue
+    return deleted
+
+
+def evict_cache_files(config: CacheSettings | None = None) -> int:
+    """Run both expired and LRU eviction. Returns total files deleted."""
+    resolved = _resolve_cache_config(config)
+    directory = _cache_directory(resolved)
+    if not directory.exists():
+        return 0
+    ttl = cache_ttl_seconds(resolved)
+    deleted = _evict_expired_files(directory, ttl)
+    deleted += _evict_lru_files(directory, resolved.max_cache_files)
+    if deleted > 0:
+        LOGGER.info("Cache eviction removed %d file(s)", deleted)
+    return deleted
 
 
 def clear_cache(config: CacheSettings | None = None, key: str | None = None) -> None:
@@ -397,6 +464,7 @@ __all__ = [
     "build_cache_key",
     "cache_ttl_seconds",
     "clear_cache",
+    "evict_cache_files",
     "get_memory_cache",
     "is_cache_enabled",
     "load_cache_entry",

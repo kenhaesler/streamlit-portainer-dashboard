@@ -12,11 +12,10 @@ from typing import Any
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from portainer_dashboard.auth.dependencies import SESSION_COOKIE_NAME
 from portainer_dashboard.config import get_settings
-from portainer_dashboard.core.session import SessionStorage
-from portainer_dashboard.dependencies import get_session_storage
-from portainer_dashboard.models.auth import SessionData
+from portainer_dashboard.core.audit import get_audit_logger
+from portainer_dashboard.core.ws_auth import authenticate_websocket
+from portainer_dashboard.core.ws_limiter import get_ws_tracker
 from portainer_dashboard.services.llm_client import (
     AsyncLLMClient,
     LLMClientError,
@@ -33,49 +32,7 @@ from portainer_dashboard.services.portainer_client import (
 
 LOGGER = logging.getLogger(__name__)
 
-
-async def _authenticate_websocket(websocket: WebSocket) -> SessionData | None:
-    """Authenticate a WebSocket connection using session cookie.
-
-    Args:
-        websocket: The WebSocket connection to authenticate.
-
-    Returns:
-        SessionData if authenticated, None otherwise.
-    """
-    token = websocket.cookies.get(SESSION_COOKIE_NAME)
-    if not token:
-        return None
-
-    storage: SessionStorage = get_session_storage()
-    record = storage.retrieve(token)
-    if record is None:
-        return None
-
-    now = datetime.now(timezone.utc)
-    settings = get_settings()
-
-    session_data = SessionData(
-        token=record.token,
-        username=record.username,
-        auth_method=record.auth_method,
-        authenticated_at=record.authenticated_at,
-        last_active=record.last_active,
-        session_timeout=record.session_timeout or settings.auth.session_timeout,
-    )
-
-    if session_data.is_expired(now):
-        storage.delete(token)
-        return None
-
-    # Update last active time
-    storage.touch(
-        token,
-        last_active=now,
-        session_timeout=session_data.session_timeout,
-    )
-
-    return session_data
+_audit = get_audit_logger()
 
 router = APIRouter()
 
@@ -221,7 +178,15 @@ async def _build_context_uncached() -> str:
                 )
 
                 # Get containers and stacks for each endpoint in parallel
-                all_endpoints: list[dict] = list(endpoints[:10])  # Limit to first 10 endpoints for context
+                max_endpoints = settings.llm.context_max_endpoints
+                if len(endpoints) > max_endpoints:
+                    LOGGER.warning(
+                        "Truncating LLM context from %d to %d endpoints. "
+                        "Set LLM_CONTEXT_MAX_ENDPOINTS to increase this limit.",
+                        len(endpoints),
+                        max_endpoints,
+                    )
+                all_endpoints: list[dict] = list(endpoints[:max_endpoints])
                 containers_by_endpoint: dict[int, list[dict]] = {}
                 stacks_by_endpoint: dict[int, list[dict]] = {}
 
@@ -495,13 +460,28 @@ Check the health check configuration and container logs for more details."""
 async def llm_chat_websocket(websocket: WebSocket) -> None:
     """WebSocket endpoint for LLM chat with streaming responses."""
     # Authenticate before accepting connection
-    user = await _authenticate_websocket(websocket)
+    user = await authenticate_websocket(websocket)
     if user is None:
+        client_ip = websocket.client.host if websocket.client else "unknown"
+        _audit.log_websocket_rejected(client_ip, "/ws/llm/chat", "not_authenticated")
         await websocket.close(code=4001, reason="Not authenticated")
         LOGGER.warning("LLM chat WebSocket connection rejected: not authenticated")
         return
 
+    # Check connection limit
+    tracker = get_ws_tracker()
+    if not tracker.can_connect(user.username):
+        _audit.log_websocket_rejected(
+            websocket.client.host if websocket.client else "unknown",
+            "/ws/llm/chat",
+            "connection_limit_exceeded",
+        )
+        await websocket.close(code=4029, reason="Too many connections")
+        return
+
     await websocket.accept()
+    tracker.on_connect(user.username, websocket)
+    _audit.log_websocket_connect(user.username, "/ws/llm/chat")
     LOGGER.info("LLM chat WebSocket connected for user: %s", user.username)
 
     settings = get_settings()
@@ -582,7 +562,9 @@ async def llm_chat_websocket(websocket: WebSocket) -> None:
                 "content": f"Internal error: {exc}",
             })
         except Exception:
-            pass
+            LOGGER.debug("Failed to send error message to WebSocket client")
+    finally:
+        tracker.on_disconnect(user.username, websocket)
 
 
 __all__ = ["router"]

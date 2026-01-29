@@ -27,8 +27,10 @@ COPY static ./static
 RUN mkdir -p /app/data && chown -R 65532:65532 /app/data
 
 # Update libsqlite3-0 to fix CVE-2025-7709 (integer overflow in FTS5 extension)
+# Update libssl3t64 to 3.5.4-1~deb13u2 to fix 2 Critical + 8 High OpenSSL vulnerabilities
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libsqlite3-0 \
+    libssl3t64 \
     && rm -rf /var/lib/apt/lists/*
 
 # --- Runtime stage (3.14, DHI nonroot image) ---
@@ -36,6 +38,10 @@ FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
 
 # Copy updated libsqlite3 from build stage to fix CVE-2025-7709
 COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libsqlite3.so.0* /usr/lib/x86_64-linux-gnu/
+
+# Copy updated libssl/libcrypto from build stage to fix OpenSSL vulnerabilities
+COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libssl.so.3* /usr/lib/x86_64-linux-gnu/
+COPY --from=build-stage /usr/lib/x86_64-linux-gnu/libcrypto.so.3* /usr/lib/x86_64-linux-gnu/
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1

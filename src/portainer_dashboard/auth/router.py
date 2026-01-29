@@ -11,6 +11,9 @@ from urllib.parse import urlparse
 from fastapi import APIRouter, Cookie, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+
 from portainer_dashboard.auth.dependencies import (
     CurrentUserDep,
     SESSION_COOKIE_NAME,
@@ -20,6 +23,8 @@ from portainer_dashboard.auth.dependencies import (
 from portainer_dashboard.auth.oidc import OIDCClient, OIDCError, create_oidc_client
 from portainer_dashboard.auth.static_auth import verify_credentials
 from portainer_dashboard.config import get_settings
+from portainer_dashboard.core.audit import get_audit_logger
+from portainer_dashboard.core.oidc_state_store import get_oidc_state_store
 from portainer_dashboard.core.security import generate_token
 from portainer_dashboard.core.session import SessionRecord, SessionStorage
 from portainer_dashboard.dependencies import JinjaEnvDep, SessionStorageDep
@@ -70,8 +75,12 @@ def _get_safe_redirect_url(url: str, default: str = "/") -> str:
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
-# In-memory storage for OIDC state (in production, use Redis or similar)
-_oidc_state_store: dict[str, dict] = {}
+_audit = get_audit_logger()
+
+# Rate limiter for login endpoint — reads enabled flag from settings so that
+# DASHBOARD_RATE_LIMIT_ENABLED=false actually disables rate limiting (e.g. in E2E tests).
+_settings = get_settings()
+_limiter = Limiter(key_func=get_remote_address, enabled=_settings.rate_limit.enabled)
 
 
 def _create_session(
@@ -125,7 +134,7 @@ def _set_session_cookie(
         max_age=max_age,
         httponly=True,
         samesite="lax",
-        secure=False,  # Set to True in production with HTTPS
+        secure=settings.auth.secure_cookies,
     )
 
 
@@ -154,6 +163,7 @@ async def login_page(
 
 
 @router.post("/login")
+@_limiter.limit("5/minute")
 async def login(
     request: Request,
     jinja: JinjaEnvDep,
@@ -170,11 +180,13 @@ async def login(
     """
     settings = get_settings()
     safe_next = _get_safe_redirect_url(next)
+    client_ip = request.client.host if request.client else "unknown"
 
     if settings.auth.provider != "static":
         raise HTTPException(status_code=400, detail="Static auth not enabled")
 
     if not verify_credentials(username, password):
+        _audit.log_login_failure(username, client_ip, "invalid_credentials")
         template = jinja.get_template("pages/login.html")
         content = await template.render_async(
             request=request,
@@ -200,6 +212,7 @@ async def login(
         session_timeout=session_timeout,
     )
 
+    _audit.log_login_success(username, client_ip, "static")
     response = RedirectResponse(url=safe_next, status_code=303)
     _set_session_cookie(response, token, remember_me=is_remember_me)
     return response
@@ -207,12 +220,19 @@ async def login(
 
 @router.get("/logout")
 async def logout(
+    request: Request,
     storage: SessionStorageDep,
     session_token: Annotated[str | None, Cookie(alias=SESSION_COOKIE_NAME)] = None,
 ) -> RedirectResponse:
     """Log out the current user."""
+    client_ip = request.client.host if request.client else "unknown"
+    username = "unknown"
     if session_token:
+        record = storage.retrieve(session_token)
+        if record:
+            username = record.username
         storage.delete(session_token)
+    _audit.log_logout(username, client_ip)
 
     response = RedirectResponse(url="/auth/login", status_code=303)
     response.delete_cookie(SESSION_COOKIE_NAME)
@@ -277,20 +297,16 @@ async def oidc_login(next: str = "/") -> RedirectResponse:
     code_verifier = secrets.token_urlsafe(64)
 
     # Store state for verification (with validated redirect URL)
-    _oidc_state_store[state] = {
-        "code_verifier": code_verifier,
-        "next_url": safe_next,
-        "created_at": datetime.now(timezone.utc),
-    }
-
-    # Clean up old states (older than 10 minutes)
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
-    expired_states = [
-        s for s, data in _oidc_state_store.items()
-        if data["created_at"] < cutoff
-    ]
-    for s in expired_states:
-        _oidc_state_store.pop(s, None)
+    state_store = get_oidc_state_store()
+    state_store.store(
+        state,
+        {
+            "code_verifier": code_verifier,
+            "next_url": safe_next,
+        },
+        ttl_seconds=600,
+    )
+    state_store.purge_expired()
 
     client = create_oidc_client()
     auth_url = await client.get_authorization_url(state, code_verifier)
@@ -320,7 +336,8 @@ async def oidc_callback(
         raise HTTPException(status_code=400, detail="Missing code or state parameter")
 
     # Verify state
-    state_data = _oidc_state_store.pop(state, None)
+    state_store = get_oidc_state_store()
+    state_data = state_store.retrieve_and_delete(state)
     if not state_data:
         raise HTTPException(status_code=400, detail="Invalid or expired state")
 
@@ -334,8 +351,10 @@ async def oidc_callback(
         user_info = await client.verify_id_token(id_token)
     except OIDCError as e:
         LOGGER.error("OIDC verification failed: %s", e)
+        _audit.log_oidc_callback("unknown", success=False, error=str(e))
         raise HTTPException(status_code=400, detail=str(e))
 
+    _audit.log_oidc_callback(user_info.username, success=True)
     token = _create_session(
         storage=storage,
         username=user_info.username,

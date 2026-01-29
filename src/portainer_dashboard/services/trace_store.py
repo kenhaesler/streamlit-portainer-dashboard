@@ -478,13 +478,13 @@ class SQLiteTraceStore:
             # Delete spans
             placeholders = ",".join("?" * len(trace_ids))
             connection.execute(
-                f"DELETE FROM spans WHERE trace_id IN ({placeholders})",
+                f"DELETE FROM spans WHERE trace_id IN ({placeholders})",  # nosec B608 - placeholders are ? params, not user input
                 trace_ids,
             )
 
             # Delete traces
             cursor = connection.execute(
-                f"DELETE FROM traces WHERE trace_id IN ({placeholders})",
+                f"DELETE FROM traces WHERE trace_id IN ({placeholders})",  # nosec B608 - placeholders are ? params, not user input
                 trace_ids,
             )
             deleted = cursor.rowcount
