@@ -77,10 +77,10 @@ router = APIRouter(prefix="/auth", tags=["Authentication"])
 
 _audit = get_audit_logger()
 
-# Rate limiter instance — must be initialized lazily after the app starts.
-# The @limiter.limit() decorator reads app.state.limiter at request time,
-# so we create a module-level Limiter for decoration only.
-_limiter = Limiter(key_func=get_remote_address)
+# Rate limiter for login endpoint — reads enabled flag from settings so that
+# DASHBOARD_RATE_LIMIT_ENABLED=false actually disables rate limiting (e.g. in E2E tests).
+_settings = get_settings()
+_limiter = Limiter(key_func=get_remote_address, enabled=_settings.rate_limit.enabled)
 
 
 def _create_session(
