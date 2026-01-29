@@ -40,10 +40,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # --- Runtime stage (DHI nonroot image) ---
 FROM dhi.io/python:3.14.2-debian13 AS runtime-stage
 
-# Upgrade vulnerable packages in-place before switching to nonroot user.
+# Temporarily switch to root to upgrade vulnerable packages in-place.
 # This fixes CVEs in the runtime layer itself (not just overlay):
 # - libssl3t64/openssl/openssl-provider-legacy: CVE-2025-15467 (Critical),
 #   CVE-2025-69419 (High), plus multiple Medium severity OpenSSL CVEs
+USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl3t64 \
     openssl \
