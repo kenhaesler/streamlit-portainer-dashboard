@@ -56,7 +56,7 @@ jobs:
             type=raw,value=nightly-${{ github.run_id }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver: cloud
           endpoint: "diinlu/streamlit-portainer-dashboard"
@@ -103,7 +103,7 @@ jobs:
             type=raw,value=nightly-${{ github.run_id }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver: cloud
           endpoint: "diinlu/streamlit-portainer-dashboard"

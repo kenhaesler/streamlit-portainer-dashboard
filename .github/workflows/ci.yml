@@ -63,7 +63,7 @@ jobs:
             type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver: cloud
           endpoint: "diinlu/streamlit-portainer-dashboard"
@@ -112,7 +112,7 @@ jobs:
             type=raw,value=dev,enable=${{ github.ref != 'refs/heads/main' && !startsWith(github.ref, 'refs/tags/') }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
         with:
           driver: cloud
           endpoint: "diinlu/streamlit-portainer-dashboard"
