@@ -48,7 +48,7 @@ jobs:
 
       - name: Extract metadata for backend
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ vars.DOCKER_USER }}/portainer-dashboard-backend
           tags: |
@@ -95,7 +95,7 @@ jobs:
 
       - name: Extract metadata for frontend
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ vars.DOCKER_USER }}/portainer-dashboard-frontend
           tags: |
